@@ -81,9 +81,14 @@ blockio_read (block_io_protocol_t *this, grub_efi_uint32_t media_id,
   if ((lba + block_num - 1) > data->media.last_block)
     return GRUB_EFI_INVALID_PARAMETER;
 
+  if (data->pipeline)
+    return grub_disk_pipeline_read (data->pipeline,
+                                    data->addr + lba * data->media.block_size,
+                                    len, buf) == GRUB_ERR_NONE
+      ? GRUB_EFI_SUCCESS : GRUB_EFI_DEVICE_ERROR;
   file_read (data->file, buf, len, data->addr + lba * data->media.block_size);
-
-  return GRUB_EFI_SUCCESS;
+  return grub_errno == GRUB_ERR_NONE ? GRUB_EFI_SUCCESS
+                                     : GRUB_EFI_DEVICE_ERROR;
 }
 
 static grub_efi_status_t EFIAPI
@@ -121,9 +126,12 @@ blockio_write (block_io_protocol_t *this,
   if ((lba + block_num - 1) > data->media.last_block)
     return GRUB_EFI_INVALID_PARAMETER;
 
-  file_write (data->file, buf, len, data->addr + lba * data->media.block_size);
-
-  return GRUB_EFI_SUCCESS;
+  if (data->pipeline)
+    return grub_disk_pipeline_write (data->pipeline,
+                                     data->addr + lba * data->media.block_size,
+                                     len, buf) == GRUB_ERR_NONE
+      ? GRUB_EFI_SUCCESS : GRUB_EFI_DEVICE_ERROR;
+  return GRUB_EFI_WRITE_PROTECTED;
 }
 
 static grub_efi_status_t EFIAPI

@@ -198,6 +198,11 @@ grub_efivdisk_read (grub_disk_t disk, grub_disk_addr_t sector,
   grub_off_t len = ((struct grub_efivdisk_data *) disk->data)->vdisk.size;
   grub_off_t pos = (sector + size) << GRUB_DISK_SECTOR_BITS;
 
+  if (((struct grub_efivdisk_data *) disk->data)->pipeline)
+    return grub_disk_pipeline_read
+      (((struct grub_efivdisk_data *) disk->data)->pipeline,
+       (sector << GRUB_DISK_SECTOR_BITS) + start,
+       size << GRUB_DISK_SECTOR_BITS, buf);
   file_read (file, buf, size << GRUB_DISK_SECTOR_BITS,
              (sector << GRUB_DISK_SECTOR_BITS) + start);
 
@@ -220,9 +225,14 @@ grub_efivdisk_write (grub_disk_t disk, grub_disk_addr_t sector,
 {
   grub_file_t file = ((struct grub_efivdisk_data *) disk->data)->vdisk.file;
   grub_off_t start = ((struct grub_efivdisk_data *) disk->data)->vdisk.addr;
+  if (((struct grub_efivdisk_data *) disk->data)->pipeline)
+    return grub_disk_pipeline_write
+      (((struct grub_efivdisk_data *) disk->data)->pipeline,
+       (sector << GRUB_DISK_SECTOR_BITS) + start,
+       size << GRUB_DISK_SECTOR_BITS, buf);
   file_write (file, buf, size << GRUB_DISK_SECTOR_BITS,
               (sector << GRUB_DISK_SECTOR_BITS) + start);
-  return 0;
+  return grub_errno;
 }
 
 static struct grub_disk_dev grub_efivdisk_dev =
