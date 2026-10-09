@@ -125,6 +125,27 @@ loopback -l bl (hd1)/raw.img
 cat (bl)/MARKER.TXT
 loopback -d bl
 
+echo PIPELINE_EFI_XZ_BEGIN
+map -n (hd1)/raw.img.xz evxz
+cat (evxz)/MARKER.TXT
+map -x evxz
+
+echo PIPELINE_EFI_FORMAT_BEGIN
+map -n -F (hd1)/raw.vhd.xz evfmt
+cat (evfmt)/MARKER.TXT
+map -x evfmt
+
+echo PIPELINE_EFI_COW_BEGIN
+map -n -C (hd1)/raw.img evcow
+cat (evcow)/MARKER.TXT
+dd -x 54455354 -o (evcow)0+1 -b 4 -c 1
+hexdump -s 0 -n 16 (evcow)0+1
+map -x evcow
+echo PIPELINE_EFI_COW_REOPENED
+map -n -C (hd1)/raw.img evcow
+hexdump -s 0 -n 16 (evcow)0+1
+map -x evcow
+
 loopback -C rw (hd1)/raw.img
 dd -x 41424344 -o (rw)0+1 -b 4 -c 1
 echo PIPELINE_RAW_COW_WRITTEN
@@ -163,7 +184,7 @@ GRUBCFG
 
 "$build/grub-mkstandalone" -O x86_64-efi -d "$build/grub-core" \
   -o "$test_work/BOOTX64.EFI" --fonts='' --locales='' --compress=no \
-  --modules='serial terminal normal echo ls cat halt part_msdos fat loopback xzio gzio vhd dd hexdump' \
+  --modules='serial terminal normal echo ls cat halt part_msdos fat loopback xzio gzio vhd map dd hexdump' \
   "boot/grub/grub.cfg=$test_work/grub.cfg" > "$test_work/pack.log" 2>&1
 
 truncate -s 32M "$test_work/esp.img"
@@ -188,12 +209,15 @@ fi
 
 grep -q 'PIPELINE_TEST_DONE' "$test_work/serial.log"
 marker_count=$(grep -c 'PIPELINE_TEST_MARKER_2026' "$test_work/serial.log")
-test "$marker_count" -eq 12 || {
-  echo "Expected 12 successful file reads, got $marker_count" >&2
+test "$marker_count" -eq 15 || {
+  echo "Expected 15 successful file reads, got $marker_count" >&2
   exit 1
 }
 grep -q '50 49 50 45' "$test_work/serial.log"
 grep -q '41 42 43 44' "$test_work/serial.log"
+grep -q '54 45 53 54' "$test_work/serial.log"
+grep -q 'PIPELINE_EFI_COW_REOPENED' "$test_work/serial.log"
+grep -q 'PIPELINE_EFI_FORMAT_BEGIN' "$test_work/serial.log"
 grep -q 'eb 3c 90 6d' "$test_work/serial.log"
 for marker in RESERVED_REJECTED PHYSICAL_REJECTED FORMAT_REJECTED DUPLICATE_REJECTED MALFORMED_VHD_REJECTED; do
   grep -q "PIPELINE_$marker" "$test_work/serial.log" || {
