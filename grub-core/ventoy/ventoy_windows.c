@@ -28,6 +28,7 @@
 #include <grub/term.h>
 #include <grub/partition.h>
 #include <grub/file.h>
+#include <grub/fs.h>
 #include <grub/normal.h>
 #include <grub/extcmd.h>
 #include <grub/datetime.h>
@@ -44,6 +45,7 @@ GRUB_MOD_LICENSE ("GPLv3+");
 static int g_iso_fs_type = 0;
 static int g_wim_total_patch_count = 0;
 static int g_wim_valid_patch_count = 0;
+static grub_err_t g_wim_patch_error = GRUB_ERR_NONE;
 static wim_patch *g_wim_patch_head = NULL;
 
 static grub_uint64_t g_suppress_wincd_override_offset = 0;
@@ -419,6 +421,7 @@ grub_err_t ventoy_cmd_wimdows_reset(grub_extcmd_context_t ctxt, int argc, char *
     g_wim_patch_head = NULL;
     g_wim_total_patch_count = 0;
     g_wim_valid_patch_count = 0;
+    g_wim_patch_error = GRUB_ERR_NONE;
 
     return 0;
 }
@@ -428,7 +431,10 @@ static int ventoy_load_jump_exe(const char *path, grub_uint8_t **data, grub_uint
     grub_uint32_t i;
     grub_uint32_t align;
     grub_file_t file;
+    int rc = 1;
 
+    *size = 0;
+    *data = NULL;
     debug("windows load jump %s\n", path);
     
     file = ventoy_grub_file_open(VENTOY_FILE_TYPE, "%s", path);
@@ -450,7 +456,12 @@ static int ventoy_load_jump_exe(const char *path, grub_uint8_t **data, grub_uint
         goto end;
     }
 
-    grub_file_read(file, (*data), file->size);
+    if (grub_file_read(file, (*data), file->size) != (grub_ssize_t) file->size)
+    {
+        grub_free(*data);
+        *data = NULL;
+        goto end;
+    }
 
     if (hash)
     {
@@ -467,10 +478,11 @@ static int ventoy_load_jump_exe(const char *path, grub_uint8_t **data, grub_uint
         }
     }
 
+    rc = 0;
 end:
 
     grub_file_close(file);
-    return 0;
+    return rc;
 }
 
 static int ventoy_get_override_info(grub_file_t file, wim_tail *wim_data)
@@ -1023,11 +1035,21 @@ static int ventoy_cat_exe_file_data(wim_tail *wim_data, grub_uint32_t exe_len, g
     grub_uint32_t jump_len = 0;
     grub_uint32_t jump_align = 0;
     grub_uint8_t *jump_data = NULL;
+    const char *runtime = grub_env_get("vtoy_path");
 
+    if (!runtime || !*runtime)
+    {
+        grub_error(GRUB_ERR_FILE_NOT_FOUND, "Ventoy runtime path vtoy_path is unset");
+        return 1;
+    }
     pe64 = ventoy_is_pe64(exe_data);
-    
-    grub_snprintf(file, sizeof(file), "%s/vtoyjump%d.exe", grub_env_get("vtoy_path"), pe64 ? 64 : 32);
-    ventoy_load_jump_exe(file, &jump_data, &jump_len, NULL);
+
+    grub_snprintf(file, sizeof(file), "%s/vtoyjump%d.exe", runtime, pe64 ? 64 : 32);
+    if (ventoy_load_jump_exe(file, &jump_data, &jump_len, NULL) || jump_len == 0)
+    {
+        grub_error(GRUB_ERR_FILE_NOT_FOUND, "Ventoy jump executable %s is unavailable", file);
+        return 1;
+    }
     jump_align = ventoy_align(jump_len, 16);
     
     wim_data->jump_exe_len = jump_len;
@@ -1035,11 +1057,14 @@ static int ventoy_cat_exe_file_data(wim_tail *wim_data, grub_uint32_t exe_len, g
     wim_data->bin_align_len = ventoy_align(wim_data->bin_raw_len, 2048);
     
     wim_data->jump_bin_data = grub_malloc(wim_data->bin_align_len);
-    if (wim_data->jump_bin_data)
+    if (!wim_data->jump_bin_data)
     {
-        grub_memcpy(wim_data->jump_bin_data, jump_data, jump_len);
-        grub_memcpy(wim_data->jump_bin_data + jump_align + sizeof(ventoy_os_param) + windatalen, exe_data, exe_len);
+        grub_free(jump_data);
+        return 1;
     }
+    grub_memcpy(wim_data->jump_bin_data, jump_data, jump_len);
+    grub_memcpy(wim_data->jump_bin_data + jump_align + sizeof(ventoy_os_param) + windatalen, exe_data, exe_len);
+    grub_free(jump_data);
 
     debug("jump_exe_len:%u bin_raw_len:%u bin_align_len:%u\n", 
         wim_data->jump_exe_len, wim_data->bin_raw_len, wim_data->bin_align_len);
@@ -1328,7 +1353,16 @@ static int ventoy_wimdows_locate_wim(const char *disk, wim_patch *patch, int win
 
         if (0 == ventoy_read_resource(file, head, &(patch->replace_look->resource), (void **)&(exe_data)))
         {
-            ventoy_cat_exe_file_data(wim_data, exe_len, exe_data, windatalen);
+            if (ventoy_cat_exe_file_data(wim_data, exe_len, exe_data, windatalen))
+            {
+                g_wim_patch_error = grub_errno ? grub_errno : GRUB_ERR_FILE_NOT_FOUND;
+                patch->replace_look = NULL;
+                grub_free(exe_data);
+                grub_free(decompress_data);
+                grub_free(lookup);
+                grub_file_close(file);
+                return 1;
+            }
             grub_free(exe_data);
         }
         else
@@ -1482,12 +1516,49 @@ grub_err_t ventoy_cmd_locate_wim_patch(grub_extcmd_context_t ctxt, int argc, cha
     int datalen = 0;
     int dataflag = 0;
     wim_patch *node = g_wim_patch_head;
+    grub_fs_t fs;
+    grub_fs_t original_predecessor = NULL;
+    grub_fs_t predecessor = NULL;
+    grub_fs_t udf = NULL;
+    const char *image_fs = ventoy_get_env("ventoy_fs_probe");
 
     (void)ctxt;
     (void)argc;
     (void)args;
 
     datalen = ventoy_get_windows_rtdata_len(args[1], &dataflag);
+
+    /*
+     * Hybrid Windows ISOs contain both ISO9660 and UDF descriptors.
+     * GRUB's global fs_probe chooses the first registered filesystem;
+     * module load order can therefore change the physical WIM extents.
+     * Temporarily prioritize UDF for the WIM scan and restore the exact
+     * previous registry order before returning. Lockdown never exposes
+     * UDF here, so no disabled filesystem is enabled by this operation.
+     */
+    if (node && image_fs && grub_strcmp(image_fs, "udf") == 0)
+    {
+        for (fs = grub_fs_list; fs; predecessor = fs, fs = fs->next)
+        {
+            if (grub_strcmp(fs->name, "udf") == 0)
+            {
+                udf = fs;
+                original_predecessor = predecessor;
+                break;
+            }
+        }
+        if (!udf)
+        {
+            return grub_error(GRUB_ERR_BAD_FS,
+                              "Ventoy Windows WIM requires UDF filesystem");
+        }
+    }
+    if (udf && original_predecessor)
+    {
+        grub_fs_unregister(udf);
+        grub_fs_register(udf);
+        debug("Ventoy WIM temporary fs=udf priority\n");
+    }
 
     while (node)
     {
@@ -1499,6 +1570,13 @@ grub_err_t ventoy_cmd_locate_wim_patch(grub_extcmd_context_t ctxt, int argc, cha
         }
 
         node = node->next;
+    }
+
+    if (udf && original_predecessor)
+    {
+        grub_fs_unregister(udf);
+        grub_list_push(GRUB_AS_LIST_P(&original_predecessor->next),
+                       GRUB_AS_LIST(udf));
     }
 
     return 0;
@@ -2073,7 +2151,11 @@ grub_err_t ventoy_cmd_windows_wimboot_data(grub_extcmd_context_t ctxt, int argc,
     wim64 = ventoy_is_pe64(exe_data);
 
     grub_memset(&wim_data, 0, sizeof(wim_data));
-    ventoy_cat_exe_file_data(&wim_data, exe_len, exe_data, datalen);
+    if (ventoy_cat_exe_file_data(&wim_data, exe_len, exe_data, datalen))
+    {
+        grub_check_free(exe_data);
+        VENTOY_CMD_RETURN(grub_errno ? grub_errno : GRUB_ERR_FILE_NOT_FOUND);
+    }
     grub_check_free(exe_data);
 
     jump_align = ventoy_align(wim_data.jump_exe_len, 16);
@@ -2112,6 +2194,15 @@ grub_err_t ventoy_cmd_windows_chain_data(grub_extcmd_context_t ctxt, int argc, c
     (void)argc;
 
     debug("chain data begin <%s> ...\n", args[0]);
+
+    /* A detected Windows WIM that could not install its jump executable is
+       not an unknown image. Refuse an incomplete chain instead of falling
+       back to a nominally successful, unpatched ISO. */
+    if (g_wim_patch_error != GRUB_ERR_NONE)
+    {
+        return grub_error(g_wim_patch_error,
+                          "Ventoy Windows WIM injection failed; check vtoy_path");
+    }
 
     compatible = grub_env_get("ventoy_compatible");
     if (compatible && compatible[0] == 'Y')
