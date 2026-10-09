@@ -338,6 +338,8 @@ grub_disk_pipeline_write (struct grub_disk_pipeline *ctx,
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid disk write");
   if (!len)
     return GRUB_ERR_NONE;
+  if (ctx->flags & GRUB_DISK_PIPELINE_READ_ONLY)
+    return grub_error (GRUB_ERR_WRITE_ERROR, "disk is read-only");
   if (ctx->file->size != GRUB_FILE_SIZE_UNKNOWN
       && (off > ctx->file->size || len > ctx->file->size - off))
     return grub_error (GRUB_ERR_OUT_OF_RANGE, "disk write outside image");
@@ -373,7 +375,13 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
   if (ctx->file)
     grub_file_close (ctx->file);
   /* Close the entire file view chain before freeing copied source memory. */
-  grub_free (ctx->owned_memory);
+  if (ctx->owned_memory)
+    {
+      if (ctx->release_memory)
+        ctx->release_memory (ctx, ctx->owned_memory, ctx->owned_memory_size);
+      else
+        grub_free (ctx->owned_memory);
+    }
   if (ctx->format_module)
     grub_dl_unref (ctx->format_module);
   grub_free (ctx->source);

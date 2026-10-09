@@ -13,20 +13,20 @@
 #include <grub/err.h>
 #include <grub/file.h>
 #include <grub/disk_pipeline.h>
-#include <grub/disk_source.h>
 #include <grub/misc.h>
 #include <grub/mm.h>
 #include <grub/port_write.h>
 
-grub_file_t
-grub_disk_source_open (const char *name, int mem, int blocklist,
-                         enum grub_file_type type, void **owned_memory)
+static grub_file_t
+disk_source_open (struct grub_disk_pipeline *ctx)
 {
+  const char *name = ctx->source;
+  int mem = !!(ctx->flags & GRUB_DISK_PIPELINE_MEMORY);
+  int blocklist = !!(ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST);
+  enum grub_file_type type = ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS;
   grub_file_t file;
   grub_size_t size;
 
-  if (owned_memory)
-    *owned_memory = 0;
   file = grub_file_open (name, type);
   if (!file)
     return 0;
@@ -44,7 +44,7 @@ grub_disk_source_open (const char *name, int mem, int blocklist,
       char newname[100];
       grub_ssize_t readlen;
 
-      if (!owned_memory || size == GRUB_FILE_SIZE_UNKNOWN
+      if (size == GRUB_FILE_SIZE_UNKNOWN
           || size > (grub_size_t) -1 - (GRUB_DISK_SECTOR_SIZE - 1))
         {
           grub_file_close (file);
@@ -53,7 +53,9 @@ grub_disk_source_open (const char *name, int mem, int blocklist,
           return 0;
         }
 
-      addr = grub_malloc (size + GRUB_DISK_SECTOR_SIZE - 1);
+      addr = ctx->allocate_memory
+        ? ctx->allocate_memory (ctx, size + GRUB_DISK_SECTOR_SIZE - 1)
+        : grub_malloc (size + GRUB_DISK_SECTOR_SIZE - 1);
       if (!addr)
         {
           grub_file_close (file);
@@ -62,7 +64,10 @@ grub_disk_source_open (const char *name, int mem, int blocklist,
 
       if (grub_file_seek (file, 0) == (grub_off_t) -1)
         {
-          grub_free (addr);
+          if (ctx->release_memory)
+            ctx->release_memory (ctx, addr, size + GRUB_DISK_SECTOR_SIZE - 1);
+          else
+            grub_free (addr);
           grub_file_close (file);
           return 0;
         }
@@ -70,7 +75,10 @@ grub_disk_source_open (const char *name, int mem, int blocklist,
       grub_file_close (file);
       if (readlen < 0 || (grub_size_t) readlen != size)
         {
-          grub_free (addr);
+          if (ctx->release_memory)
+            ctx->release_memory (ctx, addr, size + GRUB_DISK_SECTOR_SIZE - 1);
+          else
+            grub_free (addr);
           return 0;
         }
 
@@ -80,16 +88,24 @@ grub_disk_source_open (const char *name, int mem, int blocklist,
                      addr, (unsigned long long) size);
       file = grub_file_open (newname, type);
       if (!file)
-        grub_free (addr);
+        {
+          if (ctx->release_memory)
+            ctx->release_memory (ctx, addr, size + GRUB_DISK_SECTOR_SIZE - 1);
+          else
+            grub_free (addr);
+        }
       else
-        *owned_memory = addr;
+        {
+          ctx->owned_memory = addr;
+          ctx->owned_memory_size = size + GRUB_DISK_SECTOR_SIZE - 1;
+        }
     }
 
   return file;
 }
 
-grub_err_t
-grub_disk_source_write (grub_file_t file, const void *buf, grub_size_t len,
+static grub_err_t
+disk_source_write (grub_file_t file, const void *buf, grub_size_t len,
                           grub_off_t offset)
 {
   grub_ssize_t written;
@@ -117,16 +133,12 @@ static grub_err_t
 disk_source_stage (struct grub_disk_pipeline *ctx,
                    const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
-  ctx->file = grub_disk_source_open (ctx->source,
-                                     !!(ctx->flags & GRUB_DISK_PIPELINE_MEMORY),
-                                     !!(ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST),
-                                     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS,
-                                     &ctx->owned_memory);
+  ctx->file = disk_source_open (ctx);
   if (!ctx->file)
     return grub_errno ? grub_errno
                       : grub_error (GRUB_ERR_FILE_NOT_FOUND,
                                     "could not open disk source");
-  ctx->direct_write = grub_disk_source_write;
+  ctx->direct_write = disk_source_write;
   return GRUB_ERR_NONE;
 }
 

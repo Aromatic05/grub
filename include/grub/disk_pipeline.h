@@ -21,7 +21,8 @@ enum grub_disk_pipeline_flag
     GRUB_DISK_PIPELINE_BLOCKLIST = 1 << 1,
     GRUB_DISK_PIPELINE_DECOMPRESS = 1 << 2,
     GRUB_DISK_PIPELINE_FORMAT = 1 << 3,
-    GRUB_DISK_PIPELINE_COW = 1 << 4
+    GRUB_DISK_PIPELINE_COW = 1 << 4,
+    GRUB_DISK_PIPELINE_READ_ONLY = 1 << 5
   };
 
 enum grub_disk_target
@@ -52,6 +53,10 @@ struct grub_disk_pipeline
   enum grub_file_type type;
   grub_file_t file;
   void *owned_memory;
+  grub_size_t owned_memory_size;
+  /* The EFI publisher may request page-backed (including reserved) RAM. */
+  void *(*allocate_memory) (struct grub_disk_pipeline *, grub_size_t);
+  void (*release_memory) (struct grub_disk_pipeline *, void *, grub_size_t);
   grub_err_t (*direct_write) (grub_file_t, const void *, grub_size_t, grub_off_t);
   grub_dl_t format_module;
   struct grub_disk_layer base;
