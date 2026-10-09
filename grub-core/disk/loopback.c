@@ -1,258 +1,243 @@
-/* loopback.c - command to add loopback devices.  */
+/* File-backed GRUB disks published by the ordered disk pipeline. */
 /*
- *  GRUB  --  GRand Unified Bootloader
- *  Copyright (C) 2005,2006,2007  Free Software Foundation, Inc.
+ * GRUB -- GRand Unified Bootloader
+ * Copyright (C) 2005,2006,2007,2026 Free Software Foundation, Inc.
  *
- *  GRUB is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  GRUB is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
+ * GRUB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  */
 
-#include <grub/dl.h>
-#include <grub/misc.h>
-#include <grub/file.h>
 #include <grub/disk.h>
-#include <grub/mm.h>
+#include <grub/disk_pipeline.h>
+#include <grub/dl.h>
 #include <grub/extcmd.h>
+#include <grub/file.h>
+#include <grub/fileview.h>
 #include <grub/i18n.h>
 #include <grub/loopback_file.h>
+#include <grub/misc.h>
+#include <grub/mm.h>
 #include <grub/safemath.h>
-#include <grub/vdisk.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
 struct grub_loopback
 {
-  char *devname;
-  grub_file_t file;
-  const struct grub_loopback_file_provider *provider;
+  struct grub_disk_pipeline *pipeline;
   struct grub_loopback *next;
   unsigned long id;
   grub_uint64_t refcnt;
 };
 
 static struct grub_loopback *loopback_list;
-static unsigned long last_id = 0;
-
-struct grub_loopback_backend
-{
-  const char *name;
-  const struct grub_loopback_file_provider *provider;
-  int (*ready) (void);
-  grub_file_t (*transform) (grub_file_t file, enum grub_file_type type);
-};
+static unsigned long last_id;
+static grub_dl_t loopback_module;
 
 static const struct grub_arg_option options[] =
   {
-    /* TRANSLATORS: The disk is simply removed from the list of available ones,
-       not wiped, avoid to scare user.  */
     {"delete", 'd', 0, N_("Delete the specified loopback drive."), 0, 0},
     {"mem", 'm', 0, N_("Copy to RAM."), 0, 0},
     {"blocklist", 'l', 0, N_("Convert to blocklist."), 0, 0},
     {"decompress", 'D', 0, N_("Transparently decompress backing file."), 0, 0},
+    {"cow", 'C', 0, N_("Keep writes in a volatile copy-on-write overlay."), 0, 0},
     {0, 0, 0, 0, 0, 0}
   };
 
-/* Delete the loopback device NAME.  */
+static int
+grub_loopback_stage_match (struct grub_disk_pipeline *ctx,
+                           const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  return ctx->target == GRUB_DISK_TARGET_LOOPBACK;
+}
+
+static grub_err_t
+grub_loopback_stage_source (struct grub_disk_pipeline *ctx,
+                            const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  ctx->file = grub_loopback_file_open
+    (ctx->source,
+     (ctx->flags & GRUB_DISK_PIPELINE_MEMORY) != 0,
+     (ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST) != 0,
+     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS);
+  if (!ctx->file)
+    return grub_errno ? grub_errno
+                      : grub_error (GRUB_ERR_FILE_NOT_FOUND,
+                                    "could not open disk source");
+  ctx->direct_write = grub_loopback_file_write;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_loopback_stage_view (struct grub_disk_pipeline *ctx,
+                          const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  grub_file_t transformed;
+
+  if (!(ctx->flags & GRUB_DISK_PIPELINE_DECOMPRESS))
+    return GRUB_ERR_NONE;
+
+  transformed = grub_fileview_apply_compression (ctx->file, ctx->type);
+  if (!transformed)
+    {
+      /* FileView closes its input when a nested transform fails. */
+      ctx->file = 0;
+      return grub_errno ? grub_errno
+                        : grub_error (GRUB_ERR_BAD_COMPRESSED_DATA,
+                                      "disk decompression failed");
+    }
+
+  if (transformed != ctx->file)
+    {
+      ctx->file = transformed;
+      ctx->transformed = 1;
+      ctx->direct_write = 0;
+    }
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_loopback_stage_block (struct grub_disk_pipeline *ctx,
+                           const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  if ((ctx->flags & GRUB_DISK_PIPELINE_COW) || ctx->transformed)
+    return grub_disk_pipeline_enable_cow (ctx);
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
+                             const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  struct grub_loopback *dev;
+
+  for (dev = loopback_list; dev; dev = dev->next)
+    if (grub_strcmp (dev->pipeline->name, ctx->name) == 0)
+      return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name already exists");
+
+  dev = grub_zalloc (sizeof (*dev));
+  if (!dev)
+    return grub_errno;
+
+  dev->pipeline = ctx;
+  dev->id = last_id++;
+  dev->next = loopback_list;
+  loopback_list = dev;
+  ctx->published = 1;
+  if (loopback_module)
+    grub_dl_ref (loopback_module);
+  return GRUB_ERR_NONE;
+}
+
+static struct grub_disk_hook grub_loopback_hooks[] =
+  {
+    { .name = "file", .stage = GRUB_DISK_SOURCE,
+      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_source },
+    { .name = "decompress", .stage = GRUB_DISK_VIEW,
+      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_view },
+    { .name = "cow", .stage = GRUB_DISK_BLOCK,
+      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_block },
+    { .name = "grub-loopback", .stage = GRUB_DISK_PUBLISH,
+      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_publish }
+  };
+
 static grub_err_t
 delete_loopback (const char *name)
 {
   struct grub_loopback *dev;
   struct grub_loopback **prev;
 
-  /* Search for the device.  */
   for (dev = loopback_list, prev = &loopback_list;
-       dev;
-       prev = &dev->next, dev = dev->next)
-    if (grub_strcmp (dev->devname, name) == 0)
+       dev; prev = &dev->next, dev = dev->next)
+    if (grub_strcmp (dev->pipeline->name, name) == 0)
       break;
 
-  if (! dev)
+  if (!dev)
     return grub_error (GRUB_ERR_BAD_DEVICE, "device not found");
-
-  if (dev->refcnt > 0)
+  if (dev->refcnt)
     return grub_error (GRUB_ERR_STILL_REFERENCED, "device still referenced");
-  /* Remove the device from the list.  */
+
   *prev = dev->next;
-
-  grub_free (dev->devname);
-  grub_loopback_file_close_with (dev->provider, dev->file);
+  grub_disk_pipeline_close (dev->pipeline);
   grub_free (dev);
-
-  return 0;
-}
-
-static grub_err_t
-create_loopback_from_file (const char *devname, grub_file_t file,
-                           const struct grub_loopback_file_provider *provider);
-
-static grub_err_t
-create_loopback (const char *devname, const char *filename,
-                 const struct grub_loopback_backend *backend,
-                 const struct grub_loopback_file_options *file_options,
-                 enum grub_file_type type)
-{
-  grub_file_t file;
-  grub_file_t transformed;
-
-  if (backend && backend->ready && !backend->ready ())
-    return grub_error (GRUB_ERR_UNKNOWN_COMMAND,
-                       N_("no virtual-disk parser module is available; run `insmod vhd'"));
-
-  file = grub_loopback_file_open_with (backend ? backend->provider : 0,
-                                       filename, file_options, type);
-  if (! file)
-    return grub_errno;
-
-  transformed = backend && backend->transform ? backend->transform (file, type) : file;
-  if (!transformed)
-    {
-      grub_loopback_file_close_with (backend ? backend->provider : 0, file);
-      return grub_errno;
-    }
-
-  if (transformed == file
-      && backend && backend->transform)
-    {
-      grub_loopback_file_close_with (backend ? backend->provider : 0, file);
-      return grub_error (GRUB_ERR_BAD_FILE_TYPE,
-                         "unsupported %s format",
-                         backend->name ? backend->name : "loopback");
-    }
-
-  return create_loopback_from_file (devname, transformed,
-                                    transformed == file
-                                    ? (backend && backend->provider
-                                       ? backend->provider
-                                       : grub_loopback_file_default_provider ())
-                                    : 0);
-}
-
-static grub_err_t
-create_loopback_from_file (const char *devname, grub_file_t file,
-                           const struct grub_loopback_file_provider *provider)
-{
-  struct grub_loopback *newdev;
-  grub_err_t ret;
-
-  for (newdev = loopback_list; newdev; newdev = newdev->next)
-    if (grub_strcmp (newdev->devname, devname) == 0)
-      return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name already exists");
-
-  newdev = grub_malloc (sizeof (struct grub_loopback));
-  if (!newdev)
-    goto fail;
-
-  newdev->devname = grub_strdup (devname);
-  if (!newdev->devname)
-    {
-      grub_free (newdev);
-      goto fail;
-    }
-
-  newdev->file = file;
-  newdev->provider = provider;
-  newdev->id = last_id++;
-  newdev->refcnt = 0;
-  newdev->next = loopback_list;
-  loopback_list = newdev;
+  if (loopback_module)
+    grub_dl_unref (loopback_module);
   return GRUB_ERR_NONE;
-
-fail:
-  ret = grub_errno;
-  grub_loopback_file_close_with (provider, file);
-  return ret;
 }
-
-static int
-grub_vhd_backend_ready (void)
-{
-  return grub_vdisk_parsers_ready ();
-}
-
-static grub_file_t
-grub_vhd_backend_transform (grub_file_t file, enum grub_file_type type)
-{
-  return grub_vdisk_apply_parsers (file, type);
-}
-
-static const struct grub_loopback_backend grub_loopback_raw_backend =
-  {
-    .name = "loopback",
-    .provider = 0,
-    .ready = 0,
-    .transform = 0
-  };
-
-static const struct grub_loopback_backend grub_loopback_vhd_backend =
-  {
-    .name = "virtual disk",
-    .provider = 0,
-    .ready = grub_vhd_backend_ready,
-    .transform = grub_vhd_backend_transform
-  };
 
 static grub_err_t
 grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
-                          const struct grub_loopback_backend *backend)
+                          int format)
 {
   struct grub_arg_list *state = ctxt->state;
-  struct grub_loopback_file_options file_options;
-
-  file_options.mem = state[1].set;
-  file_options.blocklist = state[2].set;
+  struct grub_disk_pipeline *ctx;
+  struct grub_loopback *dev;
+  unsigned int flags = GRUB_DISK_PIPELINE_DECOMPRESS;
+  grub_err_t err;
 
   if (argc < 1)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name required");
-
   if (state[0].set)
     return delete_loopback (args[0]);
-
   if (argc < 2)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
 
-  return create_loopback (args[0], args[1], backend, &file_options,
-                          GRUB_FILE_TYPE_LOOPBACK);
+  for (dev = loopback_list; dev; dev = dev->next)
+    if (grub_strcmp (dev->pipeline->name, args[0]) == 0)
+      return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name already exists");
+
+  if (format)
+    {
+      if (!grub_disk_stage_available (GRUB_DISK_FORMAT)
+          && !grub_dl_load ("vhd"))
+        return grub_errno;
+      flags |= GRUB_DISK_PIPELINE_FORMAT;
+    }
+  if (state[1].set)
+    flags |= GRUB_DISK_PIPELINE_MEMORY;
+  if (state[2].set)
+    flags |= GRUB_DISK_PIPELINE_BLOCKLIST;
+  if (state[4].set)
+    flags |= GRUB_DISK_PIPELINE_COW;
+
+  ctx = grub_disk_pipeline_new (args[1], args[0],
+                               GRUB_DISK_TARGET_LOOPBACK, flags);
+  if (!ctx)
+    return grub_errno;
+
+  err = grub_disk_pipeline_run (ctx);
+  if (err)
+    {
+      grub_disk_pipeline_close (ctx);
+      grub_errno = err;
+    }
+  return err;
 }
 
-/* The command to add and remove loopback devices.  */
 static grub_err_t
 grub_cmd_loopback (grub_extcmd_context_t ctxt, int argc, char **args)
 {
-  /* Keep classic loopback behaviour: allow transparent decompression so
-     grubfm rules such as loopback wimboot ${prefix}/wimboot.xz continue
-     to work as they did in grub_alive.  */
-  return grub_cmd_loopback_create (ctxt, argc, args, &grub_loopback_raw_backend);
+  return grub_cmd_loopback_create (ctxt, argc, args, 0);
 }
 
 static grub_err_t
 grub_cmd_vhd (grub_extcmd_context_t ctxt, int argc, char **args)
 {
-  return grub_cmd_loopback_create (ctxt, argc, args, &grub_loopback_vhd_backend);
+  return grub_cmd_loopback_create (ctxt, argc, args, 1);
 }
 
-
 static int
 grub_loopback_iterate (grub_disk_dev_iterate_hook_t hook, void *hook_data,
-		       grub_disk_pull_t pull)
+                       grub_disk_pull_t pull)
 {
-  struct grub_loopback *d;
+  struct grub_loopback *dev;
+
   if (pull != GRUB_DISK_PULL_NONE)
     return 0;
-  for (d = loopback_list; d; d = d->next)
-    {
-      if (hook (d->devname, hook_data))
-	return 1;
-    }
+  for (dev = loopback_list; dev; dev = dev->next)
+    if (hook (dev->pipeline->name, hook_data))
+      return 1;
   return 0;
 }
 
@@ -260,89 +245,62 @@ static grub_err_t
 grub_loopback_open (const char *name, grub_disk_t disk)
 {
   struct grub_loopback *dev;
+  grub_file_t file;
 
   for (dev = loopback_list; dev; dev = dev->next)
-    if (grub_strcmp (dev->devname, name) == 0)
+    if (grub_strcmp (dev->pipeline->name, name) == 0)
       break;
-
-  if (! dev)
+  if (!dev)
     return grub_error (GRUB_ERR_UNKNOWN_DEVICE, "can't open device");
 
   if (grub_add (dev->refcnt, 1, &dev->refcnt))
     grub_fatal ("Reference count overflow");
 
-  /* Use the filesize for the disk size, round up to a complete sector.  */
-  if (dev->file->log_sector_size >= GRUB_DISK_SECTOR_BITS)
-    disk->log_sector_size = dev->file->log_sector_size;
+  file = dev->pipeline->file;
+  if (file->log_sector_size >= GRUB_DISK_SECTOR_BITS)
+    disk->log_sector_size = file->log_sector_size;
 
-  if (dev->file->size != GRUB_FILE_SIZE_UNKNOWN)
+  if (file->size != GRUB_FILE_SIZE_UNKNOWN)
     {
       grub_uint64_t sector_size = 1ULL << disk->log_sector_size;
-      disk->total_sectors = ((dev->file->size + sector_size - 1)
-                             / sector_size);
+      disk->total_sectors = (file->size + sector_size - 1) / sector_size;
     }
   else
     disk->total_sectors = GRUB_DISK_SIZE_UNKNOWN;
-  /* Avoid reading more than 512M.  */
+
   disk->max_agglomerate = 1 << (29 - GRUB_DISK_SECTOR_BITS
-				- GRUB_DISK_CACHE_BITS);
-
+                               - GRUB_DISK_CACHE_BITS);
   disk->id = dev->id;
-
   disk->data = dev;
-  grub_dprintf ("portdbg",
-                "loopback_open: name=%s file=%p size=%llu log_sector=%u total=%llu\n",
-                name, dev->file, dev->file ? (unsigned long long) dev->file->size : 0ULL,
-                disk->log_sector_size, (unsigned long long) disk->total_sectors);
-
-  return 0;
+  return GRUB_ERR_NONE;
 }
 
 static void
 grub_loopback_close (grub_disk_t disk)
 {
   struct grub_loopback *dev = disk->data;
-
   if (grub_sub (dev->refcnt, 1, &dev->refcnt))
     grub_fatal ("Reference count underflow");
 }
 
 static grub_err_t
 grub_loopback_read (grub_disk_t disk, grub_disk_addr_t sector,
-		    grub_size_t size, char *buf)
+                    grub_size_t size, char *buf)
 {
-  grub_file_t file = ((struct grub_loopback *) disk->data)->file;
-  grub_off_t pos;
-
-  grub_file_seek (file, sector << disk->log_sector_size);
-
-  grub_file_read (file, buf, size << disk->log_sector_size);
-  if (grub_errno)
-    return grub_errno;
-
-  /* In case there is more data read than there is available, in case
-     of files that are not a multiple of GRUB_DISK_SECTOR_SIZE, fill
-     the rest with zeros.  */
-  pos = (sector + size) << disk->log_sector_size;
-  if (pos > file->size)
-    {
-      grub_size_t amount = pos - file->size;
-      grub_memset (buf + (size << disk->log_sector_size) - amount, 0, amount);
-    }
-
-  return 0;
+  struct grub_loopback *dev = disk->data;
+  return grub_disk_pipeline_read (dev->pipeline,
+                                  (grub_uint64_t) sector << disk->log_sector_size,
+                                  size << disk->log_sector_size, buf);
 }
 
 static grub_err_t
-grub_loopback_write (grub_disk_t disk,
-		     grub_disk_addr_t sector,
-		     grub_size_t size,
-		     const char *buf)
+grub_loopback_write (grub_disk_t disk, grub_disk_addr_t sector,
+                     grub_size_t size, const char *buf)
 {
   struct grub_loopback *dev = disk->data;
-  return grub_loopback_file_write_with (dev->provider, dev->file, buf,
-                                        size << disk->log_sector_size,
-                                        sector << disk->log_sector_size);
+  return grub_disk_pipeline_write (dev->pipeline,
+                                   (grub_uint64_t) sector << disk->log_sector_size,
+                                   size << disk->log_sector_size, buf);
 }
 
 static struct grub_disk_dev grub_loopback_dev =
@@ -362,21 +320,29 @@ static grub_extcmd_t cmd_vhd;
 
 GRUB_MOD_INIT(loopback)
 {
+  grub_size_t i;
+
+  loopback_module = mod;
+  for (i = 0; i < ARRAY_SIZE (grub_loopback_hooks); i++)
+    grub_disk_hook_register (&grub_loopback_hooks[i], mod);
+
   cmd = grub_register_extcmd ("loopback", grub_cmd_loopback, 0,
-			      N_("[-d] [-D] DEVICENAME FILE."),
-			      /* TRANSLATORS: The file itself is not destroyed
-				 or transformed into drive.  */
-			      N_("Make a virtual drive from a file."), options);
+                              N_("[-d] [-m] [-l] [-D] [-C] DEVICENAME FILE."),
+                              N_("Make a virtual drive from a file."), options);
   cmd_vhd = grub_register_extcmd ("vhd", grub_cmd_vhd, 0,
-                                  N_("[-d] [-D] DEVICENAME FILE."),
-                                  N_("Make a virtual drive from a file."),
-                                  options);
+                                 N_("[-d] [-m] [-l] [-D] [-C] DEVICENAME FILE."),
+                                 N_("Map a virtual disk image."), options);
   grub_disk_dev_register (&grub_loopback_dev);
 }
 
 GRUB_MOD_FINI(loopback)
 {
+  grub_size_t i;
+
   grub_unregister_extcmd (cmd);
   grub_unregister_extcmd (cmd_vhd);
   grub_disk_dev_unregister (&grub_loopback_dev);
+  for (i = 0; i < ARRAY_SIZE (grub_loopback_hooks); i++)
+    grub_disk_hook_unregister (&grub_loopback_hooks[i]);
+  loopback_module = 0;
 }
