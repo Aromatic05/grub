@@ -22,7 +22,8 @@ enum grub_disk_pipeline_flag
     GRUB_DISK_PIPELINE_DECOMPRESS = 1 << 2,
     GRUB_DISK_PIPELINE_FORMAT = 1 << 3,
     GRUB_DISK_PIPELINE_COW = 1 << 4,
-    GRUB_DISK_PIPELINE_READ_ONLY = 1 << 5
+    GRUB_DISK_PIPELINE_READ_ONLY = 1 << 5,
+    GRUB_DISK_PIPELINE_RESERVED_MEMORY = 1 << 6
   };
 
 enum grub_disk_target

@@ -46,6 +46,23 @@ void grub_ventoy_set_acpi_osparam (const char *filename);
 static unsigned int last_id = 0;
 static grub_efi_handle_t boot_image_handle = 0;
 
+static void *
+grub_map_source_allocate (struct grub_disk_pipeline *ctx, grub_size_t size)
+{
+  return grub_map_allocate_pages
+    (size, (ctx->flags & GRUB_DISK_PIPELINE_RESERVED_MEMORY)
+            ? GRUB_EFI_RESERVED_MEMORY_TYPE : GRUB_EFI_BOOT_SERVICES_DATA);
+}
+
+static void
+grub_map_source_release (struct grub_disk_pipeline *ctx __attribute__ ((unused)),
+                         void *addr, grub_size_t size)
+{
+  grub_efi_boot_services_t *b = grub_efi_system_table->boot_services;
+  grub_efi_uintn_t pages = (size + 4095) >> 12;
+  efi_call_2 (b->free_pages, (grub_efi_physical_address_t) (grub_addr_t) addr, pages);
+}
+
 const grub_efi_guid_t dp_guid = GRUB_EFI_DEVICE_PATH_GUID;
 const grub_efi_guid_t blk_io_guid = GRUB_EFI_BLOCK_IO_GUID;
 
@@ -110,6 +127,117 @@ unmap_efidisk (grub_disk_t disk)
               handle, &dp_guid, device_path, &blk_io_guid, block_io, NULL);
 }
 
+/* Firmware protocols and their backing buffers have the same PUBLISH
+   lifetime; EFI Map owns handles, whereas SOURCE/VIEW/FORMAT/BLOCK are common. */
+static grub_err_t
+grub_map_uninstall_handles (struct grub_efivdisk_data *d)
+{
+  grub_efi_boot_services_t *b = grub_efi_system_table->boot_services;
+  grub_efi_status_t status;
+
+  if (d->vpart.handle)
+    {
+      status = efi_call_6 (b->uninstall_multiple_protocol_interfaces,
+                           d->vpart.handle, &dp_guid, d->vpart.dp,
+                           &blk_io_guid, &d->vpart.block_io, NULL);
+      if (status != GRUB_EFI_SUCCESS)
+        return grub_error (GRUB_ERR_BAD_DEVICE,
+                           "cannot uninstall EFI partition protocol");
+      d->vpart.handle = 0;
+    }
+  if (d->vdisk.handle)
+    {
+      status = efi_call_6 (b->uninstall_multiple_protocol_interfaces,
+                           d->vdisk.handle, &dp_guid, d->vdisk.dp,
+                           &blk_io_guid, &d->vdisk.block_io, NULL);
+      if (status != GRUB_EFI_SUCCESS)
+        return grub_error (GRUB_ERR_BAD_DEVICE,
+                           "cannot uninstall EFI disk protocol");
+      d->vdisk.handle = 0;
+    }
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_map_stage_unpublish (struct grub_disk_pipeline *ctx,
+                          const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  struct grub_efivdisk_data **link;
+  struct grub_efivdisk_data *d = ctx->publish_data;
+  grub_err_t err;
+
+  for (link = &grub_efivdisk_list; *link; link = &(*link)->next)
+    if ((*link)->pipeline == ctx && (*link)->refcount)
+      return grub_error (GRUB_ERR_STILL_REFERENCED, "EFI virtual disk still referenced");
+
+  err = grub_map_uninstall_handles (d);
+  if (err)
+    return err;
+
+  /* El Torito aliases borrow the parent's pipeline and device handles. */
+  for (link = &grub_efivdisk_list; *link;)
+    {
+      struct grub_efivdisk_data *item = *link;
+      if (item->pipeline == ctx)
+        {
+          *link = item->next;
+          if (!item->alias)
+            {
+              grub_free (item->vpart.dp);
+              grub_free (item->vdisk.dp);
+            }
+          grub_free (item);
+        }
+      else
+        link = &item->next;
+    }
+  ctx->publish_data = 0;
+  ctx->published = 0;
+  return GRUB_ERR_NONE;
+}
+
+static int
+grub_map_stage_match (struct grub_disk_pipeline *ctx,
+                      const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  return ctx->target == GRUB_DISK_TARGET_EFI;
+}
+
+static grub_err_t
+grub_map_stage_publish (struct grub_disk_pipeline *ctx,
+                        const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  struct grub_efivdisk_data *d = ctx->publish_data;
+  grub_err_t err;
+
+  if (!d || !ctx->file || ctx->file->size == GRUB_FILE_SIZE_UNKNOWN)
+    return grub_error (GRUB_ERR_BAD_FILE_TYPE, "EFI map requires a sized disk");
+
+  d->pipeline = ctx;
+  d->vdisk.pipeline = ctx;
+  d->vpart.pipeline = ctx;
+  d->vdisk.file = ctx->file;
+  d->vpart.file = ctx->file;
+  d->vdisk.size = ctx->file->size;
+  d->type = grub_vdisk_check_type (ctx->source, ctx->file, d->type);
+  err = grub_efivdisk_install (d, d->install_state);
+  d->install_state = 0;
+  if (err)
+    {
+      grub_err_t cleanup = grub_map_uninstall_handles (d);
+      return cleanup ? cleanup : err;
+    }
+  d->next = grub_efivdisk_list;
+  grub_efivdisk_list = d;
+  ctx->published = 1;
+  return GRUB_ERR_NONE;
+}
+
+static struct grub_disk_hook grub_map_publish_hook =
+  { .name = "efi-blockio", .stage = GRUB_DISK_PUBLISH,
+    .probe = grub_map_stage_match, .run = grub_map_stage_publish,
+    .unpublish = grub_map_stage_unpublish };
+
 static void
 unmap_efivdisk (grub_disk_t disk)
 {
@@ -130,7 +258,24 @@ unmap_efivdisk (grub_disk_t disk)
 static grub_err_t
 grub_efi_unmap_device (const char *name)
 {
+  struct grub_efivdisk_data **p;
   grub_disk_t disk = 0;
+
+  for (p = &grub_efivdisk_list; *p; p = &(*p)->next)
+    if (grub_strcmp ((*p)->devname, name) == 0)
+      {
+        struct grub_efivdisk_data *dev = *p;
+        if (dev->refcount)
+          return grub_error (GRUB_ERR_STILL_REFERENCED,
+                             "EFI disk is still referenced");
+        if (dev->alias)
+          {
+            *p = dev->next;
+            grub_free (dev);
+            return GRUB_ERR_NONE;
+          }
+        return grub_disk_pipeline_close (dev->pipeline);
+      }
   disk = grub_disk_open (name);
   if (!disk)
     return grub_error (GRUB_ERR_BAD_DEVICE, "failed to open disk %s.", name);
@@ -139,9 +284,14 @@ grub_efi_unmap_device (const char *name)
   else if (grub_strcmp (disk->dev->name, "efivdisk") == 0)
     unmap_efivdisk (disk);
   else
-    return grub_error (GRUB_ERR_BAD_DEVICE, "invalid disk: %s", disk->dev->name);
-
-  return GRUB_ERR_NONE;
+    {
+      grub_err_t err = grub_error (GRUB_ERR_BAD_DEVICE,
+                                  "invalid disk: %s", disk->dev->name);
+      grub_disk_close (disk);
+      return err;
+    }
+  grub_disk_close (disk);
+  return grub_errno;
 }
 
 static int
@@ -185,8 +335,17 @@ grub_efivdisk_open (const char *name, grub_disk_t disk)
   disk->id = i;
 
   disk->data = dev;
+  dev->refcount++;
 
   return 0;
+}
+
+static void
+grub_efivdisk_close (grub_disk_t disk)
+{
+  struct grub_efivdisk_data *dev = disk->data;
+  if (dev && dev->refcount)
+    dev->refcount--;
 }
 
 static grub_err_t
@@ -241,6 +400,7 @@ static struct grub_disk_dev grub_efivdisk_dev =
   .id = GRUB_DISK_DEVICE_EFIVDISK_ID,
   .disk_iterate = grub_efivdisk_iterate,
   .disk_open = grub_efivdisk_open,
+  .disk_close = grub_efivdisk_close,
   .disk_read = grub_efivdisk_read,
   .disk_write = grub_efivdisk_write,
   .next = 0
@@ -268,6 +428,9 @@ mount_eltorito (struct grub_efivdisk_data *src, const char *name)
   grub_printf ("Found UEFI El Torito image at %"
                PRIuGRUB_UINT64_T"+%"PRIuGRUB_UINT64_T"\n", ofs, len);
   grub_memcpy (dst, src, sizeof (struct grub_efivdisk_data));
+  dst->alias = 1;
+  dst->refcount = 0;
+  dst->install_state = 0;
   dst->type = FD;
   dst->vpart.size = len;
   dst->vpart.addr = ofs;
@@ -296,6 +459,8 @@ static const struct grub_arg_option options_map[] =
   {"no_g4d", 'g', 0, N_("Don't write GRUB4DOS drive map info."), 0, 0},
   {"no_vt", 'v', 0, N_("Don't write Ventoy compatible info."), 0, 0},
   {"vtoy", 0, 0, N_("Set vtoy ACPI param."), 0, 0},
+  {"cow", 'C', 0, N_("Use volatile copy-on-write disk blocks."), 0, 0},
+  {"format", 'F', 0, N_("Parse a VHD/VHDX/QCOW2/VMDK/VDI container."), 0, 0},
 #if 0
   {"alt", 'a', 0, N_("Install blockio using alternative methods."), 0, 0},
 #endif
@@ -307,7 +472,9 @@ grub_cmd_map (grub_extcmd_context_t ctxt, int argc, char **args)
 {
   struct grub_arg_list *state = ctxt->state;
   struct grub_efivdisk_data *disk = NULL;
-  grub_file_t file = 0;
+  struct grub_disk_pipeline *pipeline;
+  unsigned int flags = GRUB_DISK_PIPELINE_DECOMPRESS;
+  grub_err_t err;
   if (state[MAP_UNMAP].set)
   {
     if (state[MAP_UNMAP].arg[0] == '(')
@@ -323,37 +490,69 @@ grub_cmd_map (grub_extcmd_context_t ctxt, int argc, char **args)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
   disk = grub_zalloc (sizeof (struct grub_efivdisk_data));
   if (!disk)
-    return grub_error (GRUB_ERR_BAD_OS, "out of memory");
-  file = file_open (args[0],
-                    state[MAP_MEM].set, state[MAP_BLOCK].set, state[MAP_RT].set);
-  if (!file)
-  {
-    grub_free (disk);
-    return grub_error (GRUB_ERR_FILE_READ_ERROR, "failed to open file");
-  }
+    return grub_errno;
+
   disk->type = UNKNOWN;
   if (state[MAP_TYPE].set)
-  {
-    if (state[MAP_TYPE].arg[0] == 'C' || state[MAP_TYPE].arg[0] == 'c')
-      disk->type = CD;
-    if (state[MAP_TYPE].arg[0] == 'H' || state[MAP_TYPE].arg[0] == 'h')
-      disk->type = HD;
-    if (state[MAP_TYPE].arg[0] == 'F' || state[MAP_TYPE].arg[0] == 'f')
-      disk->type = FD;
-  }
-  disk->type = grub_vdisk_check_type (args[0], file, disk->type);
-  disk->vdisk.file = file;
-  disk->vdisk.size = file->size;
-  disk->vpart.file = file;
+    {
+      if (state[MAP_TYPE].arg[0] == 'C' || state[MAP_TYPE].arg[0] == 'c')
+        disk->type = CD;
+      else if (state[MAP_TYPE].arg[0] == 'H' || state[MAP_TYPE].arg[0] == 'h')
+        disk->type = HD;
+      else if (state[MAP_TYPE].arg[0] == 'F' || state[MAP_TYPE].arg[0] == 'f')
+        disk->type = FD;
+    }
   if (argc < 2)
-    grub_snprintf (disk->devname, 20, "vd%u", last_id);
+    grub_snprintf (disk->devname, sizeof (disk->devname), "vd%u", last_id);
   else
-    grub_snprintf (disk->devname, 20, "%s", args[1]);
-  last_id++;
-  grub_guidgen (&disk->guid);
+    grub_snprintf (disk->devname, sizeof (disk->devname), "%s", args[1]);
 
-  grub_efivdisk_install (disk, state);
-  grub_efivdisk_append (disk);
+  if (state[MAP_MEM].set)
+    flags |= GRUB_DISK_PIPELINE_MEMORY;
+  if (state[MAP_BLOCK].set)
+    flags |= GRUB_DISK_PIPELINE_BLOCKLIST;
+  if (state[MAP_RT].set)
+    flags |= GRUB_DISK_PIPELINE_RESERVED_MEMORY;
+  if (state[MAP_RO].set)
+    flags |= GRUB_DISK_PIPELINE_READ_ONLY;
+  if (state[MAP_COW].set)
+    flags |= GRUB_DISK_PIPELINE_COW;
+  if (state[MAP_FORMAT].set)
+    {
+      if (!grub_disk_stage_available (GRUB_DISK_FORMAT)
+          && !grub_dl_load ("vhd"))
+        {
+          grub_free (disk);
+          return grub_errno;
+        }
+      flags |= GRUB_DISK_PIPELINE_FORMAT;
+    }
+
+  pipeline = grub_disk_pipeline_new (args[0], disk->devname,
+                                    GRUB_DISK_TARGET_EFI, flags);
+  if (!pipeline)
+    {
+      grub_free (disk);
+      return grub_errno;
+    }
+  disk->install_state = state;
+  pipeline->publish_data = disk;
+  if (state[MAP_MEM].set)
+    {
+      pipeline->allocate_memory = grub_map_source_allocate;
+      pipeline->release_memory = grub_map_source_release;
+    }
+  grub_guidgen (&disk->guid);
+  err = grub_disk_pipeline_run (pipeline);
+  if (err)
+    {
+      grub_disk_pipeline_close (pipeline);
+      grub_free (disk->vpart.dp);
+      grub_free (disk->vdisk.dp);
+      grub_free (disk);
+      return err;
+    }
+  last_id++;
   if (disk->type == CD && ! state[MAP_NOVT].set)
     grub_ventoy_set_osparam (args[0]);
   if (! state[MAP_NOG4D].set)
@@ -444,6 +643,7 @@ static grub_extcmd_t cmd_map, cmd_iso;
 
 GRUB_MOD_INIT(map)
 {
+  grub_disk_hook_register (&grub_map_publish_hook, mod);
   cmd_map = grub_register_extcmd ("map", grub_cmd_map, 0, N_("FILE [DISK NAME]"),
                                   N_("Create virtual disk."), options_map);
   cmd_iso = grub_register_extcmd ("isotools", grub_cmd_iso, 0,
@@ -454,6 +654,7 @@ GRUB_MOD_INIT(map)
 
 GRUB_MOD_FINI(map)
 {
+  grub_disk_hook_unregister (&grub_map_publish_hook);
   grub_unregister_extcmd (cmd_map);
   grub_unregister_extcmd (cmd_iso);
   grub_disk_dev_unregister (&grub_efivdisk_dev);
