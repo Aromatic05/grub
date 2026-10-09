@@ -114,7 +114,17 @@ disk_source_write (grub_file_t file, const void *buf, grub_size_t len,
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid loopback file");
   if (!grub_port_file_prepare_write (file))
     return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
-                       "loopback write supports mem: or disk-backed files only");
+                       "direct write supports mem: or disk-backed files only");
+
+#ifndef GRUB_UTIL
+  if (!grub_port_is_mem_name (file->name) && !grub_disk_write_weak)
+    {
+      if (!grub_dl_load ("disk"))
+        return grub_errno ? grub_errno
+                          : grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
+                                        "disk write module unavailable");
+    }
+#endif
 
   if (grub_file_seek (file, offset) == (grub_off_t) -1)
     return grub_errno;

@@ -250,8 +250,17 @@ grub_port_file_write (grub_file_t file, const char *buf, grub_size_t len)
           if (offset + size > (grub_off_t) p->length)
             size = p->length - offset;
 
+#ifdef GRUB_UTIL
           if (grub_disk_write (disk, sector, sec_off, size, buf) != GRUB_ERR_NONE)
             return -1;
+#else
+          /* disk.mod is optional. Common SOURCE must never depend on it
+             at link time merely because some backing files are writable. */
+          if (!grub_disk_write_weak
+              || grub_disk_write_weak (disk, sector, sec_off, size, buf)
+                   != GRUB_ERR_NONE)
+            return -1;
+#endif
 
           ret += size;
           len -= size;
