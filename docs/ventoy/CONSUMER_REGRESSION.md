@@ -24,6 +24,14 @@ tests/ventoy_consumer_qemu.sh --boot
 # Consumer protocol debug trace: QEMU monitor advances its debug pauses.
 # A failure is EXPECTED with the historical binary; logs are kept.
 tests/ventoy_consumer_qemu.sh --trace
+
+# A/B the filesystem driver with all other inputs held fixed.
+VENTOY_CONSUMER_FS=fat tests/ventoy_consumer_qemu.sh --repro
+
+# A/B the stock 67,008-byte Consumer (same UDF/ISO driver hashes).
+VENTOY_CONSUMER_RUNTIME=../Ventoy/INSTALL/ventoy \
+VENTOY_CONSUMER_SHA256=d3eccecdbee18db4bc0a2091057f2fb894982ed3217335dddb51e5cffbf8a985 \
+tests/ventoy_consumer_qemu.sh --repro
 ```
 
 Set `VENTOY_TEST_KEEP=1` to retain passing tests; failing runs are always
@@ -78,6 +86,13 @@ The boot image's `LoadedImage` device path is only `VenHw(...)` and lacks an
 explicit `CDROM(...)` segment. This is a concrete difference to examine
 against EFI Map's El Torito device path, **not yet a verified root cause**.
 
+The test was repeated with `iso_fat`/ISO9660 instead of `iso_udf`; the
+Consumer still returned to GRUB and reported EFI success, so merely switching
+the filesystem driver did not resolve this failure. Replacing only the 75,936-
+byte historical Consumer with the stock **67,008-byte** image, while keeping
+the same WinPE ISO, UDF driver and GRUB module, also reproduced the masked
+success. Neither result proves the precise downstream Windows failure cause.
+
 The debug run does **not** show `ventoy_wrapper_file_open` invocations;
 therefore, the previous hypothesis that repeated filesystem hooks caused
 *this specific* WinPE failure is unsupported. Hook rollback remains an
@@ -102,6 +117,15 @@ source (not modified by this test work):
    checks only an exactly-zero buffer length, not every short buffer.
 4. `VentoyProtocol.c`: virtual-sector remap reads do not propagate all
    `ventoy_read_iso_sector()` failures.
+
+A minimal source-only correction is now staged in
+`extras/ventoy/consumer-status.patch`. It retains the actual downstream
+`StartImage` status in `ventoy_boot()` and returns the final result from
+`VentoyEfiMain()`, rather than forcing EFI success. The patch was validated
+with `patch -p1 --dry-run -d ../Ventoy` against the current migrated source.
+**It has not been compiled or QEMU-tested**, so it is not active in any
+runtime binary. The `--repro` known-bug check must change behavior once a
+properly built patched Consumer is substituted.
 
 The historical `Ventoy` repository has pre-existing deleted EDK2 build
 bootstrap/DSC files and other unrelated modifications. They were deliberately

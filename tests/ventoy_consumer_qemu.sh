@@ -10,6 +10,11 @@ runtime=${VENTOY_CONSUMER_RUNTIME:-"$repo/../out/testenv/work/ventoy-runtime-p1"
 ovmf_code=${OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}
 ovmf_vars=${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}
 mode=${1:---prepare}
+consumer_fs=${VENTOY_CONSUMER_FS:-udf}
+case "$consumer_fs" in
+  udf|fat) ;;
+  *) echo "Unsupported VENTOY_CONSUMER_FS: $consumer_fs" >&2; exit 2 ;;
+esac
 case "$mode" in
   --prepare|--boot|--repro|--trace) ;;
   *) echo "Usage: $0 [--prepare|--boot|--repro|--trace]" >&2; exit 2 ;;
@@ -48,6 +53,7 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 printf 'Mode: %s\nRuntime: %s\nConsumer-SHA256: %s\nUDF-SHA256: %s\nSource-disk: %s\n'   "$mode" "$runtime" "$expected_consumer" "$expected_udf" "$disk" >"$work/manifest.txt"
+printf 'Consumer-FS: %s\n' "$consumer_fs" >>"$work/manifest.txt"
 {
 cat <<'GRUB'
 serial --speed=115200
@@ -97,7 +103,7 @@ if [ -z "$vtoy_chain_mem_addr" -o -z "$vtoy_chain_mem_size" -o -z "$env_param" ]
 fi
 vt_acpi_param $vtoy_chain_mem_addr 2048
 echo WINPE_CONSUMER_BEGIN
-chainloader (hd0)/ventoy/ventoy_x64.efi @DEBUG@ env_param=$env_param isoefi=on iso_udf FirstTry=@EFI@BOOT@bootx64.efi mem:$vtoy_chain_mem_addr:size:$vtoy_chain_mem_size
+chainloader (hd0)/ventoy/ventoy_x64.efi @DEBUG@ env_param=$env_param isoefi=on @FS_OPTION@ FirstTry=@EFI@BOOT@bootx64.efi mem:$vtoy_chain_mem_addr:size:$vtoy_chain_mem_size
 boot
 echo WINPE_CONSUMER_RETURNED
 GRUB
@@ -107,6 +113,7 @@ echo WINPE_TEST_END
 halt
 GRUB
 } > "$work/grub.cfg"
+sed -i "s/@FS_OPTION@/iso_$consumer_fs/g" "$work/grub.cfg"
 if test "$mode" = "--trace"; then
   sed -i 's/@DEBUG@/debug/g' "$work/grub.cfg"
 else
@@ -167,6 +174,9 @@ for marker in WINPE_EXTENT_OK WINPE_LOOPBACK_OK WINPE_CHAIN_READY WINPE_WIM_PATC
     echo "FAIL: $marker absent; see $work/serial.log" >&2; exit 1;
   }
 done
+if ! grep -aq '/WEPE/WEPE64.WIM \[SUCCESS\]' "$work/serial.log"; then
+  echo "FAIL: WinPE WIM patch was found but not prepared" >&2; exit 1
+fi
 if grep -aq WINPE_ERROR_ "$work/serial.log"; then
   echo "FAIL: GRUB reported an error; see $work/serial.log" >&2; exit 1
 fi

@@ -1,0 +1,14 @@
+--- a/EDK2/edk2_mod/edk2-edk2-stable201911/MdeModulePkg/Application/Ventoy/Ventoy.c
++++ b/EDK2/edk2_mod/edk2-edk2-stable201911/MdeModulePkg/Application/Ventoy/Ventoy.c
+@@ -1122,0 +1123 @@
++    EFI_STATUS BootStatus = EFI_NOT_FOUND;
+@@ -1202,0 +1204,2 @@
++            /* Enumerating more filesystems must not erase this failure. */
++            BootStatus = Status;
+@@ -1233 +1236 @@
+-    return EFI_SUCCESS;
++    return BootStatus;
+@@ -1346 +1349,2 @@
+-    return EFI_SUCCESS;
++    /* The EFI caller must see the actual Windows StartImage failure. */
++    return Status;
