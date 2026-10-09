@@ -146,11 +146,86 @@ ventoy_boot_ready (const char *name)
 {
   if (grub_command_find (name))
     return GRUB_ERR_NONE;
-  if (!grub_dl_load (name))
+  /* GRUB's user-facing "chainloader" command is supplied by chain.mod. */
+  if (!grub_dl_load (grub_strcmp (name, "chainloader") == 0 ? "chain" : name))
     return grub_errno;
   if (!grub_command_find (name))
     return grub_error (GRUB_ERR_FILE_NOT_FOUND, "GRUB command %s unavailable", name);
   return GRUB_ERR_NONE;
+}
+
+/* A regular GRUB disk is not necessarily an official Ventoy disk.
+   The legacy EFI consumer nevertheless needs its physical MBR/GPT fields
+   to identify the *same* backing disk it will read through EFI Block I/O.
+   Do not call vt_load_part_table here: that command enforces the original
+   Ventoy partition layout and enters an interactive loop on failure. */
+static grub_err_t
+ventoy_boot_source_disk (const char *device)
+{
+  char *disk_name = grub_strdup (device);
+  char *part;
+  grub_disk_t disk = NULL;
+  ventoy_gpt_info *table = NULL;
+  grub_err_t err = GRUB_ERR_NONE;
+
+  if (!disk_name)
+    return grub_errno;
+  part = grub_strchr (disk_name, ',');
+  if (part)
+    *part = 0;
+  disk = grub_disk_open (disk_name);
+  if (!disk)
+    {
+      err = grub_errno;
+      goto out;
+    }
+  /* The legacy EFI consumer reads exactly 512 bytes at disk LBA zero.
+     Do not silently accept a geometry which that consumer cannot read. */
+  if (disk->partition || disk->log_sector_size != GRUB_DISK_SECTOR_BITS ||
+      disk->total_sectors == GRUB_DISK_SIZE_UNKNOWN)
+    {
+      err = grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
+                        "Ventoy EFI consumer requires a 512-byte physical disk");
+      goto out;
+    }
+
+  table = grub_zalloc (sizeof (*table));
+  if (!table)
+    {
+      err = grub_errno;
+      goto out;
+    }
+  err = grub_disk_read (disk, 0, 0, sizeof (*table), table);
+  if (err)
+    goto out;
+  if (table->MBR.Byte55 != 0x55 || table->MBR.ByteAA != 0xaa)
+    {
+      err = grub_error (GRUB_ERR_BAD_PART_TABLE,
+                        "Ventoy source disk does not have a valid MBR signature");
+      goto out;
+    }
+
+  /* GRUB checked the filesystem path and partition before this point.
+     This marker tells the old EFI consumer that the direct-boot path
+     performed its own checks, not that this is an official Ventoy USB. */
+  err = grub_env_set ("VTOY_CHKDEV_RESULT_STRING", "0");
+  if (!err)
+    err = grub_env_export ("VTOY_CHKDEV_RESULT_STRING");
+  if (err)
+    goto out;
+
+  grub_free (g_ventoy_part_info);
+  g_ventoy_part_info = table;
+  table = NULL;
+  grub_dprintf ("ventoyboot", "source disk %s loaded (%llu sectors)\n",
+                disk_name, (unsigned long long) disk->total_sectors);
+
+out:
+  if (disk)
+    grub_disk_close (disk);
+  grub_free (table);
+  grub_free (disk_name);
+  return err;
 }
 
 static int
@@ -321,15 +396,20 @@ ventoy_boot_consume_linux (const char *image, const char *runtime)
   /* The chain descriptor is handed to an EFI application. Preserve it and
      Ventoy's backing allocations when firmware starts the next loader. */
   acpi_args[0] = (char *) address;
+  err = ventoy_boot_ready ("acpi");
+  if (err)
+    goto out;
   err = ventoy_boot_run ("vt_acpi_param", 2, acpi_args);
   if (err)
     goto out;
   err = ventoy_boot_ready ("chainloader");
   if (err)
     goto out;
+  grub_dprintf ("ventoyboot", "chainloader: %s\n", loader_args[0]);
   err = ventoy_boot_run ("chainloader", 6, loader_args);
   if (err)
     goto out;
+  grub_dprintf ("ventoyboot", "EFI consumer handoff\n");
   err = ventoy_boot_run ("boot", 0, NULL);
   if (!err)
     err = grub_error (GRUB_ERR_BAD_OS,
@@ -439,6 +519,10 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
       grub_printf ("Ventoy: ISO readable; runtime %s\n", runtime);
       goto out;
     }
+
+  err = ventoy_boot_source_disk (device);
+  if (err)
+    goto out;
 
   grub_env_set ("ventoy_compatible", "NO");
   grub_env_set ("LoadIsoEfiDriver", "on");
