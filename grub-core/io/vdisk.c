@@ -175,13 +175,9 @@ static grub_ssize_t
 grub_vdisk_file_read (grub_file_t file, char *buf, grub_size_t len)
 {
   struct grub_vdisk *disk = file->data;
-  grub_ssize_t ret;
 
-  ret = disk->read (disk, file->offset, buf, len);
-  if (ret > 0)
-    file->offset += ret;
-
-  return ret;
+  /* grub_file_read() advances file->offset after fs_read returns. */
+  return disk->read (disk, file->offset, buf, len);
 }
 
 static grub_err_t
@@ -299,6 +295,9 @@ grub_vdisk_apply_parsers (grub_file_t io, enum grub_file_type type)
                       grub_vdisk_parser_name (id));
           return 0;
         }
+
+      /* Only a completed parser takes ownership of the input file. */
+      ((struct grub_vdisk *) next->data)->owns_backing = 1;
 
       grub_dprintf ("vdiskdbg",
                     "vdisk: parser=%s accepted size=%llu log_sector=%u\n",

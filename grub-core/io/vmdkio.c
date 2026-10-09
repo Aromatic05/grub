@@ -101,7 +101,8 @@ grub_vmdkio_destroy (struct grub_vdisk *disk)
 
   grub_free (vmdkio->ctx.gt_cache);
   grub_free (vmdkio->ctx.gd);
-  grub_file_close (vmdkio->ctx.file);
+  if (disk->owns_backing && vmdkio->ctx.file)
+    grub_file_close (vmdkio->ctx.file);
   grub_free (vmdkio);
 }
 

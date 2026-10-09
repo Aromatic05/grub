@@ -98,7 +98,8 @@ grub_qcow2io_destroy (struct grub_vdisk *disk)
 
   grub_free (qc->ctx.l2_cache);
   grub_free (qc->ctx.l1);
-  grub_file_close (qc->ctx.file);
+  if (disk->owns_backing && qc->ctx.file)
+    grub_file_close (qc->ctx.file);
   grub_free (qc);
 }
 

@@ -33,6 +33,8 @@ struct grub_vdisk
   grub_vdisk_read_t read;
   grub_vdisk_destroy_t destroy;
   const char *name;
+  /* The parser owns the backing file only after a successful open. */
+  int owns_backing;
 };
 
 int EXPORT_FUNC(grub_vdisk_filter_should_open) (grub_file_t io,

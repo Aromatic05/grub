@@ -170,7 +170,8 @@ grub_vhdio_destroy (struct grub_vdisk *disk)
         grub_free (vhdfc->blockBitmapAndData);
       grub_free (vhdfc);
     }
-  grub_file_close (vhdio->file);
+  if (disk->owns_backing && vhdio->file)
+    grub_file_close (vhdio->file);
   grub_free (vhdio);
 }
 

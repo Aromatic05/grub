@@ -122,7 +122,8 @@ grub_vhdxio_destroy (struct grub_vdisk *disk)
   grub_vhdxio_t vhdxio = (grub_vhdxio_t) disk;
 
   grub_free (vhdxio->ctx.bat);
-  grub_file_close (vhdxio->ctx.file);
+  if (disk->owns_backing && vhdxio->ctx.file)
+    grub_file_close (vhdxio->ctx.file);
   grub_free (vhdxio);
 }
 

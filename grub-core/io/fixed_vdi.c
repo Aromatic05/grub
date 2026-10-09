@@ -54,7 +54,8 @@ grub_fixed_vdiio_destroy (struct grub_vdisk *disk)
 {
   grub_fixed_vdiio_t fixed_vdiio = (grub_fixed_vdiio_t) disk;
 
-  grub_file_close (fixed_vdiio->file);
+  if (disk->owns_backing && fixed_vdiio->file)
+    grub_file_close (fixed_vdiio->file);
   grub_free (fixed_vdiio);
 }
 
