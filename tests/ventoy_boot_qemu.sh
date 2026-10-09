@@ -81,7 +81,6 @@ terminal_output serial
 set pager=0
 set vtoy_diag=on
 set debug=chain,ventoyboot
-set ventoy_runtime=(hd1,msdos2)/ventoy
 echo VTOY_GRUBFM_BEGIN
 insmod grubfm
 grubfm_set -r hd0
@@ -109,7 +108,6 @@ terminal_output serial
 set pager=0
 set vtoy_diag=on
 set debug=chain,ventoydbg,ventoyboot
-set ventoy_runtime=(hd1,msdos2)/ventoy
 echo VTOY_BOOT_LINUX_BEGIN
 insmod ventoy
 ventoy (hd1,msdos1)/ISO/@ARCH_ISO@
