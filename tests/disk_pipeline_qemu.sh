@@ -46,11 +46,16 @@ xz -1 -c "$test_work/raw.img.gz" > "$test_work/raw.img.gz.xz"
 qemu-img convert -f raw -O vpc -o subformat=dynamic \
   "$test_work/raw.img" "$test_work/raw.vhd"
 xz -1 -c "$test_work/raw.vhd" > "$test_work/raw.vhd.xz"
+# Retain the VHD footer so FORMAT probe succeeds, but invalidate the
+# dynamic-header magic. This exercises failure *inside* the parser.
+cp "$test_work/raw.vhd" "$test_work/bad.vhd"
+printf 'X' | dd of="$test_work/bad.vhd" bs=1 seek=512 count=1 \
+  conv=notrunc status=none
 sha256sum "$test_work/raw.img.xz" > "$test_work/source.sha256"
 
 truncate -s 64M "$test_work/data.img"
 mkfs.vfat -F 16 -n DATATEST "$test_work/data.img" >/dev/null
-for file in raw.img raw.img.xz raw.img.xz.gz raw.img.gz.xz raw.img.gz raw.vhd.xz; do
+for file in raw.img raw.img.xz raw.img.xz.gz raw.img.gz.xz raw.img.gz raw.vhd.xz bad.vhd; do
   mcopy -i "$test_work/data.img" "$test_work/$file" ::/"$file"
 done
 
@@ -89,6 +94,16 @@ loopback -d nested
 vhd vdx (hd1)/raw.vhd.xz
 cat (vdx)/MARKER.TXT
 loopback -d vdx
+
+if vhd broken (hd1)/bad.vhd; then
+  echo PIPELINE_ERROR_MALFORMED_VHD_ACCEPTED
+else
+  echo PIPELINE_MALFORMED_VHD_REJECTED
+fi
+# The parser's failed allocation/cleanup must not poison the next open.
+vhd recovered (hd1)/raw.vhd.xz
+cat (recovered)/MARKER.TXT
+loopback -d recovered
 
 loopback -m ram (hd1)/raw.img
 cat (ram)/MARKER.TXT
@@ -169,14 +184,14 @@ fi
 
 grep -q 'PIPELINE_TEST_DONE' "$test_work/serial.log"
 marker_count=$(grep -c 'PIPELINE_TEST_MARKER_2026' "$test_work/serial.log")
-test "$marker_count" -eq 10 || {
-  echo "Expected 10 successful file reads, got $marker_count" >&2
+test "$marker_count" -eq 11 || {
+  echo "Expected 11 successful file reads, got $marker_count" >&2
   exit 1
 }
 grep -q '50 49 50 45' "$test_work/serial.log"
 grep -q '41 42 43 44' "$test_work/serial.log"
 grep -q 'eb 3c 90 6d' "$test_work/serial.log"
-for marker in RESERVED_REJECTED PHYSICAL_REJECTED FORMAT_REJECTED DUPLICATE_REJECTED; do
+for marker in RESERVED_REJECTED PHYSICAL_REJECTED FORMAT_REJECTED DUPLICATE_REJECTED MALFORMED_VHD_REJECTED; do
   grep -q "PIPELINE_$marker" "$test_work/serial.log" || {
     echo "Failed check: $marker" >&2
     exit 1
@@ -190,4 +205,4 @@ fi
 grep '^loopback:' "$build/grub-core/moddep.lst" | grep -qv 'vhd'
 
 pass=1
-echo "PASS: RAW, XZ, nested compression, VHD.XZ, memory, blocklist, COW, rollback and name conflicts"
+echo "PASS: RAW, nested XZ/Gzip, VHD.XZ, parser rollback, RAM, blocklist, COW and name conflicts"
