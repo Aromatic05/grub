@@ -490,15 +490,21 @@ int ventoy_ctrl_var_init(void)
     return 0;
 }
 
+static grub_command_t ventoy_boot_cmd;
+
 GRUB_MOD_INIT(ventoy)
 {
     ventoy_hwinfo_init();
     ventoy_env_init();
     ventoy_arch_mode_init();
     ventoy_register_all_cmd();
+    ventoy_boot_cmd = grub_register_command ("ventoy", ventoy_boot_command,
+                                           "[--check] [--runtime=DIR] IMAGE.iso",
+                                           "Boot a Linux ISO through Ventoy.");
 }
 
 GRUB_MOD_FINI(ventoy)
 {
+    grub_unregister_command (ventoy_boot_cmd);
     ventoy_unregister_all_cmd();
 }

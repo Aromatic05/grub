@@ -1280,6 +1280,7 @@ module = {
 module = {
   name = ventoy;
   common = ventoy/ventoy.c;
+  common = ventoy/ventoy_boot.c;
   common = ventoy/ventoy_cmd.c;
   common = ventoy/ventoy_compat.c;
   common = ventoy/ventoy_json.c;

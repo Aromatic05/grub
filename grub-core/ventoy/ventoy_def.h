@@ -727,6 +727,7 @@ grub_err_t ventoy_cmd_dump_initrd_list(grub_extcmd_context_t ctxt, int argc, cha
 grub_err_t ventoy_cmd_clear_initrd_list(grub_extcmd_context_t ctxt, int argc, char **args);
 grub_uint32_t ventoy_get_iso_boot_catlog(grub_file_t file);
 int ventoy_has_efi_eltorito(grub_file_t file, grub_uint32_t sector);
+grub_err_t ventoy_boot_command(grub_command_t, int, char **);
 grub_err_t ventoy_cmd_linux_chain_data(grub_extcmd_context_t ctxt, int argc, char **args);
 grub_err_t ventoy_cmd_linux_systemd_menu(grub_extcmd_context_t ctxt, int argc, char **args);
 grub_err_t ventoy_cmd_linux_initrd(grub_extcmd_context_t ctxt, int argc, char **args);
