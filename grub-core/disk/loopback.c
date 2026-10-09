@@ -16,7 +16,6 @@
 #include <grub/file.h>
 #include <grub/fileview.h>
 #include <grub/i18n.h>
-#include <grub/loopback_file.h>
 #include <grub/misc.h>
 #include <grub/mm.h>
 #include <grub/safemath.h>
@@ -52,23 +51,6 @@ grub_loopback_stage_match (struct grub_disk_pipeline *ctx,
                            const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
   return ctx->target == GRUB_DISK_TARGET_LOOPBACK;
-}
-
-static grub_err_t
-grub_loopback_stage_source (struct grub_disk_pipeline *ctx,
-                            const struct grub_disk_hook *hook __attribute__ ((unused)))
-{
-  ctx->file = grub_loopback_file_open
-    (ctx->source,
-     (ctx->flags & GRUB_DISK_PIPELINE_MEMORY) != 0,
-     (ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST) != 0,
-     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS, &ctx->owned_memory);
-  if (!ctx->file)
-    return grub_errno ? grub_errno
-                      : grub_error (GRUB_ERR_FILE_NOT_FOUND,
-                                    "could not open disk source");
-  ctx->direct_write = grub_loopback_file_write;
-  return GRUB_ERR_NONE;
 }
 
 static grub_err_t
@@ -111,8 +93,6 @@ grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
 
 static struct grub_disk_hook grub_loopback_hooks[] =
   {
-    { .name = "file", .stage = GRUB_DISK_SOURCE,
-      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_source },
     { .name = "grub-loopback", .stage = GRUB_DISK_PUBLISH,
       .probe = grub_loopback_stage_match, .run = grub_loopback_stage_publish }
   };

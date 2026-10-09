@@ -12,13 +12,14 @@
 #include <grub/disk.h>
 #include <grub/err.h>
 #include <grub/file.h>
-#include <grub/loopback_file.h>
+#include <grub/disk_pipeline.h>
+#include <grub/disk_source.h>
 #include <grub/misc.h>
 #include <grub/mm.h>
 #include <grub/port_write.h>
 
 grub_file_t
-grub_loopback_file_open (const char *name, int mem, int blocklist,
+grub_disk_source_open (const char *name, int mem, int blocklist,
                          enum grub_file_type type, void **owned_memory)
 {
   grub_file_t file;
@@ -88,7 +89,7 @@ grub_loopback_file_open (const char *name, int mem, int blocklist,
 }
 
 grub_err_t
-grub_loopback_file_write (grub_file_t file, const void *buf, grub_size_t len,
+grub_disk_source_write (grub_file_t file, const void *buf, grub_size_t len,
                           grub_off_t offset)
 {
   grub_ssize_t written;
@@ -109,4 +110,31 @@ grub_loopback_file_write (grub_file_t file, const void *buf, grub_size_t len,
   if ((grub_size_t) written != len)
     return grub_error (GRUB_ERR_WRITE_ERROR, "short write to loopback file");
   return GRUB_ERR_NONE;
+}
+
+
+static grub_err_t
+disk_source_stage (struct grub_disk_pipeline *ctx,
+                   const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  ctx->file = grub_disk_source_open (ctx->source,
+                                     !!(ctx->flags & GRUB_DISK_PIPELINE_MEMORY),
+                                     !!(ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST),
+                                     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS,
+                                     &ctx->owned_memory);
+  if (!ctx->file)
+    return grub_errno ? grub_errno
+                      : grub_error (GRUB_ERR_FILE_NOT_FOUND,
+                                    "could not open disk source");
+  ctx->direct_write = grub_disk_source_write;
+  return GRUB_ERR_NONE;
+}
+
+void
+grub_disk_source_register (void)
+{
+  static struct grub_disk_hook hook =
+    { .name = "file", .stage = GRUB_DISK_SOURCE, .order = 0,
+      .run = disk_source_stage };
+  grub_disk_hook_register (&hook, 0);
 }

@@ -17,6 +17,7 @@
 /* Registered once on first construction; common BLOCK hooks are
    independent from GRUB Loopback and from EFI Map publishers. */
 void grub_disk_overlay_register (void);
+void grub_disk_source_register (void);
 
 static struct grub_disk_hook *grub_disk_hooks;
 
@@ -158,6 +159,7 @@ grub_disk_pipeline_new (const char *source, const char *name,
   static int builtin_hooks_registered;
   if (!builtin_hooks_registered)
     {
+      grub_disk_source_register ();
       grub_disk_overlay_register ();
       builtin_hooks_registered = 1;
     }

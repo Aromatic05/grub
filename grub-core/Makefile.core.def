@@ -146,6 +146,7 @@ kernel = {
   common = io/fileview.c;
   common = io/disk_pipeline.c;
   common = io/disk_overlay.c;
+  common = io/disk_source.c;
   common = lib/crc.c;
   common = kern/memfile.c;
   common = kern/fs.c;
@@ -1518,7 +1519,6 @@ module = {
 module = {
   name = loopback;
   common = disk/loopback.c;
-  common = disk/loopback_file.c;
 };
 
 module = {
