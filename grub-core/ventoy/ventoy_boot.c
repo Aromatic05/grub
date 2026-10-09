@@ -31,6 +31,7 @@
 struct ventoy_boot_search
 {
   char *runtime;
+  int windows;
 };
 
 static int
@@ -48,20 +49,29 @@ ventoy_boot_file_exists (const char *path)
 }
 
 static int
-ventoy_boot_runtime_valid (const char *dir)
+ventoy_boot_runtime_valid (const char *dir, int windows)
 {
 #ifdef VTOY_BOOT_CONSUMER
-  const char *names[] = { VTOY_COMM_CPIO, VTOY_ARCH_CPIO,
-                          VTOY_BOOT_CONSUMER, "iso9660_x64.efi" };
+  const char *linux_names[] = { VTOY_COMM_CPIO, VTOY_ARCH_CPIO,
+                                VTOY_BOOT_CONSUMER, "iso9660_x64.efi" };
+  const char *windows_names[] = { VTOY_BOOT_CONSUMER, "udf_x64.efi",
+                                  "iso9660_x64.efi", "vtoyjump64.exe" };
+  const char **names = windows ? windows_names : linux_names;
+  unsigned count = windows ? sizeof (windows_names) / sizeof (windows_names[0])
+                           : sizeof (linux_names) / sizeof (linux_names[0]);
   unsigned i;
   char *path;
 
-  for (i = 0; i < sizeof (names) / sizeof (names[0]); i++)
+  /* Windows WIM injection has only been validated with the x64 Consumer. */
+  if (windows && grub_strcmp (VTOY_BOOT_CONSUMER, "ventoy_x64.efi") != 0)
+    return 0;
+
+  for (i = 0; i < count; i++)
     {
       /* Only the x64 ISO driver is needed on x64; other architectures
          supply their own driver names through the consumer. */
-      if (i == 3 && grub_strcmp (VTOY_BOOT_CONSUMER,
-                                "ventoy_x64.efi") != 0)
+      if (!windows && i == 3 && grub_strcmp (VTOY_BOOT_CONSUMER,
+                                            "ventoy_x64.efi") != 0)
         continue;
       path = grub_xasprintf ("%s/%s", dir, names[i]);
       if (!path)
@@ -74,14 +84,15 @@ ventoy_boot_runtime_valid (const char *dir)
   return 1;
 #else
   (void) dir;
+  (void) windows;
   return 0;
 #endif
 }
 
 static char *
-ventoy_boot_runtime_from (const char *dir)
+ventoy_boot_runtime_from (const char *dir, int windows)
 {
-  if (!dir || !*dir || !ventoy_boot_runtime_valid (dir))
+  if (!dir || !*dir || !ventoy_boot_runtime_valid (dir, windows))
     return NULL;
   return grub_strdup (dir);
 }
@@ -93,21 +104,23 @@ ventoy_boot_find_runtime (const char *name, void *data)
   char *dir = grub_xasprintf ("(%s)/ventoy", name);
   if (!dir)
     return 1;
-  search->runtime = ventoy_boot_runtime_from (dir);
+  search->runtime = ventoy_boot_runtime_from (dir, search->windows);
   grub_free (dir);
   return search->runtime != NULL || grub_errno == GRUB_ERR_OUT_OF_MEMORY;
 }
 
 static char *
-ventoy_boot_get_runtime (const char *explicit_dir, const char *image_device)
+ventoy_boot_get_runtime (const char *explicit_dir, const char *image_device,
+                         int windows)
 {
   struct ventoy_boot_search search = { 0 };
+  search.windows = windows;
   const char *configured = explicit_dir ? explicit_dir : grub_env_get ("ventoy_runtime");
   char *path;
 
   if (configured)
     {
-      search.runtime = ventoy_boot_runtime_from (configured);
+      search.runtime = ventoy_boot_runtime_from (configured, windows);
       if (!search.runtime && grub_errno == GRUB_ERR_NONE)
         grub_error (GRUB_ERR_FILE_NOT_FOUND,
                     "Ventoy runtime missing or incomplete at %s", configured);
@@ -117,7 +130,7 @@ ventoy_boot_get_runtime (const char *explicit_dir, const char *image_device)
   path = grub_xasprintf ("(%s)/ventoy", image_device);
   if (!path)
     return NULL;
-  search.runtime = ventoy_boot_runtime_from (path);
+  search.runtime = ventoy_boot_runtime_from (path, windows);
   grub_free (path);
   if (search.runtime)
     return search.runtime;
@@ -254,6 +267,54 @@ out:
   return exists;
 }
 
+/* Classify the ISO without touching the caller's loopback devices. The
+   public Ventoy command remains oblivious to its frontend (menu, CLI, etc). */
+static grub_err_t
+ventoy_boot_is_windows (const char *image, int *windows)
+{
+  static const char *const markers[] = {
+    "(vtoyprobe)/EFI/MICROSOFT/BOOT/BCD",
+    "(vtoyprobe)/efi/microsoft/boot/bcd",
+    "(vtoyprobe)/BOOT/BCD",
+    "(vtoyprobe)/boot/bcd",
+    "(vtoyprobe)/SOURCES/BOOT.WIM",
+    "(vtoyprobe)/sources/boot.wim",
+    "(vtoyprobe)/BOOTMGR",
+    "(vtoyprobe)/bootmgr"
+  };
+  char *mount[] = { (char *) "vtoyprobe", (char *) image };
+  char *unmount[] = { (char *) "-d", (char *) "vtoyprobe" };
+  grub_disk_t existing;
+  grub_err_t err;
+  unsigned i;
+
+  *windows = 0;
+  existing = grub_disk_open ("vtoyprobe");
+  if (existing)
+    {
+      grub_disk_close (existing);
+      return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                         "loopback device 'vtoyprobe' is already in use");
+    }
+  grub_errno = GRUB_ERR_NONE;
+  err = ventoy_boot_ready ("loopback");
+  if (err)
+    return err;
+  err = ventoy_boot_run ("loopback", 2, mount);
+  if (err)
+    return err;
+
+  for (i = 0; i < sizeof (markers) / sizeof (markers[0]); i++)
+    if (ventoy_boot_file_exists (markers[i]))
+      {
+        *windows = 1;
+        break;
+      }
+
+  err = ventoy_boot_run ("loopback", 2, unmount);
+  return err;
+}
+
 /* Extract enough ISO boot metadata for Linux without requiring Ventoy's
    2800-line menu script. Distro-specific overrides remain with the engine. */
 static grub_err_t
@@ -362,39 +423,167 @@ out:
   return err;
 }
 
+/* Build the Windows/WIM chain through the historical Ventoy engine.
+   The EFI consumer and all caller-facing GRUB APIs remain unchanged. */
 static grub_err_t
-ventoy_boot_consume_linux (const char *image, const char *runtime)
+ventoy_boot_prepare_windows (const char *image, const char *relative,
+                             const char *runtime, int *udf)
 {
-#ifdef VTOY_BOOT_CONSUMER
+  static const char *const bcd_paths[] = {
+    "(loop)/EFI/MICROSOFT/BOOT/BCD",
+    "(loop)/efi/microsoft/boot/bcd",
+    "(loop)/BOOT/BCD",
+    "(loop)/boot/bcd"
+  };
+  static const char *const fallback_wims[] = {
+    "/BOOT/BOOT.WIM", "/SOURCES/BOOT.WIM",
+    "/boot/boot.wim", "/sources/boot.wim"
+  };
   char *image_args[] = { (char *) image };
-  char *acpi_args[2] = { NULL, (char *) "2048" };
-  char *loader_args[6] = { NULL, NULL, (char *) "isoefi=on",
-                           (char *) VTOY_BOOT_FIRSTTRY,
-                           (char *) "iso_fat", NULL };
-  const char *address, *size, *param;
+  char *mount[] = { (char *) "loop", (char *) image };
+  char *unmount[] = { (char *) "-d", (char *) "loop" };
+  char *count_args[] = { (char *) "vtoy_direct_wim_count" };
+  char *locate_args[] = { (char *) "(loop)", (char *) relative };
+  grub_disk_t existing;
   grub_err_t err;
+  const char *count;
+  unsigned i;
+  int mounted = 0;
+  int found = 0;
 
-  err = ventoy_boot_run ("vt_linux_chain_data", 1, image_args);
+  err = ventoy_boot_run ("vt_windows_reset", 0, NULL);
+  if (err)
+    return err;
+  err = grub_env_set ("vtoy_path", runtime);
+  if (err)
+    return err;
+  err = ventoy_boot_run ("vt_img_sector", 1, image_args);
   if (err)
     return err;
 
-  address = grub_env_get ("vtoy_chain_mem_addr");
-  size = grub_env_get ("vtoy_chain_mem_size");
-  param = grub_env_get ("env_param");
+  existing = grub_disk_open ("loop");
+  if (existing)
+    {
+      grub_disk_close (existing);
+      return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                         "loopback device 'loop' is already in use");
+    }
+  grub_errno = GRUB_ERR_NONE;
+  err = ventoy_boot_ready ("loopback");
+  if (err)
+    return err;
+  err = ventoy_boot_run ("loopback", 2, mount);
+  if (err)
+    return err;
+  mounted = 1;
+
+  /* vt_is_udf deliberately returns 1 for an ordinary ISO9660 image.
+     Its result is a predicate, not a fatal GRUB command failure. */
+  err = grub_command_execute ("vt_is_udf", 1, image_args);
+  if (err != GRUB_ERR_NONE && err != 1)
+    goto out;
+  *udf = (err == GRUB_ERR_NONE);
+  grub_errno = GRUB_ERR_NONE;
+  err = grub_env_set ("ventoy_fs_probe", *udf ? "udf" : "iso9660");
+  if (err)
+    goto out;
+
+  for (i = 0; i < sizeof (bcd_paths) / sizeof (bcd_paths[0]); i++)
+    if (ventoy_boot_file_exists (bcd_paths[i]))
+      {
+        char *args[] = { (char *) "bcd", (char *) bcd_paths[i] };
+        err = ventoy_boot_run ("vt_windows_collect_wim_patch", 2, args);
+        if (err)
+          goto out;
+        break;
+      }
+
+  err = ventoy_boot_run ("vt_windows_count_wim_patch", 1, count_args);
+  if (err)
+    goto out;
+  count = grub_env_get ("vtoy_direct_wim_count");
+
+  /* The original Windows menu falls back to boot.wim if an existing BCD
+     does not enumerate a patchable WinPE image. */
+  if (!count || grub_strtoul (count, NULL, 10) == 0)
+    for (i = 0; i < sizeof (fallback_wims) / sizeof (fallback_wims[0]); i++)
+      {
+        char *path = grub_xasprintf ("(loop)%s", fallback_wims[i]);
+        if (!path)
+          {
+            err = grub_errno;
+            goto out;
+          }
+        if (ventoy_boot_file_exists (path))
+          {
+            char *args[] = { (char *) "wim", (char *) fallback_wims[i] };
+            err = ventoy_boot_run ("vt_windows_collect_wim_patch", 2, args);
+            found = 1;
+          }
+        grub_free (path);
+        if (err || found)
+          break;
+      }
+  if (err)
+    goto out;
+
+  if (found)
+    {
+      err = ventoy_boot_run ("vt_windows_count_wim_patch", 1, count_args);
+      if (err)
+        goto out;
+      count = grub_env_get ("vtoy_direct_wim_count");
+    }
+  grub_dprintf ("ventoyboot", "Windows image fs=%s WIM candidates=%s\n",
+                *udf ? "udf" : "iso9660", count ? count : "0");
+
+  if (count && grub_strtoul (count, NULL, 10) != 0)
+    err = ventoy_boot_run ("vt_windows_locate_wim_patch", 2, locate_args);
+out:
+  if (mounted)
+    {
+      grub_err_t close_err = ventoy_boot_run ("loopback", 2, unmount);
+      if (!err)
+        err = close_err;
+    }
+  return err;
+}
+
+/* Both OS paths publish the original Ventoy chain through the same EFI
+   consumer. Only the chain producer and consumer arguments differ. */
+static grub_err_t
+ventoy_boot_launch_efi (const char *runtime, int windows, int udf)
+{
+#ifdef VTOY_BOOT_CONSUMER
+  char *acpi_args[] = { NULL, (char *) "2048" };
+  char *args[6] = { NULL };
+  char *memory_arg = NULL;
+  char *isoefi_arg = NULL;
+  const char *address = grub_env_get ("vtoy_chain_mem_addr");
+  const char *size = grub_env_get ("vtoy_chain_mem_size");
+  const char *param = grub_env_get ("env_param");
+  const char *mode = grub_env_get ("LoadIsoEfiDriver");
+  grub_err_t err;
+
   if (!address || !*address || !size || !*size || !param || !*param)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "Ventoy chain data missing");
 
-  loader_args[0] = grub_xasprintf ("%s/%s", runtime, VTOY_BOOT_CONSUMER);
-  loader_args[1] = grub_xasprintf ("env_param=%s", param);
-  loader_args[5] = grub_xasprintf ("mem:%s:size:%s", address, size);
-  if (!loader_args[0] || !loader_args[1] || !loader_args[5])
+  args[0] = grub_xasprintf ("%s/%s", runtime, VTOY_BOOT_CONSUMER);
+  args[1] = grub_xasprintf ("env_param=%s", param);
+  memory_arg = grub_xasprintf ("mem:%s:size:%s", address, size);
+  if (windows)
+    isoefi_arg = grub_xasprintf ("isoefi=%s", mode ? mode : "");
+  if (!args[0] || !args[1] || !memory_arg || (windows && !isoefi_arg))
     {
       err = grub_errno;
       goto out;
     }
+  args[2] = windows ? isoefi_arg : (char *) "isoefi=on";
+  args[3] = windows ? (char *) (udf ? "iso_udf" : "iso_fat")
+                    : (char *) VTOY_BOOT_FIRSTTRY;
+  args[4] = windows ? memory_arg : (char *) "iso_fat";
+  args[5] = windows ? NULL : memory_arg;
 
-  /* The chain descriptor is handed to an EFI application. Preserve it and
-     Ventoy's backing allocations when firmware starts the next loader. */
   acpi_args[0] = (char *) address;
   err = ventoy_boot_ready ("acpi");
   if (err)
@@ -405,26 +594,67 @@ ventoy_boot_consume_linux (const char *image, const char *runtime)
   err = ventoy_boot_ready ("chainloader");
   if (err)
     goto out;
-  grub_dprintf ("ventoyboot", "chainloader: %s\n", loader_args[0]);
-  err = ventoy_boot_run ("chainloader", 6, loader_args);
+  grub_dprintf ("ventoyboot", "EFI %s consumer %s\n",
+                windows ? "Windows" : "Linux", args[0]);
+  err = ventoy_boot_run ("chainloader", windows ? 5 : 6, args);
   if (err)
     goto out;
-  grub_dprintf ("ventoyboot", "EFI consumer handoff\n");
   err = ventoy_boot_run ("boot", 0, NULL);
   if (!err)
     err = grub_error (GRUB_ERR_BAD_OS,
                       "Ventoy EFI consumer returned to GRUB");
 out:
-  grub_free (loader_args[0]);
-  grub_free (loader_args[1]);
-  grub_free (loader_args[5]);
+  grub_free (args[0]);
+  grub_free (args[1]);
+  grub_free (isoefi_arg);
+  grub_free (memory_arg);
   return err;
 #else
-  (void) image;
   (void) runtime;
+  (void) windows;
+  (void) udf;
   return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
                      "one-command Ventoy boot is not supported on this architecture");
 #endif
+}
+
+static grub_err_t
+ventoy_boot_consume_linux (const char *image, const char *runtime)
+{
+  char *args[] = { (char *) image };
+  grub_err_t err = ventoy_boot_run ("vt_linux_chain_data", 1, args);
+  if (err)
+    return err;
+  return ventoy_boot_launch_efi (runtime, 0, 0);
+}
+
+static grub_err_t
+ventoy_boot_consume_windows (const char *image, const char *runtime, int udf)
+{
+  char *args[] = { (char *) image };
+  const char *address;
+  const char *size;
+  ventoy_chain_head *chain;
+  grub_err_t err = ventoy_boot_run ("vt_windows_chain_data", 1, args);
+
+  if (err)
+    return err;
+  address = grub_env_get ("vtoy_chain_mem_addr");
+  size = grub_env_get ("vtoy_chain_mem_size");
+  if (address && size)
+    {
+      chain = (ventoy_chain_head *) (grub_addr_t) grub_strtoul (address, NULL, 16);
+      if (chain)
+        {
+          grub_dprintf ("ventoyboot", "Windows chain bytes=%s\n", size);
+          grub_dprintf ("ventoyboot", "Windows chain override=%u\n",
+                        chain->override_chunk_num);
+          grub_dprintf ("ventoyboot", "Windows chain virt=%llu udf=%u\n",
+                        (unsigned long long) chain->virt_img_size_in_bytes,
+                        chain->os_param.vtoy_reserved[3]);
+        }
+    }
+  return ventoy_boot_launch_efi (runtime, 1, udf);
 }
 
 grub_err_t
@@ -439,6 +669,8 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
   const char *ext;
   unsigned i;
   int check_only = 0;
+  int windows = 0;
+  int udf = 0;
 
   for (i = 0; i < (unsigned) argc; i++)
     {
@@ -458,7 +690,7 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
   ext = grub_strrchr (image, '.');
   if (!ext || grub_strcasecmp (ext, ".iso") != 0)
     return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
-                       "one-command Ventoy currently supports Linux ISO only");
+                       "one-command Ventoy supports ISO images only");
 
   device = grub_file_get_device_name (image);
   relative = grub_strchr (image, ')');
@@ -508,7 +740,20 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
 
   grub_file_close (file);
   file = NULL;
-  runtime = ventoy_boot_get_runtime (runtime_arg, device);
+
+  err = ventoy_boot_is_windows (image, &windows);
+  if (err)
+    goto out;
+#if !defined (GRUB_MACHINE_EFI) || !defined (__x86_64__)
+  if (windows)
+    {
+      err = grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
+                        "Windows ISO direct boot currently requires x86_64 EFI");
+      goto out;
+    }
+#endif
+
+  runtime = ventoy_boot_get_runtime (runtime_arg, device, windows);
   if (!runtime)
     {
       err = grub_errno;
@@ -516,7 +761,8 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
     }
   if (check_only)
     {
-      grub_printf ("Ventoy: ISO readable; runtime %s\n", runtime);
+      grub_printf ("Ventoy: %s ISO readable; runtime %s\n",
+                   windows ? "Windows" : "Linux", runtime);
       goto out;
     }
 
@@ -524,11 +770,24 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
   if (err)
     goto out;
 
-  grub_env_set ("ventoy_compatible", "NO");
-  grub_env_set ("LoadIsoEfiDriver", "on");
-  err = ventoy_boot_prepare_linux (image, device, relative, runtime);
-  if (!err)
-    err = ventoy_boot_consume_linux (image, runtime);
+  err = grub_env_set ("ventoy_compatible", "NO");
+  if (err)
+    goto out;
+  if (windows)
+    {
+      grub_env_unset ("LoadIsoEfiDriver");
+      err = ventoy_boot_prepare_windows (image, relative, runtime, &udf);
+      if (!err)
+        err = ventoy_boot_consume_windows (image, runtime, udf);
+    }
+  else
+    {
+      err = grub_env_set ("LoadIsoEfiDriver", "on");
+      if (!err)
+        err = ventoy_boot_prepare_linux (image, device, relative, runtime);
+      if (!err)
+        err = ventoy_boot_consume_linux (image, runtime);
+    }
 out:
   if (file)
     grub_file_close (file);
