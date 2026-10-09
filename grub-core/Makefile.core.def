@@ -144,6 +144,7 @@ kernel = {
   common = kern/err.c;
   common = kern/file.c;
   common = io/fileview.c;
+  common = io/disk_pipeline.c;
   common = kern/memfile.c;
   common = kern/fs.c;
   common = kern/list.c;
