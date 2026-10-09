@@ -196,8 +196,10 @@ grub_disk_pipeline_read_base (struct grub_disk_pipeline *ctx,
 
   if (available)
     {
-      if (grub_file_seek (ctx->file, off) < 0)
-        return grub_errno;
+      if (grub_file_seek (ctx->file, off) == (grub_off_t) -1)
+        return grub_errno ? grub_errno
+                          : grub_error (GRUB_ERR_OUT_OF_RANGE,
+                                        "disk source seek failed");
       got = grub_file_read (ctx->file, buf, available);
       if (got != (grub_ssize_t) available)
         return grub_errno ? grub_errno
