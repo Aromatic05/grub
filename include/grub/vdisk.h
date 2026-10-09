@@ -19,7 +19,6 @@ typedef void (*grub_vdisk_destroy_t) (struct grub_vdisk *disk);
 
 struct grub_vdisk_parser_desc
 {
-  grub_file_filter_id_t id;
   const char *name;
   grub_vdisk_probe_t probe;
   grub_vdisk_open_t open;
@@ -71,15 +70,5 @@ void EXPORT_FUNC(grub_vdisk_init) (struct grub_vdisk *disk,
                                    const char *name);
 void EXPORT_FUNC(grub_vdisk_attach_object) (grub_file_t file,
                                             struct grub_vdisk *disk);
-void EXPORT_FUNC(grub_vdisk_register_parser) (const struct grub_vdisk_parser_desc *parser);
-void EXPORT_FUNC(grub_vdisk_unregister_parser) (grub_file_filter_id_t id);
-void EXPORT_FUNC(grub_vdisk_register_parsers) (const struct grub_vdisk_parser_desc *parsers,
-                                               grub_size_t count);
-void EXPORT_FUNC(grub_vdisk_unregister_parsers) (const struct grub_vdisk_parser_desc *parsers,
-                                                 grub_size_t count);
-int EXPORT_FUNC(grub_vdisk_parsers_ready) (void);
-grub_file_t EXPORT_FUNC(grub_vdisk_apply_parsers) (grub_file_t io,
-                                                   enum grub_file_type type);
-const char *EXPORT_FUNC(grub_vdisk_parser_name) (grub_file_filter_id_t id);
 
 #endif
