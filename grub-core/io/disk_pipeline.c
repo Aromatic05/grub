@@ -81,6 +81,65 @@ grub_disk_stage_available (enum grub_disk_stage stage)
   return 0;
 }
 
+/* Ordered VIEW transforms compose from the outside inward. A successful
+   transform restarts matching at the first hook; a nonmatch leaves the
+   original file untouched. A failing hook must leave ctx->file owned by
+   the caller. */
+grub_err_t
+grub_disk_pipeline_views (struct grub_disk_pipeline *ctx)
+{
+  unsigned int depth;
+
+  if (!ctx || !ctx->file)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "disk VIEW without source");
+  if (!(ctx->flags & GRUB_DISK_PIPELINE_DECOMPRESS)
+      || (ctx->type & GRUB_FILE_TYPE_NO_DECOMPRESS))
+    return GRUB_ERR_NONE;
+
+  for (depth = 0; depth < 8; depth++)
+    {
+      struct grub_disk_hook *hook;
+      int changed = 0;
+
+      for (hook = grub_disk_hooks; hook; hook = hook->next)
+        {
+          grub_file_t before;
+          grub_err_t err;
+          int match;
+
+          if (hook->stage != GRUB_DISK_VIEW)
+            continue;
+          match = hook->probe ? hook->probe (ctx, hook) : 1;
+          if (match < 0)
+            return grub_errno ? grub_errno
+                              : grub_error (GRUB_ERR_BAD_FILE_TYPE,
+                                            "disk VIEW probe failed");
+          if (!match)
+            continue;
+
+          before = ctx->file;
+          err = hook->run (ctx, hook);
+          if (err)
+            return err;
+          if (!ctx->file)
+            return grub_error (GRUB_ERR_BAD_FILE_TYPE,
+                               "disk VIEW hook returned no file");
+          if (before != ctx->file)
+            {
+              ctx->transformed = 1;
+              ctx->direct_write = 0;
+              changed = 1;
+              break;
+            }
+        }
+      if (!changed)
+        return GRUB_ERR_NONE;
+    }
+
+  return grub_error (GRUB_ERR_BAD_COMPRESSED_DATA,
+                     "too many nested disk compression layers");
+}
+
 struct grub_disk_pipeline *
 grub_disk_pipeline_new (const char *source, const char *name,
                         enum grub_disk_target target, unsigned int flags)
@@ -124,6 +183,13 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
       int exclusive = (stage == GRUB_DISK_SOURCE || stage == GRUB_DISK_FORMAT
                        || stage == GRUB_DISK_PUBLISH);
 
+      if (stage == GRUB_DISK_VIEW)
+        {
+          grub_err_t err = grub_disk_pipeline_views (ctx);
+          if (err)
+            return err;
+          continue;
+        }
       if (stage == GRUB_DISK_FORMAT
           && !(ctx->flags & GRUB_DISK_PIPELINE_FORMAT))
         continue;
@@ -134,11 +200,15 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
 
           if (hook->stage != stage)
             continue;
-          if (hook->probe && !hook->probe (ctx, hook))
+          if (hook->probe)
             {
-              /* Probes are observational. A mismatch is not a failure. */
-              grub_errno = GRUB_ERR_NONE;
-              continue;
+              int match = hook->probe (ctx, hook);
+              if (match < 0)
+                return grub_errno ? grub_errno
+                                  : grub_error (GRUB_ERR_BAD_FILE_TYPE,
+                                                "disk hook probe failed");
+              if (!match)
+                continue;
             }
 
           grub_dprintf ("diskpipe", "stage=%u hook=%s\n", stage, hook->name);

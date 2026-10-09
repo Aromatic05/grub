@@ -65,6 +65,9 @@ grub_err_t EXPORT_FUNC (grub_disk_hook_register) (struct grub_disk_hook *hook,
                                                    grub_dl_t module);
 void EXPORT_FUNC (grub_disk_hook_unregister) (struct grub_disk_hook *hook);
 int EXPORT_FUNC (grub_disk_stage_available) (enum grub_disk_stage stage);
+/* Apply the same VIEW hook chain used by ordinary grub_file_open(). */
+grub_err_t EXPORT_FUNC (grub_disk_pipeline_views)
+  (struct grub_disk_pipeline *ctx);
 
 struct grub_disk_pipeline *EXPORT_FUNC (grub_disk_pipeline_new)
   (const char *source, const char *name, enum grub_disk_target target,

@@ -72,34 +72,6 @@ grub_loopback_stage_source (struct grub_disk_pipeline *ctx,
 }
 
 static grub_err_t
-grub_loopback_stage_view (struct grub_disk_pipeline *ctx,
-                          const struct grub_disk_hook *hook __attribute__ ((unused)))
-{
-  grub_file_t transformed;
-
-  if (!(ctx->flags & GRUB_DISK_PIPELINE_DECOMPRESS))
-    return GRUB_ERR_NONE;
-
-  transformed = grub_fileview_apply_compression (ctx->file, ctx->type);
-  if (!transformed)
-    {
-      /* FileView closes its input when a nested transform fails. */
-      ctx->file = 0;
-      return grub_errno ? grub_errno
-                        : grub_error (GRUB_ERR_BAD_COMPRESSED_DATA,
-                                      "disk decompression failed");
-    }
-
-  if (transformed != ctx->file)
-    {
-      ctx->file = transformed;
-      ctx->transformed = 1;
-      ctx->direct_write = 0;
-    }
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
 grub_loopback_stage_block (struct grub_disk_pipeline *ctx,
                            const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
@@ -150,8 +122,6 @@ static struct grub_disk_hook grub_loopback_hooks[] =
   {
     { .name = "file", .stage = GRUB_DISK_SOURCE,
       .probe = grub_loopback_stage_match, .run = grub_loopback_stage_source },
-    { .name = "decompress", .stage = GRUB_DISK_VIEW,
-      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_view },
     { .name = "cow", .stage = GRUB_DISK_BLOCK,
       .probe = grub_loopback_stage_match, .run = grub_loopback_stage_block },
     { .name = "grub-loopback", .stage = GRUB_DISK_PUBLISH,
