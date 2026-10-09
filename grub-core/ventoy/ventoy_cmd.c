@@ -3489,7 +3489,8 @@ static grub_err_t ventoy_cmd_img_sector(grub_extcmd_context_t ctxt, int argc, ch
     g_img_chunk_list.chunk = grub_malloc(sizeof(ventoy_img_chunk) * DEFAULT_CHUNK_NUM);
     if (NULL == g_img_chunk_list.chunk)
     {
-        return grub_error(GRUB_ERR_OUT_OF_MEMORY, "Can't allocate image chunk memoty\n");
+        grub_file_close(file);
+        return grub_error(GRUB_ERR_OUT_OF_MEMORY, "Can't allocate image chunk memory\n");
     }
     
     g_img_chunk_list.max_chunk = DEFAULT_CHUNK_NUM;
@@ -3504,11 +3505,8 @@ static grub_err_t ventoy_cmd_img_sector(grub_extcmd_context_t ctxt, int argc, ch
 
     if (rc)
     {
-        if (fs_type == ventoy_fs_btrfs)
-        {
-            vtoy_tip(10, "%s\n\nWill exit in 10 seconds...\n", errmsg);
-            grub_exit();            
-        }
+        /* An invalid physical extent map is a recoverable boot command
+           failure, not grounds to terminate the GRUB session. */
         return grub_error(GRUB_ERR_NOT_IMPLEMENTED_YET, "%s\n", errmsg);
     }
 
