@@ -1,0 +1,8 @@
+[type]
+icon=iso
+display=1
+
+[0]
+title=Boot with Ventoy
+menu=ventoy.cfg
+enable=efi
