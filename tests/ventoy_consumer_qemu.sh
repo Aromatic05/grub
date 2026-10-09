@@ -24,8 +24,8 @@ case "$consumer_fs" in
   *) echo "Unsupported VENTOY_CONSUMER_FS: $consumer_fs" >&2; exit 2 ;;
 esac
 case "$mode" in
-  --prepare|--boot|--invalid-params|--trace) ;;
-  *) echo "Usage: $0 [--prepare|--boot|--invalid-params|--trace]" >&2; exit 2 ;;
+  --prepare|--boot|--invalid-params|--trace|--direct-check|--direct-boot) ;;
+  *) echo "Usage: $0 [--prepare|--boot|--invalid-params|--trace|--direct-check|--direct-boot]" >&2; exit 2 ;;
 esac
 for command in sha256sum mkfs.vfat mmd mcopy qemu-system-x86_64 timeout grep; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing command: $command" >&2; exit 1; }
@@ -66,6 +66,33 @@ printf 'Mode: %s\nRuntime: %s\nConsumer-SHA256: %s\nUDF-SHA256: %s\nSource-disk:
 printf 'Consumer-FS: %s\n' "$consumer_fs" >>"$work/manifest.txt"
 printf 'Guest-Disk-Bus: %s\n' "$guest_bus" >>"$work/manifest.txt"
 {
+if test "$mode" = "--direct-check"; then
+  cat <<'GRUB'
+serial --speed=115200
+terminal_input serial
+terminal_output serial
+echo WINPE_DIRECT_CHECK_BEGIN
+insmod ventoy
+if ventoy --check (hd1,msdos1)/ISO/winpe.iso; then
+  echo WINPE_DIRECT_CHECK_OK
+else
+  echo WINPE_ERROR_DIRECT_CHECK
+fi
+halt
+GRUB
+elif test "$mode" = "--direct-boot"; then
+  cat <<'GRUB'
+serial --speed=115200
+terminal_input serial
+terminal_output serial
+set debug=chain,vtchunkdbg,ventoyboot
+echo WINPE_DIRECT_BOOT_BEGIN
+insmod ventoy
+ventoy (hd1,msdos1)/ISO/winpe.iso
+echo WINPE_CONSUMER_RETURNED
+halt
+GRUB
+else
 cat <<'GRUB'
 serial --speed=115200
 terminal_input serial
@@ -136,6 +163,7 @@ cat <<'GRUB'
 echo WINPE_TEST_END
 halt
 GRUB
+fi
 } > "$work/grub.cfg"
 sed -i "s/@FS_OPTION@/iso_$consumer_fs/g" "$work/grub.cfg"
 if test "${VENTOY_FS_DEBUG:-0}" = 1; then
@@ -196,7 +224,8 @@ timeout "${VENTOY_WINPE_TIMEOUT:-90s}" qemu-system-x86_64 -machine q35,accel=tcg
   -drive "$guest_esp_drive" \
   -drive "$guest_source_drive" >"$work/qemu.log" 2>&1 &
 pid=$!
-if test "$mode" = "--boot" && test "${VENTOY_SCREENSHOT:-0}" = "1"; then
+if { test "$mode" = "--boot" || test "$mode" = "--direct-boot"; } &&
+   test "${VENTOY_SCREENSHOT:-0}" = "1"; then
   sleep "${VENTOY_CAPTURE_AFTER:-120}"
   if test -S "$work/monitor.sock" && kill -0 "$pid" 2>/dev/null; then
     printf 'screendump %s/winpe-screen.ppm\n' "$work" |
@@ -229,6 +258,41 @@ if test "$mode" = "--trace"; then
 fi
 wait "$pid" || status=$?
 
+if test "$mode" = "--direct-check"; then
+  grep -aq WINPE_DIRECT_CHECK_OK "$work/serial.log" &&
+  grep -aq 'Ventoy: Windows ISO readable;' "$work/serial.log" &&
+  ! grep -aq WINPE_ERROR_DIRECT_CHECK "$work/serial.log" || {
+    echo "FAIL: public ventoy --check did not accept the WinPE ISO" >&2; exit 1;
+  }
+  echo "PASS: public ventoy --check recognizes Windows ISO and finds runtime"
+  pass=1
+  exit 0
+fi
+if test "$mode" = "--direct-boot"; then
+  grep -aq WINPE_DIRECT_BOOT_BEGIN "$work/serial.log" || {
+    echo "FAIL: public ventoy PATH not reached" >&2; exit 1;
+  }
+  # GRUB's serial terminal wraps long debug lines; assert stable fragments.
+  grep -aq 'Windows image' "$work/serial.log" &&
+  grep -aq 'fs=udf WIM candidates=1' "$work/serial.log" || {
+    echo "FAIL: direct Ventoy Windows/WIM pipeline did not run" >&2; exit 1;
+  }
+  for field in 'bytes=1667736' 'override=4' 'virt=460988416 udf=1'; do
+    grep -aFq "$field" "$work/serial.log" || {
+      echo "FAIL: public Ventoy WIM chain differs from verified fixture ($field)" >&2
+      exit 1
+    }
+  done
+  grep -aq 'EFI Windows' "$work/serial.log" &&
+  grep -aq 'chainloader argc=5' "$work/serial.log" || {
+    echo "FAIL: direct Ventoy did not reach Windows EFI consumer" >&2; exit 1;
+  }
+  if grep -aq WINPE_CONSUMER_RETURNED "$work/serial.log"; then
+    echo "FAIL: direct Windows EFI Consumer returned to GRUB" >&2; exit 1;
+  fi
+  echo "UNVERIFIED: direct WinPE handoff reached EFI; inspect in-guest ISO mount" >&2
+  exit 2
+fi
 grep -aq WINPE_TEST_BEGIN "$work/serial.log" || {
   echo "FAIL: GRUB test script never started" >&2; exit 1;
 }
