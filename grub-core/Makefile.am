@@ -70,6 +70,7 @@ KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/cache.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/command.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/device.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/disk.h
+KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/disk_pipeline.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/dl.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/efi/sb.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/env.h
