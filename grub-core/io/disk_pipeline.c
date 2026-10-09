@@ -236,6 +236,15 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
                   ctx->format_module = hook->module;
                 }
             }
+          if (stage == GRUB_DISK_PUBLISH)
+            {
+              if (!ctx->published)
+                return grub_error (GRUB_ERR_BAD_DEVICE,
+                                   "disk publish hook produced no device");
+              ctx->publisher = hook;
+              if (hook->module)
+                grub_dl_ref (hook->module);
+            }
           if (exclusive)
             break;
         }
@@ -340,6 +349,17 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
 {
   if (!ctx)
     return;
+
+  /* The publisher must remove its device before the backing I/O chain dies. */
+  if (ctx->publisher)
+    {
+      const struct grub_disk_hook *publisher = ctx->publisher;
+      ctx->publisher = 0;
+      if (publisher->unpublish)
+        publisher->unpublish (ctx, publisher);
+      if (publisher->module)
+        grub_dl_unref (publisher->module);
+    }
 
   /* Reverse the assembled chain before destroying backing views. */
   while (ctx->io && ctx->io != &ctx->base)

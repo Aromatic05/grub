@@ -32,7 +32,6 @@ struct grub_loopback
 
 static struct grub_loopback *loopback_list;
 static unsigned long last_id;
-static grub_dl_t loopback_module;
 
 static const struct grub_arg_option options[] =
   {
@@ -86,25 +85,38 @@ grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
   dev->next = loopback_list;
   loopback_list = dev;
   ctx->published = 1;
-  if (loopback_module)
-    grub_dl_ref (loopback_module);
   return GRUB_ERR_NONE;
+}
+
+static void
+grub_loopback_stage_unpublish (struct grub_disk_pipeline *ctx,
+                               const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  struct grub_loopback *dev;
+  struct grub_loopback **prev;
+  for (dev = loopback_list, prev = &loopback_list;
+       dev; prev = &dev->next, dev = dev->next)
+    if (dev->pipeline == ctx)
+      {
+        *prev = dev->next;
+        grub_free (dev);
+        break;
+      }
+  ctx->published = 0;
 }
 
 static struct grub_disk_hook grub_loopback_hooks[] =
   {
     { .name = "grub-loopback", .stage = GRUB_DISK_PUBLISH,
-      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_publish }
+      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_publish,
+      .unpublish = grub_loopback_stage_unpublish }
   };
 
 static grub_err_t
 delete_loopback (const char *name)
 {
   struct grub_loopback *dev;
-  struct grub_loopback **prev;
-
-  for (dev = loopback_list, prev = &loopback_list;
-       dev; prev = &dev->next, dev = dev->next)
+  for (dev = loopback_list; dev; dev = dev->next)
     if (grub_strcmp (dev->pipeline->name, name) == 0)
       break;
 
@@ -113,11 +125,7 @@ delete_loopback (const char *name)
   if (dev->refcnt)
     return grub_error (GRUB_ERR_STILL_REFERENCED, "device still referenced");
 
-  *prev = dev->next;
   grub_disk_pipeline_close (dev->pipeline);
-  grub_free (dev);
-  if (loopback_module)
-    grub_dl_unref (loopback_module);
   return GRUB_ERR_NONE;
 }
 
@@ -286,7 +294,6 @@ GRUB_MOD_INIT(loopback)
 {
   grub_size_t i;
 
-  loopback_module = mod;
   for (i = 0; i < ARRAY_SIZE (grub_loopback_hooks); i++)
     grub_disk_hook_register (&grub_loopback_hooks[i], mod);
 
@@ -308,5 +315,4 @@ GRUB_MOD_FINI(loopback)
   grub_disk_dev_unregister (&grub_loopback_dev);
   for (i = 0; i < ARRAY_SIZE (grub_loopback_hooks); i++)
     grub_disk_hook_unregister (&grub_loopback_hooks[i]);
-  loopback_module = 0;
 }

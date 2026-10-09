@@ -56,6 +56,8 @@ struct grub_disk_pipeline
   grub_dl_t format_module;
   struct grub_disk_layer base;
   struct grub_disk_layer *io;
+  void *publish_data;
+  const struct grub_disk_hook *publisher;
   int transformed;
   int formatted;
   int published;
@@ -68,6 +70,7 @@ struct grub_disk_hook
   int order;
   int (*probe) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
   grub_err_t (*run) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
+  void (*unpublish) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
   const void *data;
   grub_dl_t module;
   struct grub_disk_hook *next;
