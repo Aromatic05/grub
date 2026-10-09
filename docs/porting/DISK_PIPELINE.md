@@ -15,27 +15,28 @@ parsers, providers, and backends.
 
 | Stage | Contract | Current implementation |
 | --- | --- | --- |
-| SOURCE | Open backing bytes without implicit decompression | Loopback file, optional blocklist or RAM copy |
-| VIEW | Compose zero or more ordered file transformations | Gzip, XZ, LZOP, Zstd through existing FileView transforms |
+| SOURCE | Open backing bytes without implicit decompression | Shared file source, optional blocklist or RAM copy |
+| VIEW | Compose zero or more ordered file transformations | Gzip, XZ, LZOP and Zstd registered on the shared Stage hook list |
 | FORMAT | Select exactly one compatible disk-container parser when requested | QCOW2, VHDX, VMDK, fixed VDI, VHD via `vhd.mod` |
-| BLOCK | Add block-level semantics without modifying the underlying format | Direct reader; volatile 4 KiB sparse COW |
-| PUBLISH | Register one device endpoint | GRUB Loopback |
+| BLOCK | Add block-level semantics without modifying the underlying format | Base Reader/Writer plus optional 4 KiB sparse COW hook |
+| PUBLISH | Register one device endpoint | GRUB Loopback or EFI Map Block I/O |
 
 The stages execute in the fixed SOURCE -> VIEW -> FORMAT -> BLOCK -> PUBLISH
 order. Within a stage, hooks are sorted by the `order` field. SOURCE, FORMAT
 and PUBLISH select one matching hook. VIEW and BLOCK may execute several
 transform hooks. Each hook has an optional probe and a run callback.
 
-The current VIEW stage delegates to the pre-existing FileView compression
-registry. Unlike the original one-pass filter loop, FileView starts probing
-again after each successful transformation, up to eight nested layers. An XZ
-stream inside Gzip, and a Gzip stream inside XZ, therefore use the same code.
+FileView and virtual-disk VIEW now share the Stage hook registry. The VIEW
+dispatcher restarts probing after each successful transformation, up to eight
+nested layers. An XZ stream inside Gzip and a Gzip stream inside XZ use the
+same ordered composition without an additional registry.
 
 The VIEW stage runs transparently by default, preserving the earlier
 GRUB Alive/grubfm behavior. The `-D` flag is accepted for compatibility and
 does not change the default. The FORMAT stage is **explicit**:
-`vhd NAME FILE` requests format detection, while `loopback NAME FILE`
-treats the decompressed bytes as a RAW disk.
+`vhd NAME FILE` and `map -F FILE [NAME]` request format detection, while
+plain `loopback NAME FILE` and `map FILE [NAME]` treat the decompressed bytes
+as a RAW disk.
 A matching but malformed container must report a parser error, not silently
 be treated as RAW.
 
@@ -51,11 +52,14 @@ FORMAT parser leaves the input view owned by the pipeline. During a VIEW
 failure, FileView closes its consumed view chain and clears the pipeline's
 file pointer. This avoids a second close when the pipeline fails.
 
-Closing a device first releases the final file/view/parser chain, then a RAM
-buffer allocated for `-m`, then its FORMAT module reference. A successful
-PUBLISH pins `loopback.mod` until the device is deleted; a successful FORMAT
-pins the parser module until the parsed file is closed. Externally supplied
-`mem:` pointers are **not** freed by the pipeline.
+Closing a device first unpublishes it, then unwinds the BLOCK reader chain,
+closes the file/view/parser chain, releases any owned `-m` RAM buffer, and
+releases FORMAT module references. A successful PUBLISH pins its owning module
+until the device is deleted; a successful FORMAT pins the parser module until
+its file is closed. EFI Map uses EFI page allocation for `-m` and preserves
+`--rt` reserved-memory semantics. Externally supplied `mem:` pointers are
+**not** freed by the pipeline. If an EFI protocol refuses to uninstall, its
+backing resources remain alive and an explicit `map -x` can retry.
 
 Because the kernel reserves the GRUB disk name `mem`, PUBLISH checks for
 collisions with *all* existing disk devices. An inaccessible alias must not
@@ -75,8 +79,10 @@ logical end of the image, which zero-fills the unbacked suffix.
 | XZ/Gzip/nested compression | Volatile COW | Volatile COW |
 | VHD/VHDX/QCOW2/VMDK/VDI parser output | Volatile COW | Volatile COW |
 
-The COW overlay stores modified 4 KiB blocks in memory and merges them into
-reads. It does not rewrite or recompress the source file. **Writes are lost
+The COW hook stores modified 4 KiB blocks in memory (currently capped at
+256 MiB). It reads known modified blocks directly, without a redundant
+backing-file read or decompression, and delegates missing blocks to the lower
+reader. It does not rewrite or recompress the source file. **Writes are lost
 when the mapping is deleted.** Persisting changes to an `.xz` file requires
 a separate materialize/recompress/atomic-commit feature; it is not implemented.
 
@@ -87,15 +93,18 @@ interface lives in `include/grub/disk_pipeline.h` and is included in GRUB's
 export-symbol header list. Host utilities also link it via
 `Makefile.util.def`.
 
-`loopback.mod` supplies SOURCE, VIEW, BLOCK and PUBLISH hooks.
-`vhd.mod` supplies FORMAT hooks. Thus `loopback.mod` does **not** depend
-on `vhd.mod`. Explicit `vhd` commands load the parser module if needed.
+SOURCE and COW BLOCK hooks are built into the common disk layer. FileView
+codec modules register VIEW hooks, while `vhd.mod` registers FORMAT hooks.
+`loopback.mod` and `map.mod` implement only their respective PUBLISH
+protocols. Neither must depend on `vhd.mod`; the shared CRC32C used by VHDX
+is part of the kernel rather than depending on `btrfs.mod`.
 
-The independent EFI `map` / EFI Block I/O implementation has **not yet**
-been migrated to the pipeline. It requires a separate PUBLISH adapter and
-lifetime handling for firmware protocol installation/uninstallation.
-Likewise, Ventoy physical file extent collection remains separate from this
-virtual-disk construction pipeline and still needs its own cleanup.
+EFI Map registers its Block I/O handles through PUBLISH and uses the same
+byte-offset BLOCK Reader/Writer as GRUB Loopback. EFI protocol uninstallation
+must precede destruction of the underlying buffers. El Torito aliases share
+the parent backing pipeline. Ventoy physical file extent collection remains
+separate from this virtual-disk construction pipeline and still needs its own
+cleanup.
 
 ## Verification
 
@@ -109,7 +118,9 @@ The regression runner uses QEMU + OVMF, creates new file-backed FAT images in
 a temporary directory, and attaches both data and EFI system images read-only.
 It checks RAW, XZ, Gzip, both nested compression orders, dynamic VHD inside
 XZ, blocklist, RAM copy, COW writes, reopen rollback, parser rejection,
-duplicate disk names, and collision with built-in/physical disk names.
+EFI Map publication (`map -n`), EFI VHD.XZ parsing (`map -F`), EFI COW
+(`map -C`), successful `map -x` unpublishing, duplicate disk names and
+collisions with built-in/physical disk names.
 
 Dependencies: `qemu-system-x86_64`, `qemu-img`, `mkfs.vfat`, Mtools,
 `xz`, `gzip`, OVMF, `timeout`, and `sha256sum`. Set `OVMF_CODE` and
@@ -123,8 +134,8 @@ a source-level waiver for warnings introduced by the pipeline.
 
 ## Remaining work
 
-- Implement EFI Map's device publisher on the same construction pipeline,
-  without merging EFI protocol ownership with GRUB Loopback ownership.
+- Add EFI Block I/O protocol failure injection and partial-install rollback
+  tests; QEMU currently validates normal `map -x` behavior.
 - Keep file extent discovery separate from block-read hooks.
 - Extend malformed-container, partial-failure and repeated-lifecycle tests
   to the other image parsers (VHD parser failure and recovery are covered).
