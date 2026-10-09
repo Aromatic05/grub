@@ -1,115 +1,83 @@
-# Ventoy 移植版：直接启动与 GRUBFM 使用指南
+# Ventoy 移植版：单命令启动
 
-本项目的公共启动入口是 `ventoy PATH`。不需要使用原版 Ventoy 的整个
-`grub.cfg`，也不要求镜像文件位于 Ventoy 专用分区。
-
-## 1. 一条命令启动 Linux ISO
-
-在 x86_64 UEFI GRUB 中：
+公开入口只有一个 GRUB 命令，**不依赖 GRUBFM**，也不要求运行原版 Ventoy
+的大型 `grub.cfg`：
 
 ```grub
 insmod ventoy
+
+# Linux ISO
 ventoy (hd0,gpt2)/ISO/archlinux.iso
+
+# Windows ISO / WinPE
+ventoy (hd0,gpt2)/ISO/winpe.iso
 ```
 
-命令会打开和检查镜像、定位运行资源、生成 Ventoy 启动数据、调用 EFI
-Consumer，并实际执行 `boot`；失败时返回 GRUB 错误。
+命令会验证物理文件、识别 Linux/Windows ISO、自动寻找对应的 Ventoy 运行资源，
+调用原有 `vt_*` 引擎构建 Chain，再使用原版 EFI Consumer 完成启动。
+GRUB 的命令行、`grub.cfg` 或任何普通菜单都可以调用它；无需界面模块的
+专用注册、生命周期依赖或 Windows 启动逻辑。
 
-可以先检查镜像存在及资源文件可读性（不保证该发行版一定能启动）：
-
-```grub
-ventoy --check (hd0,gpt2)/ISO/archlinux.iso
-```
-
-## 2. 资源不在镜像所在分区时
-
-本项目目前仍复用原版 Ventoy 的 EFI Consumer 和 CPIO 文件。默认会先查找
-`(<镜像所在设备>)/ventoy/`，再搜索其他 GRUB 可访问分区的 `/ventoy/`。
-
-如需指定确定的版本和位置：
+## 启动前检查与运行资源
 
 ```grub
+ventoy --check (hd0,gpt2)/ISO/winpe.iso
+ventoy --runtime=(hd0,gpt1)/ventoy (hd1,gpt2)/ISO/winpe.iso
+
+# 也可以设置默认的运行资源目录
 set ventoy_runtime=(hd0,gpt1)/ventoy
-ventoy (hd1,gpt2)/ISO/archlinux.iso
-
-# 不修改全局配置的单次覆盖
-ventoy --runtime=(hd0,gpt1)/ventoy (hd1,gpt2)/ISO/archlinux.iso
 ```
 
-运行资源需包含匹配架构的 `ventoy.cpio`、`ventoy_x86.cpio`、
-`ventoy_x64.efi` 和 `iso9660_x64.efi` 等文件。请使用彼此匹配的一套运行
-资源，勿混用不同版本的 EFI Consumer。
+默认先检查 ISO 所在分区的 `/ventoy`，再遍历其他可见分区。资源必须是
+彼此匹配的版本：
 
-## 3. GRUBFM 文件操作菜单
+- Linux x64：`ventoy.cpio`、`ventoy_x86.cpio`、`ventoy_x64.efi`、
+  `iso9660_x64.efi` 等。
+- Windows x64：`ventoy_x64.efi`、`udf_x64.efi`、
+  `iso9660_x64.efi`、`vtoyjump64.exe`。
 
-GRUBFM 是用户界面，Ventoy 是启动后端。
+Windows 链路会自动检测 UDF、读取 BCD 并定位 WIM，必要时回退到
+`boot.wim`。不要强行传入 Linux 专用的 `isoefi=on` 或 `FirstTry`；
+这些参数此前导致了错误的 Windows 启动复现。
 
-将本仓库的配置模板合并到 GRUBFM 的实际数据目录：
+## 实测结果
 
-- `extras/grubfm/boot/grubfm/types/iso`
-- `extras/grubfm/boot/grubfm/rules/ventoy.cfg`
+在隔离的 x86_64 UEFI QEMU 测试中：
 
-若已有 `types/iso`，请合并 `[0]` 菜单规则，不要覆盖原有动作。GRUBFM
-启动后选择 ISO 文件，点击 **Boot with Ventoy** 即可。规则调用的仍然是
-`ventoy "$grubfm_file"`，不包含 `vt_*` 内部实现细节。
+- Arch Linux ISO 已完成 EFI、内核及安装环境自动登录验收。
+- **公共 `ventoy PATH` 的 WinPE 启动已进入完整 Windows 图形桌面。**
+- 客体内打开 `X:\Windows\System32\ventoy.log`，实际出现
+  `OpenVirtualDisk success`、`VentoyAttachVirtualDisk success` 和
+  `Mount ISO FILE: SUCCESS`。
+- Windows 资源管理器出现相匹配的 UDF DVD 卷。WinPE 的 `vtoyjump64.exe`
+  已将原始 `C:\ISO\winpe.iso` 挂载成功。
+- Windows Chain 数据与三月份已验收的结果一致：4 个 Override Chunk、
+  460,988,416 字节虚拟镜像和正确的 UDF 标志位。
 
-## 4. 尚未覆盖的能力
+验证运行资源和截图位于：
+`../out/testenv/work/winpe-direct-verified-20261009/`。
 
-目前新命令只在 **x86_64 UEFI 的 Linux ISO** 上完成实际启动验收。
-Windows ISO / WIM / WinPE、VHD(x)、VTOY、IMG 和 BIOS 的单命令启动尚未
-在这个新入口上验收通过。原版 Ventoy 旧脚本中的 `vt_*` 命令是内部操作，
-不能替代统一入口。
-
-旧版文档出现过 `vtlinuxboot` / `vtwimboot` 示例，这些不是当前
-`ventoy.mod` 的注册命令，不应作为本移植版的使用方式。
-
-## 5. QEMU 验收
+## 测试命令
 
 ```sh
 tests/ventoy_boot_qemu.sh --check
 tests/ventoy_boot_qemu.sh --boot
-tests/ventoy_boot_qemu.sh --grubfm
-tests/ventoy_boot_qemu.sh --plain
 
-# 带屏幕截图（保留至临时目录）
-VENTOY_TEST_KEEP=1 VENTOY_BOOT_CAPTURE=1 tests/ventoy_boot_qemu.sh --boot
+tests/ventoy_consumer_qemu.sh --direct-check
+VENTOY_TEST_KEEP=1 VENTOY_SCREENSHOT=1 VENTOY_CAPTURE_AFTER=155 \
+  tests/ventoy_consumer_qemu.sh --direct-boot
 ```
 
-`--boot` 默认校验 EFI 引导菜单已经接管且未返回 GRUB；
-`VENTOY_BOOT_CAPTURE=1` 用于人工检查随后进入 Linux 内核和登录界面的结果。
-QEMU 默认使用 3 GiB 内存，以免现代 Arch Linux initramfs 在不足 1 GiB
-的虚拟机内发生 OOM 或 EFI Stub 加载失败。所有测试镜像以只读方式挂载。
+Windows 客体必须使用合适的 IDE/SATA 设备及可写 QCOW2 覆盖层；
+最初错误地使用 VirtIO 时，虽然 WinPE 桌面可见，但 Windows 内找不到原始
+ISO，`vtoyjump` 挂载失败。上述脚本使用原始 RAW 作为未修改的 backing，
+QEMU 对覆盖层的写入不会影响原始测试盘。
 
-Windows / WinPE 的 EFI Consumer 完整启动验证已成功进入图形桌面：
-`docs/ventoy/CONSUMER_REGRESSION.md`。该测试使用本项目当前
-`ventoy.mod` 的内部 `vt_*` Windows Chain，并不代表上述
-`ventoy PATH` 公共命令已经支持 Windows ISO。独立 QEMU 截图和
-EFI 日志保存在 `../out/testenv/work/winpe-verified-20261009/`。
-WinPE 内的 `vtoyjump64.exe` 也已验收：通过 Windows Virtual Disk API
-挂载原始 `C:\ISO\winpe.iso`，`ventoy.log` 报告
-`Mount ISO FILE: SUCCESS`，资源管理器显示名称为“微PE工具箱”的 UDF DVD 卷。
-测试磁盘必须使用 IDE/SATA：之前使用 VirtIO 虽能进入 WinPE 桌面，但
-Windows 无法找到原始 ISO 文件。测试默认使用临时 QCOW2 覆盖层，保护 RAW 源盘。
+**验收界限**：`--check` 只验证镜像和资源；`--direct-boot` 自动验证
+GRUB/Chain/EFI 阶段，Windows 桌面及 ISO 挂载仍需要查看实际客体画面和
+`ventoy.log`，QEMU 超时不等于系统启动成功。其他 Windows 发行版 ISO、
+BIOS Windows 单命令、VHD/WIM 独立文件等尚未逐项通过端到端验收。
 
-```sh
-tests/ventoy_consumer_qemu.sh --prepare
-tests/ventoy_consumer_qemu.sh --trace
-VENTOY_TEST_KEEP=1 VENTOY_SCREENSHOT=1 VENTOY_CAPTURE_AFTER=135 \
-  tests/ventoy_consumer_qemu.sh --boot
-```
-
-`--boot` 超时仍会返回未验证状态，必须实际查看截图中的 WinPE
-桌面；`--trace` 只验收启动描述符和 EFI 交接。
-
-详细行为及限制：`docs/ventoy/DIRECT_BOOT.md`。
-
-### 关于普通磁盘的兼容提示
-
-`--plain` 测试使用 QCOW2 覆盖层删除原测试盘的 Ventoy 专用第二分区，
-并将运行资源放在另外的 EFI 分区中。Linux ISO 仍能进入启动菜单，
-验证了不强制要求原版分区布局。
-
-**现存限制**：没有 Ventoy 专用分区时，原版 `ventoy_x64.efi` 可能会
-错误提示设备不受支持、等待 10 秒后继续启动。这是外部 EFI Consumer
-的硬编码警告，不能通过假冒 VLNK 参数安全解决；后续需要配套移植
-Consumer 的明确 direct-boot 模式。
+普通磁盘上原版 Consumer 可能有专用分区检查造成的误警告和短暂等待，
+尚未独立化；本轮没有修改 EFI Consumer，也没有修改 GRUBFM。详见
+`docs/ventoy/DIRECT_BOOT.md` 和 `docs/ventoy/CONSUMER_REGRESSION.md`。

@@ -164,10 +164,37 @@ machine-parsed pass condition in `--boot`.
 a Windows interactive-logon initialization error. The subsequent solo
 test did not reproduce it. The cause has not been established.
 
-**Scope:** Windows boot here uses the current `ventoy.mod` **internal
-`vt_*` command sequence**. The public `ventoy PATH` single-command entry
-is still restricted to Linux ISOs, and the GRUBFM GUI Windows action has
-not been implemented.
+**Current scope:** both the historical private vt_* test and the new
+public ventoy PATH command have now been verified independently. Neither
+requires changes to the original EFI Consumer.
+
+## Public single-command Windows ISO: verified end to end
+
+On 2026-10-09, the new public command was tested directly in QEMU using
+the same original WinPE ISO, unchanged Consumer, Jump executable and
+SATA/QCOW2 disk layout:
+
+    ventoy (hd1,msdos1)/ISO/winpe.iso
+
+The GRUB test config contained **no manual vt_* calls**. The standalone
+Ventoy module discovered the original runtime and produced the same
+golden Windows chain: 1,667,736 bytes, 4 WIM Override chunks, virtual
+size 460,988,416, UDF flag 1. The Windows EFI Consumer started and
+Windows PE entered its GUI.
+
+Actual in-guest X:\Windows\System32\ventoy.log was opened and showed
+OpenVirtualDisk success, VentoyAttachVirtualDisk success and
+Mount ISO FILE: SUCCESS. Windows Explorer showed the mounted UDF DVD.
+This is the same acceptance condition as the March test, rather than
+merely reaching the Boot Manager or desktop.
+
+Artifacts: ../out/testenv/work/winpe-direct-verified-20261009/
+(guest desktop, Windows jump log, DVD Explorer, GRUB serial output,
+test configuration and pinned binary manifest).
+
+All original disk fixtures were used as unchanged RAW backing files
+through temporary IDE/SATA QCOW2 overlays. No GRUBFM changes, protocol
+coupling or EFI Consumer changes were introduced.
 
 ## Test modes and legitimate assertions
 
@@ -204,10 +231,9 @@ the confirmed working boot flow fails.
 
 ## Follow-up
 
-- The verified WinPE ISO+EFI Consumer now reaches GUI in QEMU using the
-  internal `vt_*` path. Implement Windows support in the high-level
-  `ventoy PATH` command and GRUBFM only after it reuses this exact plan,
-  UDF override and jump runtime; do not fork another parameter generator.
+- The public Windows `ventoy PATH` command now uses the existing
+  WIM/BCD engine and original EFI Consumer. Continue testing other Windows
+  ISO variants without forking a second parameter generator.
 - Formalize the now-verified in-guest `vtoyjump` log/volume checks as
   machine-readable QEMU assertions if needed. The saved screenshots prove
   this exact test, but a QEMU timeout alone remains UNVERIFIED.
