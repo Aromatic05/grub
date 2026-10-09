@@ -221,6 +221,16 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
 
           grub_dprintf ("diskpipe", "stage=%u hook=%s\n", stage, hook->name);
           err = hook->run (ctx, hook);
+          /* A publisher can fail after installing a firmware protocol.
+             If rollback also fails, it must mark the device published so
+             we retain the publisher and all underlying resources until an
+             explicit unpublish can finish. */
+          if (stage == GRUB_DISK_PUBLISH && ctx->published)
+            {
+              ctx->publisher = hook;
+              if (hook->module)
+                grub_dl_ref (hook->module);
+            }
           if (err != GRUB_ERR_NONE)
             return err;
           selected = 1;
@@ -241,9 +251,6 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
               if (!ctx->published)
                 return grub_error (GRUB_ERR_BAD_DEVICE,
                                    "disk publish hook produced no device");
-              ctx->publisher = hook;
-              if (hook->module)
-                grub_dl_ref (hook->module);
             }
           if (exclusive)
             break;

@@ -225,7 +225,17 @@ grub_map_stage_publish (struct grub_disk_pipeline *ctx,
   if (err)
     {
       grub_err_t cleanup = grub_map_uninstall_handles (d);
-      return cleanup ? cleanup : err;
+      if (cleanup)
+        {
+          /* EFI may still be holding one of the installed Block I/O
+             protocols. Keep its backing pipeline reachable for unmap
+             instead of freeing the firmware-visible pointers. */
+          d->next = grub_efivdisk_list;
+          grub_efivdisk_list = d;
+          ctx->published = 1;
+          return cleanup;
+        }
+      return err;
     }
   d->next = grub_efivdisk_list;
   grub_efivdisk_list = d;
@@ -546,6 +556,10 @@ grub_cmd_map (grub_extcmd_context_t ctxt, int argc, char **args)
   err = grub_disk_pipeline_run (pipeline);
   if (err)
     {
+      /* Incomplete EFI protocol rollback keeps a published device alive
+         for a later explicit unmap; freeing it here would cause a UAF. */
+      if (pipeline->published)
+        return err;
       grub_disk_pipeline_close (pipeline);
       grub_free (disk->vpart.dp);
       grub_free (disk->vdisk.dp);
