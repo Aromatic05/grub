@@ -154,6 +154,9 @@ grub_file_open (const char *name, enum grub_file_type type)
     {
       last_file = file;
       file = grub_fileview_apply_compression (file, type);
+      /* FileView owns its input on a failed nested transform. */
+      if (!file)
+        return 0;
       if (file && file != last_file)
         {
           file->name = grub_strdup (name);

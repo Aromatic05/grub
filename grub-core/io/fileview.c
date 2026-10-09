@@ -89,28 +89,48 @@ grub_file_t
 EXPORT_FUNC (grub_fileview_apply_compression) (grub_file_t file,
                                                enum grub_file_type type)
 {
-  grub_file_t last_file = NULL;
-  grub_size_t i;
+  grub_size_t depth;
 
   if (!file || !grub_fileview_allow_decompress (type))
     return file;
 
-  for (i = 0; file && i < ARRAY_SIZE (grub_fileview_order); i++)
-    if (grub_fileview_transforms[grub_fileview_order[i]])
-      {
-        last_file = file;
-        grub_dprintf ("fileviewdbg", "fileview: try transform=%s file=%p size=%llu\n",
-                      grub_fileview_name (grub_fileview_order[i]),
-                      file, (unsigned long long) file->size);
-        file = grub_fileview_transforms[grub_fileview_order[i]] (file, type);
-        if (file && file != last_file)
-          grub_dprintf ("fileviewdbg", "fileview: transform=%s accepted size=%llu\n",
-                        grub_fileview_name (grub_fileview_order[i]),
-                        (unsigned long long) file->size);
-      }
+  /* A new outer layer must be probed from the beginning of the hook
+     order.  For example, a gzip stream may contain an XZ disk image,
+     or an XZ stream may itself contain another compressed image.  */
+  for (depth = 0; depth < 8; depth++)
+    {
+      grub_size_t i;
+      int changed = 0;
 
-  if (!file && last_file)
-    grub_file_close (last_file);
+      for (i = 0; i < ARRAY_SIZE (grub_fileview_order); i++)
+        if (grub_fileview_transforms[grub_fileview_order[i]])
+          {
+            grub_file_t next;
+            grub_dprintf ("fileviewdbg", "fileview: try transform=%s depth=%u\n",
+                          grub_fileview_name (grub_fileview_order[i]),
+                          (unsigned int) depth);
+            next = grub_fileview_transforms[grub_fileview_order[i]] (file, type);
+            if (!next)
+              {
+                /* The top view owns all inner views.  The caller must not
+                   try to close the original source a second time.  */
+                grub_file_close (file);
+                return 0;
+              }
+            if (next != file)
+              {
+                file = next;
+                changed = 1;
+                break;
+              }
+          }
 
-  return file;
+      if (!changed)
+        return file;
+    }
+
+  grub_error (GRUB_ERR_BAD_COMPRESSED_DATA,
+              "too many nested disk compression layers");
+  grub_file_close (file);
+  return 0;
 }
