@@ -20,6 +20,9 @@
 #ifndef GRUB_CRC_H
 #define GRUB_CRC_H	1
 
+#include <grub/types.h>
+#include <grub/symbol.h>
+
 grub_uint32_t EXPORT_FUNC (grub_getcrc32c) (grub_uint32_t crc, const void *buf, int size);
 
 #endif /* ! GRUB_CRC_H */
