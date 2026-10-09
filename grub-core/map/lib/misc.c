@@ -122,8 +122,9 @@ allocate_pages (grub_efi_physical_address_t address, grub_efi_uintn_t pages,
   return (void *) ((grub_addr_t) address);
 }
 
-static void *
-efi_malloc (grub_efi_uint64_t size, grub_efi_memory_type_t memtype)
+void *
+grub_map_allocate_pages (grub_efi_uint64_t size,
+                         grub_efi_memory_type_t memtype)
 {
   void *ret = NULL;
   grub_efi_uintn_t pages = (size + ((1 << 12) - 1)) >> 12;
@@ -210,7 +211,7 @@ file_open (const char *name, int mem, int bl, int rt)
     void *addr = NULL;
     char newname[100];
 #ifdef GRUB_MACHINE_EFI
-    addr = efi_malloc (size, rt ? GRUB_EFI_RESERVED_MEMORY_TYPE :
+    addr = grub_map_allocate_pages (size, rt ? GRUB_EFI_RESERVED_MEMORY_TYPE :
                        GRUB_EFI_BOOT_SERVICES_DATA);
 #else
     (void) rt;

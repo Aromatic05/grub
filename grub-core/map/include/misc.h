@@ -26,6 +26,7 @@
 #include <grub/types.h>
 #include <grub/file.h>
 #include <grub/fs.h>
+#include <grub/disk_pipeline.h>
 #include <grub/extcmd.h>
 
 #define CD_BOOT_SECTOR 17
@@ -138,6 +139,7 @@ typedef struct
   block_io_protocol_t block_io;
   grub_efi_block_io_media_t media;
   grub_file_t file;
+  struct grub_disk_pipeline *pipeline;
 } grub_efivdisk_t;
 
 enum grub_efivdisk_type
@@ -157,10 +159,16 @@ struct grub_efivdisk_data
   grub_packed_guid_t guid;
   grub_efivdisk_t vdisk;
   grub_efivdisk_t vpart;
+  struct grub_disk_pipeline *pipeline;
+  struct grub_arg_list *install_state;
+  unsigned int refcount;
+  int alias;
   struct grub_efivdisk_data *next;
 };
 
 extern struct grub_efivdisk_data *grub_efivdisk_list;
+void *grub_map_allocate_pages (grub_efi_uint64_t size,
+                               grub_efi_memory_type_t memtype);
 
 enum options_map
 {
@@ -176,6 +184,8 @@ enum options_map
   MAP_NOG4D,
   MAP_NOVT,
   MAP_VTOY,
+  MAP_COW,
+  MAP_FORMAT,
 #if 0
   MAP_ALT,
 #endif
