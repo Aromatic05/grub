@@ -83,4 +83,8 @@ tests/ventoy_boot_qemu.sh --boot
 
 Only temporary EFI System Partition and OVMF variable images are written.
 `VENTOY_TEST_DISK`, `VENTOY_TEST_ISO`, `VENTOY_BUILD`, `OVMF_CODE`,
-and `OVMF_VARS` override the defaults.
+and `OVMF_VARS` override the defaults. `VENTOY_QEMU_MEM` controls the
+guest memory (3 GiB by default for current Arch ISO). The optional
+`VENTOY_BOOT_CAPTURE=1 VENTOY_TEST_KEEP=1` captures QEMU screenshots for
+manual diagnosis. A successful EFI menu check does not assert that the guest
+reached a shell or login prompt.

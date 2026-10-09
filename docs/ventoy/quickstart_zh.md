@@ -1,115 +1,82 @@
-# Ventoy 启动快速手册（GRUB 移植版）
+# Ventoy 移植版：直接启动与 GRUBFM 使用指南
 
-本文面向当前仓库中的 Ventoy 移植实现，说明 Ventoy 部分的常用用法，以及如何以最短路径启动 `iso/wim/vhd/img/vtoy`。
+本项目的公共启动入口是 `ventoy PATH`。不需要使用原版 Ventoy 的整个
+`grub.cfg`，也不要求镜像文件位于 Ventoy 专用分区。
 
-## 1. 最快路径（推荐）
+## 1. 一条命令启动 Linux ISO
 
-如果你使用的是 `Ventoy/INSTALL/grub/grub.cfg` 这套主流程，最快方式不是手工敲命令，而是：
-
-1. 把镜像文件放到 Ventoy 第 1 分区。
-2. 重启进入 Ventoy 菜单。
-3. 直接选择文件并回车。
-
-对应关系（由 `grub.cfg` 内部自动分流）：
-
-- `.iso` -> `iso_common_menuentry`
-- `.wim` -> `wim_common_menuentry`
-- `.vhd/.vhdx` -> `vhd_common_menuentry`
-- `.img` -> `img_common_menuentry`
-- `.vtoy` -> `vtoy_common_menuentry`
-
-说明：
-
-- `.vtoy` 设计上用于 Linux vDisk 启动（通常是把 `vhd/vdi/raw` 文件改后缀为 `.vtoy`）。
-- `grub.cfg` 会优先走自动探测和兼容分支，比手工命令更稳。
-
-## 2. 命令行最短路径（调试/开发）
-
-以下命令适合你在 GRUB 命令行快速验证模块行为（假设已加载对应 Ventoy 模块，并且变量如 `vtoy_path/env_param` 已由 `grub.cfg` 设置）。
-
-### 2.1 ISO（Linux 发行版）
+在 x86_64 UEFI GRUB 中：
 
 ```grub
-vtlinuxboot (hd0,1)/ISO/ubuntu-24.04.iso
+insmod ventoy
+ventoy (hd0,gpt2)/ISO/archlinux.iso
 ```
 
-要点：
+命令会打开和检查镜像、定位运行资源、生成 Ventoy 启动数据、调用 EFI
+Consumer，并实际执行 `boot`；失败时返回 GRUB 错误。
 
-- `vtlinuxboot` 支持自动探测 kernel/initrd（未显式传参时）。
-- 这是 Linux ISO 调试时最快的一条命令。
-
-### 2.2 WIM（Windows PE/安装）
+可以先检查镜像存在及资源文件可读性（不保证该发行版一定能启动）：
 
 ```grub
-vtwimboot (hd0,1)/IMAGE/winpe.wim
+ventoy --check (hd0,gpt2)/ISO/archlinux.iso
 ```
 
-或 Windows ISO：
+## 2. 资源不在镜像所在分区时
+
+本项目目前仍复用原版 Ventoy 的 EFI Consumer 和 CPIO 文件。默认会先查找
+`(<镜像所在设备>)/ventoy/`，再搜索其他 GRUB 可访问分区的 `/ventoy/`。
+
+如需指定确定的版本和位置：
 
 ```grub
-vtwimboot (hd0,1)/ISO/Win11.iso
+set ventoy_runtime=(hd0,gpt1)/ventoy
+ventoy (hd1,gpt2)/ISO/archlinux.iso
+
+# 不修改全局配置的单次覆盖
+ventoy --runtime=(hd0,gpt1)/ventoy (hd1,gpt2)/ISO/archlinux.iso
 ```
 
-要点：
+运行资源需包含匹配架构的 `ventoy.cpio`、`ventoy_x86.cpio`、
+`ventoy_x64.efi` 和 `iso9660_x64.efi` 等文件。请使用彼此匹配的一套运行
+资源，勿混用不同版本的 EFI Consumer。
 
-- `vtwimboot` 会准备链数据并直接执行 `wimboot` 流程。
+## 3. GRUBFM 文件操作菜单
 
-### 2.3 VHD（Windows VHD 启动链）
+GRUBFM 是用户界面，Ventoy 是启动后端。
 
-```grub
-vt_load_vhdboot (hd0,1)/ventoy/ventoy_vhdboot.img
-vt_patch_vhdboot /VHD/win10.vhd
-chainloader ${vtoy_path}/ventoy_${VTOY_EFI_ARCH}.efi memdisk env_param=${env_param} mem:${vtoy_vhd_buf_addr}:size:${vtoy_vhd_buf_size}
-boot
+将本仓库的配置模板合并到 GRUBFM 的实际数据目录：
+
+- `extras/grubfm/boot/grubfm/types/iso`
+- `extras/grubfm/boot/grubfm/rules/ventoy.cfg`
+
+若已有 `types/iso`，请合并 `[0]` 菜单规则，不要覆盖原有动作。GRUBFM
+启动后选择 ISO 文件，点击 **Boot with Ventoy** 即可。规则调用的仍然是
+`ventoy "$grubfm_file"`，不包含 `vt_*` 内部实现细节。
+
+## 4. 尚未覆盖的能力
+
+目前新命令只在 **x86_64 UEFI 的 Linux ISO** 上完成实际启动验收。
+Windows ISO / WIM / WinPE、VHD(x)、VTOY、IMG 和 BIOS 的单命令启动尚未
+在这个新入口上验收通过。原版 Ventoy 旧脚本中的 `vt_*` 命令是内部操作，
+不能替代统一入口。
+
+旧版文档出现过 `vtlinuxboot` / `vtwimboot` 示例，这些不是当前
+`ventoy.mod` 的注册命令，不应作为本移植版的使用方式。
+
+## 5. QEMU 验收
+
+```sh
+tests/ventoy_boot_qemu.sh --check
+tests/ventoy_boot_qemu.sh --boot
+tests/ventoy_boot_qemu.sh --grubfm
+
+# 带屏幕截图（保留至临时目录）
+VENTOY_TEST_KEEP=1 VENTOY_BOOT_CAPTURE=1 tests/ventoy_boot_qemu.sh --boot
 ```
 
-要点：
+`--boot` 默认校验 EFI 引导菜单已经接管且未返回 GRUB；
+`VENTOY_BOOT_CAPTURE=1` 用于人工检查随后进入 Linux 内核和登录界面的结果。
+QEMU 默认使用 3 GiB 内存，以免现代 Arch Linux initramfs 在不足 1 GiB
+的虚拟机内发生 OOM 或 EFI Stub 加载失败。所有测试镜像以只读方式挂载。
 
-- 先加载 `ventoy_vhdboot.img`，再对目标 VHD 做 BCD patch。
-- `vhdboot` 主流程在 `vhd_common_menuentry` / `vhdboot_common_func`。
-
-### 2.4 IMG（通用 raw/img）
-
-```grub
-vt_linux_chain_data (hd0,1)/IMG/disk.img
-chainloader ${vtoy_path}/ventoy_${VTOY_EFI_ARCH}.efi sector512 env_param=${env_param} mem:${vtoy_chain_mem_addr}:size:${vtoy_chain_mem_size}
-boot
-```
-
-要点：
-
-- 这是 `img_common_menuentry` 的“通用链路”核心。
-- 某些发行版 IMG 在 `grub.cfg` 有专门分支，自动菜单通常更稳。
-
-### 2.5 VTOY（Linux vDisk 插件路径）
-
-```grub
-vt_get_vtoy_type (hd0,1)/VDISK/ubuntu.vhd.vtoy vtoytype parttype AltBootPart
-vt_img_sector (hd0,1)/VDISK/ubuntu.vhd.vtoy
-vt_raw_chain_data (hd0,1)/VDISK/ubuntu.vhd.vtoy
-chainloader ${vtoy_path}/ventoy_${VTOY_EFI_ARCH}.efi sector512 env_param=${ventoy_env_param} mem:${vtoy_chain_mem_addr}:size:${vtoy_chain_mem_size}
-boot
-```
-
-要点：
-
-- `vt_get_vtoy_type` 会识别 `vhd/vdi/raw` 并给出分区类型信息。
-- `vtoy_common_menuentry` 内部也是这个思路。
-
-## 3. 插件 JSON（可选）
-
-如果你启用了插件配置：
-
-```grub
-vt_check_plugin_json (hd0,1)
-vt_load_plugin (hd0,1)
-```
-
-默认读取：`/ventoy/ventoy.json`。
-
-## 4. 常见注意事项
-
-- 文件名尽量避免空格和非 ASCII 字符（`grub.cfg` 有明确限制提示）。
-- `ventoy/ventoy.json` 路径大小写必须全小写。
-- `vhd` 文件放在 NTFS 分区成功率更高（`grub.cfg` 内有告警逻辑）。
-- 若只是追求“最快启动”，优先使用主菜单自动流程，不要绕开 `*_common_menuentry`。
+详细行为及限制：`docs/ventoy/DIRECT_BOOT.md`。
