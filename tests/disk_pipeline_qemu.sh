@@ -128,23 +128,39 @@ loopback -d bl
 echo PIPELINE_EFI_XZ_BEGIN
 map -n (hd1)/raw.img.xz evxz
 cat (evxz)/MARKER.TXT
-map -x evxz
+if map -x evxz; then
+  echo PIPELINE_EFI_UNMAP_OK_evxz
+else
+  echo PIPELINE_ERROR_EFI_UNMAP_evxz
+fi
 
 echo PIPELINE_EFI_FORMAT_BEGIN
 map -n -F (hd1)/raw.vhd.xz evfmt
 cat (evfmt)/MARKER.TXT
-map -x evfmt
+if map -x evfmt; then
+  echo PIPELINE_EFI_UNMAP_OK_evfmt
+else
+  echo PIPELINE_ERROR_EFI_UNMAP_evfmt
+fi
 
 echo PIPELINE_EFI_COW_BEGIN
 map -n -C (hd1)/raw.img evcow
 cat (evcow)/MARKER.TXT
 dd -x 54455354 -o (evcow)0+1 -b 4 -c 1
 hexdump -s 0 -n 16 (evcow)0+1
-map -x evcow
+if map -x evcow; then
+  echo PIPELINE_EFI_UNMAP_OK_evcow
+else
+  echo PIPELINE_ERROR_EFI_UNMAP_evcow
+fi
 echo PIPELINE_EFI_COW_REOPENED
 map -n -C (hd1)/raw.img evcow
 hexdump -s 0 -n 16 (evcow)0+1
-map -x evcow
+if map -x evcow; then
+  echo PIPELINE_EFI_UNMAP_OK_evcow
+else
+  echo PIPELINE_ERROR_EFI_UNMAP_evcow
+fi
 
 loopback -C rw (hd1)/raw.img
 dd -x 41424344 -o (rw)0+1 -b 4 -c 1
@@ -217,6 +233,10 @@ grep -q '50 49 50 45' "$test_work/serial.log"
 grep -q '41 42 43 44' "$test_work/serial.log"
 grep -q '54 45 53 54' "$test_work/serial.log"
 grep -q 'PIPELINE_EFI_COW_REOPENED' "$test_work/serial.log"
+for item in evxz evfmt; do
+  grep -q "PIPELINE_EFI_UNMAP_OK_$item" "$test_work/serial.log"
+done
+test "$(grep -c 'PIPELINE_EFI_UNMAP_OK_evcow' "$test_work/serial.log")" -eq 2
 grep -q 'PIPELINE_EFI_FORMAT_BEGIN' "$test_work/serial.log"
 grep -q 'eb 3c 90 6d' "$test_work/serial.log"
 for marker in RESERVED_REJECTED PHYSICAL_REJECTED FORMAT_REJECTED DUPLICATE_REJECTED MALFORMED_VHD_REJECTED; do
