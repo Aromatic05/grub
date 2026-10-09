@@ -111,10 +111,24 @@ grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
                              const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
   struct grub_loopback *dev;
+  grub_disk_t existing;
 
   for (dev = loopback_list; dev; dev = dev->next)
     if (grub_strcmp (dev->pipeline->name, ctx->name) == 0)
       return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name already exists");
+
+  /* The GRUB namespace also contains firmware disks and reserved devices,
+     such as the kernel-owned 'mem' disk.  Do not silently shadow one. */
+  existing = grub_disk_open (ctx->name);
+  if (existing)
+    {
+      grub_disk_close (existing);
+      return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                         "disk name already belongs to another device");
+    }
+  if (grub_errno != GRUB_ERR_NONE && grub_errno != GRUB_ERR_UNKNOWN_DEVICE)
+    return grub_errno;
+  grub_errno = GRUB_ERR_NONE;
 
   dev = grub_zalloc (sizeof (*dev));
   if (!dev)
