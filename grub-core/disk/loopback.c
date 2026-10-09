@@ -189,9 +189,16 @@ grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
 
   if (format)
     {
-      if (!grub_disk_stage_available (GRUB_DISK_FORMAT)
-          && !grub_dl_load ("vhd"))
-        return grub_errno;
+      if (!grub_disk_stage_available (GRUB_DISK_FORMAT))
+        {
+#ifndef GRUB_UTIL
+          if (!grub_dl_load ("vhd"))
+            return grub_errno;
+#else
+          return grub_error (GRUB_ERR_BAD_FILE_TYPE,
+                             "no virtual disk parser registered");
+#endif
+        }
       flags |= GRUB_DISK_PIPELINE_FORMAT;
     }
   if (state[1].set)

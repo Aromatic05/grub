@@ -32,6 +32,7 @@ library = {
   common = grub-core/kern/err.c;
   common = grub-core/kern/file.c;
   common = grub-core/io/fileview.c;
+  common = grub-core/io/disk_pipeline.c;
   common = grub-core/kern/memfile.c;
   common = grub-core/kern/fs.c;
   common = grub-core/kern/list.c;
