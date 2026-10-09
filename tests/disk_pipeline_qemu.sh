@@ -117,6 +117,10 @@ loopback gz (hd1)/raw.img.gz
 cat (gz)/MARKER.TXT
 loopback -d gz
 
+loopback -D compat (hd1)/raw.img.gz
+cat (compat)/MARKER.TXT
+loopback -d compat
+
 loopback -l bl (hd1)/raw.img
 cat (bl)/MARKER.TXT
 loopback -d bl
@@ -184,8 +188,8 @@ fi
 
 grep -q 'PIPELINE_TEST_DONE' "$test_work/serial.log"
 marker_count=$(grep -c 'PIPELINE_TEST_MARKER_2026' "$test_work/serial.log")
-test "$marker_count" -eq 11 || {
-  echo "Expected 11 successful file reads, got $marker_count" >&2
+test "$marker_count" -eq 12 || {
+  echo "Expected 12 successful file reads, got $marker_count" >&2
   exit 1
 }
 grep -q '50 49 50 45' "$test_work/serial.log"

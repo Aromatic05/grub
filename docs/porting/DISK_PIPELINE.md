@@ -31,8 +31,11 @@ registry. Unlike the original one-pass filter loop, FileView starts probing
 again after each successful transformation, up to eight nested layers. An XZ
 stream inside Gzip, and a Gzip stream inside XZ, therefore use the same code.
 
-The FORMAT stage is **explicit**: `vhd NAME FILE` requests format detection,
-while `loopback NAME FILE` treats the decompressed bytes as a RAW disk.
+The VIEW stage runs transparently by default, preserving the earlier
+GRUB Alive/grubfm behavior. The `-D` flag is accepted for compatibility and
+does not change the default. The FORMAT stage is **explicit**:
+`vhd NAME FILE` requests format detection, while `loopback NAME FILE`
+treats the decompressed bytes as a RAW disk.
 A matching but malformed container must report a parser error, not silently
 be treated as RAW.
 
@@ -123,8 +126,8 @@ a source-level waiver for warnings introduced by the pipeline.
 - Implement EFI Map's device publisher on the same construction pipeline,
   without merging EFI protocol ownership with GRUB Loopback ownership.
 - Keep file extent discovery separate from block-read hooks.
-- Add malformed-container, partial-failure and repeated-lifecycle tests for
-  every image parser, beyond the current successful VHD.XZ case.
+- Extend malformed-container, partial-failure and repeated-lifecycle tests
+  to the other image parsers (VHD parser failure and recovery are covered).
 - Benchmark compression seek costs and add an optional cache at BLOCK if
   data justifies it.
 - Add a separate explicit, durable writeback/commit design if required.

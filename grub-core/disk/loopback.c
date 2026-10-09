@@ -40,7 +40,9 @@ static const struct grub_arg_option options[] =
     {"delete", 'd', 0, N_("Delete the specified loopback drive."), 0, 0},
     {"mem", 'm', 0, N_("Copy to RAM."), 0, 0},
     {"blocklist", 'l', 0, N_("Convert to blocklist."), 0, 0},
-    {"decompress", 'D', 0, N_("Transparently decompress backing file."), 0, 0},
+    {"decompress", 'D', 0,
+     N_("Compatibility option; backing files are decompressed automatically."),
+     0, 0},
     {"cow", 'C', 0, N_("Keep writes in a volatile copy-on-write overlay."), 0, 0},
     {0, 0, 0, 0, 0, 0}
   };
@@ -187,6 +189,8 @@ grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
   struct grub_arg_list *state = ctxt->state;
   struct grub_disk_pipeline *ctx;
   struct grub_loopback *dev;
+  /* Keep the existing fork's transparent decompression behavior, including
+     grubfm mappings that omit -D.  -D remains accepted for compatibility. */
   unsigned int flags = GRUB_DISK_PIPELINE_DECOMPRESS;
   grub_err_t err;
 
