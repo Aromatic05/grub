@@ -1,6 +1,7 @@
 #!/bin/sh
 # Diagnoses the current WinPE chain against the known working Ventoy handoff.
-# All attached source disks are read-only. The historical Consumer is version-locked.
+# All original RAW fixture disks remain unchanged; IDE guests use disposable COW.
+# The historical Consumer and jump executable are version-locked.
 set -eu
 
 repo=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
@@ -11,6 +12,13 @@ ovmf_code=${OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}
 ovmf_vars=${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}
 mode=${1:---prepare}
 consumer_fs=${VENTOY_CONSUMER_FS:-udf}
+# The historical Windows guest uses SATA/IDE disks. A virtio boot disk may
+# work in OVMF yet be invisible in Windows PE without a guest virtio driver.
+guest_bus=${VENTOY_GUEST_DISK_BUS:-ide}
+case "$guest_bus" in
+  ide|virtio) ;;
+  *) echo "Unsupported VENTOY_GUEST_DISK_BUS: $guest_bus" >&2; exit 2 ;;
+esac
 case "$consumer_fs" in
   udf|fat) ;;
   *) echo "Unsupported VENTOY_CONSUMER_FS: $consumer_fs" >&2; exit 2 ;;
@@ -22,7 +30,7 @@ esac
 for command in sha256sum mkfs.vfat mmd mcopy qemu-system-x86_64 timeout grep; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing command: $command" >&2; exit 1; }
 done
-for file in "$build/grub-mkstandalone" "$build/grub-core/ventoy.mod" "$disk"             "$ovmf_code" "$ovmf_vars" "$runtime/ventoy_x64.efi"             "$runtime/udf_x64.efi" "$runtime/iso9660_x64.efi"; do
+for file in "$build/grub-mkstandalone" "$build/grub-core/ventoy.mod" "$disk"             "$ovmf_code" "$ovmf_vars" "$runtime/ventoy_x64.efi"              "$runtime/udf_x64.efi" "$runtime/iso9660_x64.efi" "$runtime/vtoyjump64.exe"; do
   test -f "$file" || { echo "Missing file: $file" >&2; exit 1; }
 done
 
@@ -31,10 +39,12 @@ done
 expected_consumer=${VENTOY_CONSUMER_SHA256:-362612542b480fb1417e6c7fc498bc42214b8266d237e319f116c0f7a3f00538}
 expected_udf=${VENTOY_UDF_SHA256:-64b39735f98129451373ff36b281cd93f678f96dc173eb4dea78104a161622c4}
 expected_iso=${VENTOY_ISO9660_SHA256:-e3412168c2750fc81ca3a546261cf7cbfbf8b7b0212ccd6e8a7b26a40c1f8e22}
+expected_jump=${VENTOY_JUMP64_SHA256:-5787798ecc49c6a179bca0b6b07854b9f46a3f96b11731f8d1c4cc6fe8b5ecce}
 {
   printf '%s  %s\n' "$expected_consumer" "$runtime/ventoy_x64.efi"
   printf '%s  %s\n' "$expected_udf" "$runtime/udf_x64.efi"
   printf '%s  %s\n' "$expected_iso" "$runtime/iso9660_x64.efi"
+  printf '%s  %s\n' "$expected_jump" "$runtime/vtoyjump64.exe"
 } | sha256sum -c --status || {
   echo "Consumer/ISO/UDF driver mismatch; refused to mix unverified binaries" >&2
   exit 1
@@ -54,6 +64,7 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 printf 'Mode: %s\nRuntime: %s\nConsumer-SHA256: %s\nUDF-SHA256: %s\nSource-disk: %s\n'   "$mode" "$runtime" "$expected_consumer" "$expected_udf" "$disk" >"$work/manifest.txt"
 printf 'Consumer-FS: %s\n' "$consumer_fs" >>"$work/manifest.txt"
+printf 'Guest-Disk-Bus: %s\n' "$guest_bus" >>"$work/manifest.txt"
 {
 cat <<'GRUB'
 serial --speed=115200
@@ -66,6 +77,11 @@ unset LoadIsoEfiDriver
 set VTOY_CHKDEV_RESULT_STRING=0
 echo WINPE_TEST_BEGIN
 insmod ventoy
+set vtoy_path=(hd0)/ventoy
+if [ ! -f "$vtoy_path/vtoyjump64.exe" ]; then
+  echo WINPE_ERROR_JUMP_MISSING
+  halt
+fi
 vt_windows_reset
 if vt_img_sector (hd1,msdos1)/ISO/winpe.iso; then
   echo WINPE_EXTENT_OK
@@ -79,6 +95,13 @@ else
   echo WINPE_ERROR_LOOPBACK
   halt
 fi
+# The original Ventoy menu chooses this independent of the WIM file reader.
+if vt_is_udf (hd1,msdos1)/ISO/winpe.iso; then
+  set ventoy_fs_probe=udf
+else
+  set ventoy_fs_probe=iso9660
+fi
+echo WINPE_ISO_FS=$ventoy_fs_probe
 vt_windows_collect_wim_patch bcd (loop)/EFI/MICROSOFT/BOOT/BCD
 vt_windows_count_wim_patch vt_wim_count
 echo WINPE_WIM_PATCH_COUNT=$vt_wim_count
@@ -142,11 +165,26 @@ mcopy -i "$work/esp.img" "$work/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$work/esp.img" "$runtime/ventoy_x64.efi" ::/ventoy/ventoy_x64.efi
 mcopy -i "$work/esp.img" "$runtime/udf_x64.efi" ::/ventoy/udf_x64.efi
 mcopy -i "$work/esp.img" "$runtime/iso9660_x64.efi" ::/ventoy/iso9660_x64.efi
+mcopy -i "$work/esp.img" "$runtime/vtoyjump64.exe" ::/ventoy/vtoyjump64.exe
 cp "$ovmf_vars" "$work/OVMF_VARS.fd"
+
+if test "$guest_bus" = "ide"; then
+  # Writable AHCI frontend with disposable COW backing. All test fixture
+  # source RAW images remain unchanged; Windows sees its native SATA driver.
+  command -v qemu-img >/dev/null 2>&1 || { echo "Missing qemu-img" >&2; exit 1; }
+  qemu-img create -q -f qcow2 -F raw -b "$work/esp.img" "$work/esp.qcow2"
+  qemu-img create -q -f qcow2 -F raw -b "$disk" "$work/ventoy.qcow2"
+  guest_esp_drive="if=ide,index=0,format=qcow2,file=$work/esp.qcow2"
+  guest_source_drive="if=ide,index=1,format=qcow2,file=$work/ventoy.qcow2"
+else
+  # Negative control for WinPE installations without a VirtIO disk driver.
+  guest_esp_drive="if=virtio,format=raw,readonly=on,file=$work/esp.img"
+  guest_source_drive="if=virtio,format=raw,readonly=on,file=$disk"
+fi
 
 status=0
 monitor=none
-if test "$mode" = "--trace"; then
+if test "$mode" = "--trace" || test "${VENTOY_SCREENSHOT:-0}" = "1"; then
   command -v socat >/dev/null 2>&1 || exit 1
   monitor="unix:$work/monitor.sock,server,nowait"
 fi
@@ -155,9 +193,22 @@ timeout "${VENTOY_WINPE_TIMEOUT:-90s}" qemu-system-x86_64 -machine q35,accel=tcg
   -serial "file:$work/serial.log" \
   -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
   -drive "if=pflash,format=raw,file=$work/OVMF_VARS.fd" \
-  -drive "if=virtio,format=raw,readonly=on,file=$work/esp.img" \
-  -drive "if=virtio,format=raw,readonly=on,file=$disk"   >"$work/qemu.log" 2>&1 &
+  -drive "$guest_esp_drive" \
+  -drive "$guest_source_drive" >"$work/qemu.log" 2>&1 &
 pid=$!
+if test "$mode" = "--boot" && test "${VENTOY_SCREENSHOT:-0}" = "1"; then
+  sleep "${VENTOY_CAPTURE_AFTER:-120}"
+  if test -S "$work/monitor.sock" && kill -0 "$pid" 2>/dev/null; then
+    printf 'screendump %s/winpe-screen.ppm\n' "$work" |
+      socat -T 3 - "UNIX-CONNECT:$work/monitor.sock" >"$work/screenshot.log" 2>&1 || true
+    if test -s "$work/winpe-screen.ppm"; then
+      if command -v magick >/dev/null 2>&1; then
+        magick "$work/winpe-screen.ppm" "$work/winpe-screen.png" || true
+      fi
+      echo "WinPE screenshot for manual acceptance: $work/winpe-screen.png"
+    fi
+  fi
+fi
 if test "$mode" = "--trace"; then
   attempts=0
   while test ! -S "$work/monitor.sock" && test "$attempts" -lt 30; do
@@ -181,11 +232,18 @@ wait "$pid" || status=$?
 grep -aq WINPE_TEST_BEGIN "$work/serial.log" || {
   echo "FAIL: GRUB test script never started" >&2; exit 1;
 }
-for marker in WINPE_EXTENT_OK WINPE_LOOPBACK_OK WINPE_CHAIN_READY WINPE_WIM_PATCH_COUNT=1; do
+for marker in WINPE_EXTENT_OK WINPE_LOOPBACK_OK WINPE_CHAIN_READY WINPE_WIM_PATCH_COUNT=1 WINPE_ISO_FS=udf; do
   grep -aq "$marker" "$work/serial.log" || {
     echo "FAIL: $marker absent; see $work/serial.log" >&2; exit 1;
   }
 done
+# This historical fixture has a pinned Windows WIM jump binary. The Chain
+# must match the proven-working descriptor size, not merely report success.
+if test "${VENTOY_EXPECT_CHAIN_SIZE:-1667736}" != skip &&
+   ! grep -aq "WINPE_CHAIN_SIZE=${VENTOY_EXPECT_CHAIN_SIZE:-1667736}" "$work/serial.log"; then
+  echo "FAIL: WinPE Chain size differs from the historical working fixture" >&2
+  exit 1
+fi
 if ! grep -aq '/WEPE/WEPE64.WIM \[SUCCESS\]' "$work/serial.log"; then
   echo "FAIL: WinPE WIM patch was found but not prepared" >&2; exit 1
 fi
@@ -195,7 +253,7 @@ fi
 printf 'EFI consumer milestones:\n'
 grep -aE 'WINPE_|StartImage|LoadImage|chain:|Error:|error:' "$work/serial.log" | tail -n 60 | cut -c1-240 || true
 if test "$mode" = "--prepare"; then
-  echo "PASS: WinPE chain preparation only (current FS selection may differ from historical working UDF chain)"
+  echo "PASS: WinPE UDF WIM Chain matches historical fixture; Windows guest mount not asserted by --prepare"
   pass=1
 elif test "$mode" = "--invalid-params"; then
   if ! grep -aq WINPE_CONSUMER_RETURNED "$work/serial.log" ||
@@ -214,7 +272,15 @@ else
     if grep -aq '\[VTOY-DP\] StartImage pre' "$work/serial.log" &&
        grep -aq 'CDROM(0x1' "$work/serial.log" &&
        ! grep -aq 'StartImage return status=Invalid Parameter' "$work/serial.log"; then
-      echo "PASS: corrected EFI handoff uses CDROM DevicePath and does not immediately return INVALID_PARAMETER"
+      for required in 'chain->override_chunk_num=4' \
+                      'chain->virt_img_size_in_bytes=460988416' \
+                      'os_param->vtoy_reserved=<0 0 1 1 0 0 0>'; do
+        if ! grep -aFq "$required" "$work/serial.log"; then
+          echo "FAIL: Consumer Chain differs from working reference ($required)" >&2
+          exit 1
+        fi
+      done
+      echo "PASS: UDF Chain fields match historical reference and EFI CDROM handoff is valid"
       pass=1
     else
       echo "FAIL: corrected EFI handoff did not match historical CDROM path" >&2
