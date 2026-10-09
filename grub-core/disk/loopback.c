@@ -72,15 +72,6 @@ grub_loopback_stage_source (struct grub_disk_pipeline *ctx,
 }
 
 static grub_err_t
-grub_loopback_stage_block (struct grub_disk_pipeline *ctx,
-                           const struct grub_disk_hook *hook __attribute__ ((unused)))
-{
-  if ((ctx->flags & GRUB_DISK_PIPELINE_COW) || ctx->transformed)
-    return grub_disk_pipeline_enable_cow (ctx);
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
 grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
                              const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
@@ -122,8 +113,6 @@ static struct grub_disk_hook grub_loopback_hooks[] =
   {
     { .name = "file", .stage = GRUB_DISK_SOURCE,
       .probe = grub_loopback_stage_match, .run = grub_loopback_stage_source },
-    { .name = "cow", .stage = GRUB_DISK_BLOCK,
-      .probe = grub_loopback_stage_match, .run = grub_loopback_stage_block },
     { .name = "grub-loopback", .stage = GRUB_DISK_PUBLISH,
       .probe = grub_loopback_stage_match, .run = grub_loopback_stage_publish }
   };

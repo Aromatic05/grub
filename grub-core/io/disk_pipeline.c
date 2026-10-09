@@ -14,21 +14,9 @@
 #include <grub/mm.h>
 #include <grub/misc.h>
 
-#define GRUB_DISK_COW_BITS 12
-#define GRUB_DISK_COW_SIZE (1U << GRUB_DISK_COW_BITS)
-#define GRUB_DISK_COW_BUCKETS 64
-
-struct grub_disk_cow_block
-{
-  struct grub_disk_cow_block *next;
-  grub_uint64_t offset;
-  grub_uint8_t data[GRUB_DISK_COW_SIZE];
-};
-
-struct grub_disk_overlay
-{
-  struct grub_disk_cow_block *buckets[GRUB_DISK_COW_BUCKETS];
-};
+/* Registered once on first construction; common BLOCK hooks are
+   independent from GRUB Loopback and from EFI Map publishers. */
+void grub_disk_overlay_register (void);
 
 static struct grub_disk_hook *grub_disk_hooks;
 
@@ -140,6 +128,11 @@ grub_disk_pipeline_views (struct grub_disk_pipeline *ctx)
                      "too many nested disk compression layers");
 }
 
+static grub_err_t grub_disk_pipeline_read_base_layer
+  (struct grub_disk_layer *, grub_uint64_t, grub_size_t, void *);
+static grub_err_t grub_disk_pipeline_write_base_layer
+  (struct grub_disk_layer *, grub_uint64_t, grub_size_t, const void *);
+
 struct grub_disk_pipeline *
 grub_disk_pipeline_new (const char *source, const char *name,
                         enum grub_disk_target target, unsigned int flags)
@@ -162,6 +155,12 @@ grub_disk_pipeline_new (const char *source, const char *name,
       grub_disk_pipeline_close (ctx);
       return 0;
     }
+  static int builtin_hooks_registered;
+  if (!builtin_hooks_registered)
+    {
+      grub_disk_overlay_register ();
+      builtin_hooks_registered = 1;
+    }
   ctx->target = target;
   ctx->flags = flags;
   ctx->type = GRUB_FILE_TYPE_LOOPBACK;
@@ -183,6 +182,13 @@ grub_disk_pipeline_run (struct grub_disk_pipeline *ctx)
       int exclusive = (stage == GRUB_DISK_SOURCE || stage == GRUB_DISK_FORMAT
                        || stage == GRUB_DISK_PUBLISH);
 
+      if (stage == GRUB_DISK_BLOCK)
+        {
+          ctx->base.data = ctx;
+          ctx->base.read = grub_disk_pipeline_read_base_layer;
+          ctx->base.write = grub_disk_pipeline_write_base_layer;
+          ctx->io = &ctx->base;
+        }
       if (stage == GRUB_DISK_VIEW)
         {
           grub_err_t err = grub_disk_pipeline_views (ctx);
@@ -282,118 +288,49 @@ grub_disk_pipeline_read_base (struct grub_disk_pipeline *ctx,
   return GRUB_ERR_NONE;
 }
 
-static struct grub_disk_cow_block *
-grub_disk_cow_find (struct grub_disk_overlay *overlay, grub_uint64_t offset)
+static grub_err_t
+grub_disk_pipeline_read_base_layer (struct grub_disk_layer *layer,
+                                    grub_uint64_t off, grub_size_t len, void *buf)
 {
-  struct grub_disk_cow_block *block;
-  unsigned int bucket = (offset >> GRUB_DISK_COW_BITS) % GRUB_DISK_COW_BUCKETS;
-
-  for (block = overlay->buckets[bucket]; block; block = block->next)
-    if (block->offset == offset)
-      return block;
-  return 0;
+  return grub_disk_pipeline_read_base (layer->data, off, len, buf);
 }
 
-grub_err_t
-grub_disk_pipeline_enable_cow (struct grub_disk_pipeline *ctx)
+static grub_err_t
+grub_disk_pipeline_write_base_layer (struct grub_disk_layer *layer,
+                                     grub_uint64_t off, grub_size_t len,
+                                     const void *buf)
 {
-  if (!ctx || !ctx->file)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "no disk to overlay");
-  if (!ctx->overlay)
-    {
-      ctx->overlay = grub_zalloc (sizeof (*ctx->overlay));
-      if (!ctx->overlay)
-        return grub_errno;
-    }
-  return GRUB_ERR_NONE;
+  struct grub_disk_pipeline *ctx = layer->data;
+  if (!ctx->direct_write)
+    return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET, "disk backing is read-only");
+  return ctx->direct_write (ctx->file, buf, len, off);
 }
 
 grub_err_t
 grub_disk_pipeline_read (struct grub_disk_pipeline *ctx,
                          grub_uint64_t off, grub_size_t len, void *buf)
 {
-  grub_uint64_t cur = off;
-  grub_size_t done = 0;
-  grub_err_t err;
-
-  if (!ctx || !buf)
+  if (!ctx || !ctx->io || !buf)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid disk read");
   if (!len)
     return GRUB_ERR_NONE;
-
-  err = grub_disk_pipeline_read_base (ctx, off, len, buf);
-  if (err || !ctx->overlay)
-    return err;
-
-  while (done < len)
-    {
-      grub_uint64_t start = cur & ~((grub_uint64_t) GRUB_DISK_COW_SIZE - 1);
-      grub_size_t inside = cur - start;
-      grub_size_t size = GRUB_DISK_COW_SIZE - inside;
-      struct grub_disk_cow_block *block;
-
-      if (size > len - done)
-        size = len - done;
-      block = grub_disk_cow_find (ctx->overlay, start);
-      if (block)
-        grub_memcpy ((grub_uint8_t *) buf + done, block->data + inside, size);
-      cur += size;
-      done += size;
-    }
-  return GRUB_ERR_NONE;
+  if (off > (grub_uint64_t) -1 - len)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "disk read offset overflow");
+  return ctx->io->read (ctx->io, off, len, buf);
 }
 
 grub_err_t
 grub_disk_pipeline_write (struct grub_disk_pipeline *ctx,
                           grub_uint64_t off, grub_size_t len, const void *buf)
 {
-  grub_size_t done = 0;
-
-  if (!ctx || !ctx->file || !buf)
+  if (!ctx || !ctx->io || !buf)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid disk write");
   if (!len)
     return GRUB_ERR_NONE;
   if (ctx->file->size != GRUB_FILE_SIZE_UNKNOWN
       && (off > ctx->file->size || len > ctx->file->size - off))
     return grub_error (GRUB_ERR_OUT_OF_RANGE, "disk write outside image");
-
-  if (!ctx->overlay)
-    return ctx->direct_write
-      ? ctx->direct_write (ctx->file, buf, len, off)
-      : grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET, "disk is read-only");
-
-  while (done < len)
-    {
-      grub_uint64_t cur = off + done;
-      grub_uint64_t start = cur & ~((grub_uint64_t) GRUB_DISK_COW_SIZE - 1);
-      unsigned int bucket = (start >> GRUB_DISK_COW_BITS) % GRUB_DISK_COW_BUCKETS;
-      grub_size_t inside = cur - start;
-      grub_size_t size = GRUB_DISK_COW_SIZE - inside;
-      struct grub_disk_cow_block *block = grub_disk_cow_find (ctx->overlay, start);
-
-      if (size > len - done)
-        size = len - done;
-      if (!block)
-        {
-          grub_err_t err;
-          block = grub_malloc (sizeof (*block));
-          if (!block)
-            return grub_errno;
-          err = grub_disk_pipeline_read_base (ctx, start, GRUB_DISK_COW_SIZE,
-                                              block->data);
-          if (err)
-            {
-              grub_free (block);
-              return err;
-            }
-          block->offset = start;
-          block->next = ctx->overlay->buckets[bucket];
-          ctx->overlay->buckets[bucket] = block;
-        }
-      grub_memcpy (block->data + inside, (const grub_uint8_t *) buf + done, size);
-      done += size;
-    }
-  return GRUB_ERR_NONE;
+  return ctx->io->write (ctx->io, off, len, buf);
 }
 
 void
@@ -402,20 +339,13 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
   if (!ctx)
     return;
 
-  if (ctx->overlay)
+  /* Reverse the assembled chain before destroying backing views. */
+  while (ctx->io && ctx->io != &ctx->base)
     {
-      unsigned int i;
-      for (i = 0; i < GRUB_DISK_COW_BUCKETS; i++)
-        {
-          struct grub_disk_cow_block *block = ctx->overlay->buckets[i];
-          while (block)
-            {
-              struct grub_disk_cow_block *next = block->next;
-              grub_free (block);
-              block = next;
-            }
-        }
-      grub_free (ctx->overlay);
+      struct grub_disk_layer *top = ctx->io;
+      ctx->io = top->lower;
+      if (top->close)
+        top->close (top);
     }
 
   if (ctx->file)

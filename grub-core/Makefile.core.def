@@ -145,6 +145,7 @@ kernel = {
   common = kern/file.c;
   common = io/fileview.c;
   common = io/disk_pipeline.c;
+  common = io/disk_overlay.c;
   common = lib/crc.c;
   common = kern/memfile.c;
   common = kern/fs.c;

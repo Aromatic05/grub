@@ -30,7 +30,18 @@ enum grub_disk_target
     GRUB_DISK_TARGET_EFI
   };
 
-struct grub_disk_overlay;
+/* Prepared block reader/writer chain. A BLOCK hook may prepend a layer.
+   Each layer delegates to lower or implements its own backing policy. */
+struct grub_disk_layer
+{
+  struct grub_disk_layer *lower;
+  void *data;
+  grub_err_t (*read) (struct grub_disk_layer *, grub_uint64_t,
+                      grub_size_t, void *);
+  grub_err_t (*write) (struct grub_disk_layer *, grub_uint64_t,
+                       grub_size_t, const void *);
+  void (*close) (struct grub_disk_layer *);
+};
 
 struct grub_disk_pipeline
 {
@@ -43,7 +54,8 @@ struct grub_disk_pipeline
   void *owned_memory;
   grub_err_t (*direct_write) (grub_file_t, const void *, grub_size_t, grub_off_t);
   grub_dl_t format_module;
-  struct grub_disk_overlay *overlay;
+  struct grub_disk_layer base;
+  struct grub_disk_layer *io;
   int transformed;
   int formatted;
   int published;
@@ -75,8 +87,6 @@ struct grub_disk_pipeline *EXPORT_FUNC (grub_disk_pipeline_new)
 grub_err_t EXPORT_FUNC (grub_disk_pipeline_run) (struct grub_disk_pipeline *ctx);
 void EXPORT_FUNC (grub_disk_pipeline_close) (struct grub_disk_pipeline *ctx);
 
-grub_err_t EXPORT_FUNC (grub_disk_pipeline_enable_cow)
-  (struct grub_disk_pipeline *ctx);
 grub_err_t EXPORT_FUNC (grub_disk_pipeline_read)
   (struct grub_disk_pipeline *ctx, grub_uint64_t off, grub_size_t len, void *buf);
 grub_err_t EXPORT_FUNC (grub_disk_pipeline_write)
