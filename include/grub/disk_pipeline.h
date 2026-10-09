@@ -40,6 +40,7 @@ struct grub_disk_pipeline
   unsigned int flags;
   enum grub_file_type type;
   grub_file_t file;
+  void *owned_memory;
   grub_err_t (*direct_write) (grub_file_t, const void *, grub_size_t, grub_off_t);
   grub_dl_t format_module;
   struct grub_disk_overlay *overlay;

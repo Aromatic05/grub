@@ -350,6 +350,8 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
 
   if (ctx->file)
     grub_file_close (ctx->file);
+  /* Close the entire file view chain before freeing copied source memory. */
+  grub_free (ctx->owned_memory);
   if (ctx->format_module)
     grub_dl_unref (ctx->format_module);
   grub_free (ctx->source);

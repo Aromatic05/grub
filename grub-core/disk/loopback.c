@@ -60,7 +60,7 @@ grub_loopback_stage_source (struct grub_disk_pipeline *ctx,
     (ctx->source,
      (ctx->flags & GRUB_DISK_PIPELINE_MEMORY) != 0,
      (ctx->flags & GRUB_DISK_PIPELINE_BLOCKLIST) != 0,
-     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS);
+     ctx->type | GRUB_FILE_TYPE_NO_DECOMPRESS, &ctx->owned_memory);
   if (!ctx->file)
     return grub_errno ? grub_errno
                       : grub_error (GRUB_ERR_FILE_NOT_FOUND,
