@@ -346,11 +346,11 @@ grub_disk_pipeline_write (struct grub_disk_pipeline *ctx,
   return ctx->io->write (ctx->io, off, len, buf);
 }
 
-void
+grub_err_t
 grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
 {
   if (!ctx)
-    return;
+    return GRUB_ERR_NONE;
 
   /* The publisher must remove its device before the backing I/O chain dies. */
   if (ctx->publisher)
@@ -358,7 +358,14 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
       const struct grub_disk_hook *publisher = ctx->publisher;
       ctx->publisher = 0;
       if (publisher->unpublish)
-        publisher->unpublish (ctx, publisher);
+        {
+          grub_err_t err = publisher->unpublish (ctx, publisher);
+          if (err)
+            {
+              ctx->publisher = publisher;
+              return err;
+            }
+        }
       if (publisher->module)
         grub_dl_unref (publisher->module);
     }
@@ -387,4 +394,5 @@ grub_disk_pipeline_close (struct grub_disk_pipeline *ctx)
   grub_free (ctx->source);
   grub_free (ctx->name);
   grub_free (ctx);
+  return GRUB_ERR_NONE;
 }

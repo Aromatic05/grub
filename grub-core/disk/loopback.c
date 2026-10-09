@@ -88,7 +88,7 @@ grub_loopback_stage_publish (struct grub_disk_pipeline *ctx,
   return GRUB_ERR_NONE;
 }
 
-static void
+static grub_err_t
 grub_loopback_stage_unpublish (struct grub_disk_pipeline *ctx,
                                const struct grub_disk_hook *hook __attribute__ ((unused)))
 {
@@ -103,6 +103,7 @@ grub_loopback_stage_unpublish (struct grub_disk_pipeline *ctx,
         break;
       }
   ctx->published = 0;
+  return GRUB_ERR_NONE;
 }
 
 static struct grub_disk_hook grub_loopback_hooks[] =
@@ -125,8 +126,7 @@ delete_loopback (const char *name)
   if (dev->refcnt)
     return grub_error (GRUB_ERR_STILL_REFERENCED, "device still referenced");
 
-  grub_disk_pipeline_close (dev->pipeline);
-  return GRUB_ERR_NONE;
+  return grub_disk_pipeline_close (dev->pipeline);
 }
 
 static grub_err_t

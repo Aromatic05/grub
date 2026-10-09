@@ -75,7 +75,8 @@ struct grub_disk_hook
   int order;
   int (*probe) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
   grub_err_t (*run) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
-  void (*unpublish) (struct grub_disk_pipeline *, const struct grub_disk_hook *);
+  grub_err_t (*unpublish) (struct grub_disk_pipeline *,
+                            const struct grub_disk_hook *);
   const void *data;
   grub_dl_t module;
   struct grub_disk_hook *next;
@@ -93,7 +94,7 @@ struct grub_disk_pipeline *EXPORT_FUNC (grub_disk_pipeline_new)
   (const char *source, const char *name, enum grub_disk_target target,
    unsigned int flags);
 grub_err_t EXPORT_FUNC (grub_disk_pipeline_run) (struct grub_disk_pipeline *ctx);
-void EXPORT_FUNC (grub_disk_pipeline_close) (struct grub_disk_pipeline *ctx);
+grub_err_t EXPORT_FUNC (grub_disk_pipeline_close) (struct grub_disk_pipeline *ctx);
 
 grub_err_t EXPORT_FUNC (grub_disk_pipeline_read)
   (struct grub_disk_pipeline *ctx, grub_uint64_t off, grub_size_t len, void *buf);
