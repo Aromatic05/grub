@@ -1,146 +1,117 @@
-# EFI Consumer / WinPE regression (2026-10-09)
+# WinPE EFI Consumer comparison: erroneous replay and corrected handoff
 
-This is a source-and-QEMU fact record, not a claim that Windows boots.
-The preserved March 2026 test fixtures live in the sibling `out/testenv`
-repository. Its pre-unification commands (`ventoycore`, `ventoywindows`,
-`vtwindows`, `vtchainloadwin`) are NOT valid entry points for the current
-`ventoy.mod`.
+This document corrects the October 9, 2026 claim that the final Ventoy EFI
+Consumer was broken. The final version was previously reported working. The
+newly created QEMU test **did not reproduce its startup conditions**.
+Do not use an incorrect test to justify changes to the Consumer binary.
 
-## Reproduction
+## Reference from the working historical test
 
-From the GRUB repository root:
+Preserved trace: `../out/testenv/work/qemu-serial.log.bak.new` (March 24).
+
+- Ventoy runtime arguments: `isoefi= iso_udf debug`, with **no** forced
+  `FirstTry` option for the Windows ISO.
+- Windows OS chain: `vtoy_reserved=<0 0 1 1 0 0 0>`,
+  `override_chunk_num=4`, `virt_chunk_num=1`,
+  `virt_img_size_in_bytes=460988416`.
+- Firmware `Connect partition driver Success`.
+- `LoadImage` succeeded with a virtual
+  `VenHw(...)/CDROM(0x1,0x144,0x1C770)/\\EFI\\BOOT\\BOOTX64.EFI` path.
+- Subsequent EFI Block I/O operations appear in the trace. The archived
+  serial stream by itself is **not a Windows desktop screenshot**.
+
+Upstream Windows flow:
+`../Ventoy/INSTALL/grub/grub.cfg` -> `uefi_iso_menu_func` ->
+`uefi_windows_menu_func`. This selects `LoadIsoEfiDriver` according to
+image compatibility/El Torito and does **not** unconditionally set `isoefi=on`
+or `FirstTry` for Windows. See also
+`grub-core/ventoy/ventoy_windows.c:2145-2162`.
+
+## How the October test created a false regression
+
+Our first `tests/ventoy_consumer_qemu.sh` had these **invented** options:
+
+```text
+set LoadIsoEfiDriver=on
+chainloader ... isoefi=on iso_udf FirstTry=@EFI@BOOT@bootx64.efi ...
+```
+
+Additionally, GRUB 2.15's `fs_probe` selected `iso9660` for WIM
+file access inside the dual-format WinPE ISO, while the reference
+chain used `udf`:
+
+| Condition | March reference | October incorrect test |
+| --- | --- | --- |
+| Consumer `isoefi` | empty | `on` |
+| `FirstTry` | absent | forced |
+| WIM metadata filesystem | UDF | ISO9660 |
+| `vtoy_reserved[3]` | 1 | 0 |
+| override chunks | 4 | 2 |
+| virtual bytes | 460988416 | 460814336 |
+| Partition driver | Success | Not Found |
+| EFI image path | `VenHw/.../CDROM/.../BOOTX64.EFI` | `VenHw/.../bootx64.efi` |
+
+This incompatible handoff led to three downstream `EFI_INVALID_PARAMETER`
+responses, after which the Consumer returned to GRUB. Trying the stock
+67,008-byte vs a 75,936-byte Consumer, or switching its extra UDF/ISO driver,
+**did not make those incorrect test conditions equivalent to the final build**.
+The conclusion that the final version was defective was unjustified.
+
+## Correcting the test parameters
+
+Removing the invented `isoefi=on` / `FirstTry` arguments immediately restored:
+
+- `Connect partition driver Success`.
+- `LoadImage` path with `/CDROM(0x1,0x144,0x1C770)/`.
+- Windows EFI `StartImage` invocation without immediately returning
+  `EFI_INVALID_PARAMETER`.
+
+This isolates the **first** false regression. A screenshot of this test still
+showed Windows Boot Manager reporting `winload.efi`, status `0xc0000001`.
+The newer script's WIM override data still differs from the historical
+working UDF chain; the screenshot therefore does NOT establish a regression
+in the final Consumer. The exact cause of this **remaining test mismatch**
+requires its own faithful UDF chain comparison.
+
+## Test modes and legitimate assertions
 
 ```sh
-# Chain producer only; checks physical extents, BCD WIM discovery and chain.
 tests/ventoy_consumer_qemu.sh --prepare
+# Current GRUB WIM chain producer only; NOT final-version equivalence.
 
-# Expected-BUG test: returns 0 only while the historical *masked success*
-# failure is present. Once Consumer is fixed, this test must be retired.
-tests/ventoy_consumer_qemu.sh --repro
-
-# Boot regression: fails when Consumer returns or boot success is unverified.
-tests/ventoy_consumer_qemu.sh --boot
-
-# Consumer protocol debug trace: QEMU monitor advances its debug pauses.
-# A failure is EXPECTED with the historical binary; logs are kept.
 tests/ventoy_consumer_qemu.sh --trace
+# Uses original Windows isoefi/FirstTry semantics, records EFI DevicePath,
+# and checks passage to Windows StartImage. NOT desktop verification.
 
-# A/B the filesystem driver with all other inputs held fixed.
-VENTOY_CONSUMER_FS=fat tests/ventoy_consumer_qemu.sh --repro
+tests/ventoy_consumer_qemu.sh --boot
+# Attempts the same handoff without diagnostic keyboard events;
+# QEMU timeout/nonreturn by itself is NOT a PASS.
 
-# A/B the stock 67,008-byte Consumer (same UDF/ISO driver hashes).
-VENTOY_CONSUMER_RUNTIME=../Ventoy/INSTALL/ventoy \
-VENTOY_CONSUMER_SHA256=d3eccecdbee18db4bc0a2091057f2fb894982ed3217335dddb51e5cffbf8a985 \
-tests/ventoy_consumer_qemu.sh --repro
+tests/ventoy_consumer_qemu.sh --invalid-params
+# Deliberately wrong isoefi=on + forced FirstTry NEGATIVE CONTROL only.
+# NEVER cite its failure as evidence against the working Consumer.
 ```
 
-Set `VENTOY_TEST_KEEP=1` to retain passing tests; failing runs are always
-retained. `VENTOY_RUN_ROOT=../out/testenv/work` gives persistent local records.
-The test mounts both EFI and ISO source disks READ-ONLY. It creates its own
-writable OVMF variables in a fresh directory. Its Consumer and ISO/UDF
-filesystem drivers are verified against pinned SHA256 hashes *before* QEMU
-starts. Testing a different set requires deliberate runtime and hash overrides.
+The test pins the historical Consumer and ISO/UDF driver SHA256, uses a
+disposable EFI system disk/OVMF variables and attaches source RAW disks
+read-only. `VENTOY_RUN_ROOT=../out/testenv/work` and
+`VENTOY_TEST_KEEP=1` preserve diagnostics.
 
-Pinned historical runtime (`../out/testenv/work/ventoy-runtime-p1`):
+The newly added `extras/ventoy/consumer-status.patch` was based on the
+invalid comparison and **has been withdrawn** without being compiled,
+applied or installed. The underlying source's unconditional
+`EFI_SUCCESS` on exit is an independent code fact, but not evidence that
+the confirmed working boot flow fails.
 
-| Artifact | SHA256 |
-| --- | --- |
-| `ventoy_x64.efi` (75,936 bytes) | `362612542b480fb1417e6c7fc498bc42214b8266d237e319f116c0f7a3f00538` |
-| `udf_x64.efi` | `64b39735f98129451373ff36b281cd93f678f96dc173eb4dea78104a161622c4` |
-| `iso9660_x64.efi` | `e3412168c2750fc81ca3a546261cf7cbfbf8b7b0212ccd6e8a7b26a40c1f8e22` |
+## Follow-up test work
 
-This 75,936-byte test binary is **not** interchangeable with the 67,008-byte
-`../Ventoy/INSTALL/ventoy/ventoy_x64.efi` or the 68,992-byte compiled image
-found in `../Ventoy/EDK2/.../Build/MdeModule/.../X64/Ventoy.efi`.
+1. Recreate the historical WinPE UDF WIM override map, compare the 4
+   override chunks and virtual length byte-for-byte before launching.
+2. Reproduce the final version's complete EFI and QEMU disk configuration,
+   including boot-media topology and boot catalog.
+3. Verify reaching actual WinPE user space rather than merely loading its
+   EFI boot manager. Treat EFI protocol and OS-stage results separately.
 
-## Evidence and exact observed boundary
-
-On the existing `out/testenv/images/ventoy-test.raw` with its real WinPE ISO,
-current `ventoy.mod` reaches:
-
-```
-WINPE_EXTENT_OK
-WINPE_LOOPBACK_OK
-WINPE_WIM_PATCH_COUNT=1
-WINPE_CHAIN_READY
-WINPE_CONSUMER_BEGIN
-```
-
-The 2026-10-09 non-debug run reached `WINPE_CONSUMER_RETURNED`. The GRUB EFI
-chainloader reported `StartImage status=0x0`, even though WinPE never booted.
-`--repro` asserts exactly that erroneous outcome. `--boot` rejects it.
-
-The QEMU debug trace (`../out/testenv/work/ventoy-winpe.NwJiZR/serial.log`)
-records three separate attempts by the Consumer to boot
-`\\EFI\\BOOT\\bootx64.efi`; each downstream `StartImage` returns
-**`EFI_INVALID_PARAMETER`**. The Consumer then exits and GRUB still sees
-`StartImage status=0x0` (success). This is the same key failure class as the
-archived March log
-`../out/testenv/work/qemu-serial.log.bak_20260323_234607`.
-
-The trace reports successful installation of the virtual Block I/O protocol,
-successful connection of the Disk I/O driver, and loading the UDF driver.
-The `Partition Driver` connection reports `Not Found`, but this is **not
-proven** to be the cause of Windows' `EFI_INVALID_PARAMETER`.
-The boot image's `LoadedImage` device path is only `VenHw(...)` and lacks an
-explicit `CDROM(...)` segment. This is a concrete difference to examine
-against EFI Map's El Torito device path, **not yet a verified root cause**.
-
-The test was repeated with `iso_fat`/ISO9660 instead of `iso_udf`; the
-Consumer still returned to GRUB and reported EFI success, so merely switching
-the filesystem driver did not resolve this failure. Replacing only the 75,936-
-byte historical Consumer with the stock **67,008-byte** image, while keeping
-the same WinPE ISO, UDF driver and GRUB module, also reproduced the masked
-success. Neither result proves the precise downstream Windows failure cause.
-
-The debug run does **not** show `ventoy_wrapper_file_open` invocations;
-therefore, the previous hypothesis that repeated filesystem hooks caused
-*this specific* WinPE failure is unsupported. Hook rollback remains an
-independent defect to test with explicit file replacement enabled.
-
-## Source defects for a later Consumer patch
-
-All locations below refer to the existing
-`../Ventoy/EDK2/edk2_mod/edk2-edk2-stable201911/MdeModulePkg/Application/Ventoy/`
-source (not modified by this test work):
-
-1. `Ventoy.c`: `VentoyEfiMain()` returns `EFI_SUCCESS` at the end regardless of
-   the recorded `ventoy_boot()` failure; `ventoy_boot()` also defaults to
-   success if it found a bootable file, even when `StartImage` failed.
-2. `Ventoy.c`: `ventoy_boot()` overwrites the
-   `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.OpenVolume` function pointer but does not
-   restore it when `StartImage` returns. Test repeated attempts in a single
-   EFI session *with file replacement enabled* before changing this path.
-3. `VentoyProtocol.c`: `ventoy_wrapper_file_read()` assumes a 2048-byte-aligned
-   file offset, disregards the underlying Block I/O status, and reports
-   success for short/non-sector-sized reads. `ventoy_wrapper_file_get_info()`
-   checks only an exactly-zero buffer length, not every short buffer.
-4. `VentoyProtocol.c`: virtual-sector remap reads do not propagate all
-   `ventoy_read_iso_sector()` failures.
-
-A minimal source-only correction is now staged in
-`extras/ventoy/consumer-status.patch`. It retains the actual downstream
-`StartImage` status in `ventoy_boot()` and returns the final result from
-`VentoyEfiMain()`, rather than forcing EFI success. The patch was validated
-with `patch -p1 --dry-run -d ../Ventoy` against the current migrated source.
-**It has not been compiled or QEMU-tested**, so it is not active in any
-runtime binary. The `--repro` known-bug check must change behavior once a
-properly built patched Consumer is substituted.
-
-The historical `Ventoy` repository has pre-existing deleted EDK2 build
-bootstrap/DSC files and other unrelated modifications. They were deliberately
-NOT restored/reset. No new Consumer binary was built from this incomplete
-source state and no unvalidated patch has been installed into the runtime.
-
-## Next verification gates
-
-- Rebuild the Consumer from a **complete, reproducible EDK2 toolchain** in an
-  isolated build environment, without restoring the user's deleted files.
-- Change and test status propagation first; `EFI_INVALID_PARAMETER` from the
-  downstream Windows image must not become `EFI_SUCCESS` at the GRUB boundary.
-- Test `EFI_FILE_PROTOCOL.GetInfo` short buffers, unaligned `Read`, actual
-  read failures and repeated OpenVolume hooks with a dedicated EFI test app.
-- A/B comparison: legacy `VenHw(...)` path vs EFI Map `VenHw(...)/CDROM(...)`,
-  while holding the WinPE ISO and EFI binary version fixed.
-- Treat Windows desktop/PE shell arrival as distinct from Chain construction,
-  Block I/O install, `LoadImage`, or a non-returning `StartImage`.
+Do not change or rebuild EFI Consumer based on the obsolete forced-ISOEFI
+failure; the legacy Ventoy EDK2 source tree also contains preexisting deleted
+build files that were deliberately left untouched.

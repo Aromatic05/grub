@@ -80,9 +80,10 @@ VENTOY_TEST_KEEP=1 VENTOY_BOOT_CAPTURE=1 tests/ventoy_boot_qemu.sh --boot
 QEMU 默认使用 3 GiB 内存，以免现代 Arch Linux initramfs 在不足 1 GiB
 的虚拟机内发生 OOM 或 EFI Stub 加载失败。所有测试镜像以只读方式挂载。
 
-Windows / WinPE 的旧 EFI Consumer 故障重放和协议追踪见
-`docs/ventoy/CONSUMER_REGRESSION.md`，使用
-`tests/ventoy_consumer_qemu.sh --prepare|--repro|--trace`。
+Windows / WinPE 的历史成功版与测试参数差异对照见
+`docs/ventoy/CONSUMER_REGRESSION.md`。旧测试误设 `isoefi=on`
+并强制 `FirstTry`，造成虚假的 EFI 故障结论；不得据此判定
+最终版 Consumer 失效。
 
 详细行为及限制：`docs/ventoy/DIRECT_BOOT.md`。
 

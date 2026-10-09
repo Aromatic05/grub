@@ -1,5 +1,5 @@
 #!/bin/sh
-# Replays the pre-unification WinPE EFI consumer path with the CURRENT ventoy.mod.
+# Diagnoses the current WinPE chain against the known working Ventoy handoff.
 # All attached source disks are read-only. The historical Consumer is version-locked.
 set -eu
 
@@ -16,8 +16,8 @@ case "$consumer_fs" in
   *) echo "Unsupported VENTOY_CONSUMER_FS: $consumer_fs" >&2; exit 2 ;;
 esac
 case "$mode" in
-  --prepare|--boot|--repro|--trace) ;;
-  *) echo "Usage: $0 [--prepare|--boot|--repro|--trace]" >&2; exit 2 ;;
+  --prepare|--boot|--invalid-params|--trace) ;;
+  *) echo "Usage: $0 [--prepare|--boot|--invalid-params|--trace]" >&2; exit 2 ;;
 esac
 for command in sha256sum mkfs.vfat mmd mcopy qemu-system-x86_64 timeout grep; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing command: $command" >&2; exit 1; }
@@ -62,7 +62,7 @@ terminal_output serial
 set pager=0
 set debug=chain,vtchunkdbg
 set ventoy_compatible=NO
-set LoadIsoEfiDriver=on
+unset LoadIsoEfiDriver
 set VTOY_CHKDEV_RESULT_STRING=0
 echo WINPE_TEST_BEGIN
 insmod ventoy
@@ -87,6 +87,7 @@ vt_dump_wim_patch
 loopback -d loop
 if vt_windows_chain_data (hd1,msdos1)/ISO/winpe.iso; then
   echo WINPE_CHAIN_READY
+  echo WINPE_AUTO_ISOEFI=$LoadIsoEfiDriver
 else
   echo WINPE_ERROR_CHAIN
   halt
@@ -103,7 +104,7 @@ if [ -z "$vtoy_chain_mem_addr" -o -z "$vtoy_chain_mem_size" -o -z "$env_param" ]
 fi
 vt_acpi_param $vtoy_chain_mem_addr 2048
 echo WINPE_CONSUMER_BEGIN
-chainloader (hd0)/ventoy/ventoy_x64.efi @DEBUG@ env_param=$env_param isoefi=on @FS_OPTION@ FirstTry=@EFI@BOOT@bootx64.efi mem:$vtoy_chain_mem_addr:size:$vtoy_chain_mem_size
+chainloader (hd0)/ventoy/ventoy_x64.efi @DEBUG@ env_param=$env_param isoefi=@ISOEFI_VALUE@ @FS_OPTION@ @FIRSTTRY@ mem:$vtoy_chain_mem_addr:size:$vtoy_chain_mem_size
 boot
 echo WINPE_CONSUMER_RETURNED
 GRUB
@@ -114,15 +115,26 @@ halt
 GRUB
 } > "$work/grub.cfg"
 sed -i "s/@FS_OPTION@/iso_$consumer_fs/g" "$work/grub.cfg"
+if test "${VENTOY_FS_DEBUG:-0}" = 1; then
+  sed -i 's/set debug=chain,vtchunkdbg/set debug=chain,vtchunkdbg,portdbg/' "$work/grub.cfg"
+fi
+# --invalid-params deliberately replays our previously INCORRECT handoff. All other
+# modes use the upstream Windows path: no forced isoefi driver or FirstTry.
+if test "$mode" = "--invalid-params"; then
+  sed -i 's/@ISOEFI_VALUE@/on/;s/@FIRSTTRY@/FirstTry=@EFI@BOOT@bootx64.efi/' "$work/grub.cfg"
+else
+  sed -i 's/@ISOEFI_VALUE@/$LoadIsoEfiDriver/;s/@FIRSTTRY@//' "$work/grub.cfg"
+fi
 if test "$mode" = "--trace"; then
   sed -i 's/@DEBUG@/debug/g' "$work/grub.cfg"
 else
   sed -i 's/@DEBUG@//g' "$work/grub.cfg"
 fi
 
+modules='serial terminal normal echo halt loopback chain boot acpi ventoy part_msdos fat iso9660 udf'
 "$build/grub-mkstandalone" -O x86_64-efi -d "$build/grub-core" \
   -o "$work/BOOTX64.EFI" --fonts='' --locales='' --compress=no \
-  --modules='serial terminal normal echo halt loopback chain boot acpi ventoy part_msdos fat iso9660 udf'   "boot/grub/grub.cfg=$work/grub.cfg" >"$work/pack.log" 2>&1
+  --modules="$modules"   "boot/grub/grub.cfg=$work/grub.cfg" >"$work/pack.log" 2>&1
 truncate -s 64M "$work/esp.img"
 mkfs.vfat -F 16 -n VTOYDIAG "$work/esp.img" >"$work/mkfs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT ::/ventoy
@@ -183,21 +195,33 @@ fi
 printf 'EFI consumer milestones:\n'
 grep -aE 'WINPE_|StartImage|LoadImage|chain:|Error:|error:' "$work/serial.log" | tail -n 60 | cut -c1-240 || true
 if test "$mode" = "--prepare"; then
-  echo "PASS: current ventoy.mod produces WinPE chain without executing Consumer"
+  echo "PASS: WinPE chain preparation only (current FS selection may differ from historical working UDF chain)"
   pass=1
-elif test "$mode" = "--repro"; then
+elif test "$mode" = "--invalid-params"; then
   if ! grep -aq WINPE_CONSUMER_RETURNED "$work/serial.log" ||
      ! grep -aEq 'StartImage status=0x0' "$work/serial.log"; then
-    echo "NOT REPRODUCED: expected historical masked EFI_SUCCESS failure" >&2
+    echo "NEGATIVE CONTROL CHANGED: forced isoefi=on case no longer produced the same failure" >&2
     exit 1
   fi
-  echo "PASS (known bug reproduced): WinPE did not boot, but Consumer returned EFI_SUCCESS"
+  echo "PASS (negative control): intentionally wrong isoefi=on/FirstTry arguments cause EFI failure"
   pass=1
 else
   if grep -aq WINPE_CONSUMER_RETURNED "$work/serial.log"; then
     echo "FAIL: EFI Consumer returned to GRUB, inspect StartImage and EFI protocol trace" >&2
     exit 1
   fi
-  echo "UNVERIFIED: Consumer did not return; Windows desktop has NOT been asserted (QEMU=$status)" >&2
-  exit 2
+  if test "$mode" = "--trace"; then
+    if grep -aq '\[VTOY-DP\] StartImage pre' "$work/serial.log" &&
+       grep -aq 'CDROM(0x1' "$work/serial.log" &&
+       ! grep -aq 'StartImage return status=Invalid Parameter' "$work/serial.log"; then
+      echo "PASS: corrected EFI handoff uses CDROM DevicePath and does not immediately return INVALID_PARAMETER"
+      pass=1
+    else
+      echo "FAIL: corrected EFI handoff did not match historical CDROM path" >&2
+      exit 1
+    fi
+  else
+    echo "UNVERIFIED: Windows user-space boot requires screen capture (QEMU=$status)" >&2
+    exit 2
+  fi
 fi
