@@ -80,10 +80,26 @@ VENTOY_TEST_KEEP=1 VENTOY_BOOT_CAPTURE=1 tests/ventoy_boot_qemu.sh --boot
 QEMU 默认使用 3 GiB 内存，以免现代 Arch Linux initramfs 在不足 1 GiB
 的虚拟机内发生 OOM 或 EFI Stub 加载失败。所有测试镜像以只读方式挂载。
 
-Windows / WinPE 的历史成功版与测试参数差异对照见
-`docs/ventoy/CONSUMER_REGRESSION.md`。旧测试误设 `isoefi=on`
-并强制 `FirstTry`，造成虚假的 EFI 故障结论；不得据此判定
-最终版 Consumer 失效。
+Windows / WinPE 的 EFI Consumer 完整启动验证已成功进入图形桌面：
+`docs/ventoy/CONSUMER_REGRESSION.md`。该测试使用本项目当前
+`ventoy.mod` 的内部 `vt_*` Windows Chain，并不代表上述
+`ventoy PATH` 公共命令已经支持 Windows ISO。独立 QEMU 截图和
+EFI 日志保存在 `../out/testenv/work/winpe-verified-20261009/`。
+WinPE 内的 `vtoyjump64.exe` 也已验收：通过 Windows Virtual Disk API
+挂载原始 `C:\ISO\winpe.iso`，`ventoy.log` 报告
+`Mount ISO FILE: SUCCESS`，资源管理器显示名称为“微PE工具箱”的 UDF DVD 卷。
+测试磁盘必须使用 IDE/SATA：之前使用 VirtIO 虽能进入 WinPE 桌面，但
+Windows 无法找到原始 ISO 文件。测试默认使用临时 QCOW2 覆盖层，保护 RAW 源盘。
+
+```sh
+tests/ventoy_consumer_qemu.sh --prepare
+tests/ventoy_consumer_qemu.sh --trace
+VENTOY_TEST_KEEP=1 VENTOY_SCREENSHOT=1 VENTOY_CAPTURE_AFTER=135 \
+  tests/ventoy_consumer_qemu.sh --boot
+```
+
+`--boot` 超时仍会返回未验证状态，必须实际查看截图中的 WinPE
+桌面；`--trace` 只验收启动描述符和 EFI 交接。
 
 详细行为及限制：`docs/ventoy/DIRECT_BOOT.md`。
 

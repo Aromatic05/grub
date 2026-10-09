@@ -66,35 +66,134 @@ Removing the invented `isoefi=on` / `FirstTry` arguments immediately restored:
 - Windows EFI `StartImage` invocation without immediately returning
   `EFI_INVALID_PARAMETER`.
 
-This isolates the **first** false regression. A screenshot of this test still
-showed Windows Boot Manager reporting `winload.efi`, status `0xc0000001`.
-The newer script's WIM override data still differs from the historical
-working UDF chain; the screenshot therefore does NOT establish a regression
-in the final Consumer. The exact cause of this **remaining test mismatch**
-requires its own faithful UDF chain comparison.
+That solved only the first false regression. The next Windows Boot Manager
+screenshot still reported `winload.efi` error `0xc0000001`, because its WIM
+Chain was incomplete. Two additional prerequisites were missing:
+
+- **UDF mapping and OS parameter:** For hybrid ISO/UDF media, GRUB module
+  registration order made `fs_probe` open the WIM as ISO9660. The original
+  Windows menu uses `vt_is_udf` to set `ventoy_fs_probe=udf`. The port now
+  temporarily moves the already-registered UDF filesystem to the head of
+  the GRUB filesystem list **only** while scanning Windows WIM patches, then
+  restores the exact original list. It never registers a filesystem disabled
+  by lockdown.
+- **Ventoy runtime jump executable:** The new test omitted `vtoy_path` and
+  `vtoyjump64.exe`. That 173,568-byte file rounds to exactly **174,080
+  bytes** on 2,048-byte boundaries, matching the entire virtual-image
+  shortfall. The runtime is now staged from the same version-pinned
+  historical test disk and its SHA256 checked before QEMU starts.
+
+## Completed WinPE GUI verification (2026-10-09)
+
+With the unchanged, historical 75,936-byte EFI Consumer and unchanged WinPE
+ISO, the repaired test generates these values, matching the March reference:
+
+| Field | Working March reference | Current QEMU |
+| --- | --- | --- |
+| `isoefi` | empty | empty |
+| `FirstTry` | absent | absent |
+| WIM metadata FS | UDF | UDF |
+| `vtoy_reserved` | `<0 0 1 1 0 0 0>` | identical |
+| `override_chunk_num` | 4 | 4 |
+| `virt_img_size_in_bytes` | 460988416 | 460988416 |
+| GRUB Chain descriptor length | 1667736 | 1667736 |
+| EFI file device path | `VenHw(...)/CDROM(...)` | same CDROM node |
+
+**Actual user-space verification:** an isolated QEMU x86_64-efi boot advanced
+past the Windows Boot Manager, loaded WinPE and displayed the full graphical
+desktop, taskbar and application icons. The desktop was visually verified on
+two separate single-VM runs: before and after strengthening jump-resource
+error handling. The final automatic screenshot (2048x2048 PNG) and serial
+logs were preserved at
+`../out/testenv/work/winpe-verified-20261009/`. GUI success was assessed
+from that screenshot, **not** from a non-returning `StartImage` or a timeout.
+
+The native module now checks the existence and complete read of the jump
+executable. Deliberately setting `vtoy_path` to a nonexistent directory
+causes `/WEPE/WEPE64.WIM [FAIL]`, and `vt_windows_chain_data` explicitly
+refuses to build the incomplete chain. A fault-injection QEMU run verified
+both conditions.
+
+## Windows-side vtoyjump ISO mount: verified
+
+The WinPE **desktop alone is insufficient** to prove this product feature.
+The October harness originally attached both disks through **VirtIO**, while
+the March QEMU workflow used IDE/SATA. In a WinPE boot using VirtIO, the
+original `vtoyjump64.exe` was executed, but its in-guest log at
+`X:\Windows\system32\ventoy.log` showed it could only see drives D: and
+X:, ending with `Failed to find ISO file`. The Windows desktop was visible
+regardless. This was **another mistake in the test environment**, not a
+reason to change the EFI Consumer.
+
+The QEMU test now uses **IDE/SATA by default**. It attaches both the FAT EFI
+test image and the original Ventoy test disk as **disposable writable QCOW2
+overlays**, with untouched read-only RAW backing files. `VENTOY_GUEST_DISK_BUS=virtio`
+retains the earlier disk topology for a negative control when useful.
+
+The Windows user-space test was then repeated with unchanged pinned Consumer,
+jump executable, and WinPE ISO. Opening `ventoy.log` from inside WinPE showed:
+
+```text
+File <C:\ISO\winpe.iso> exist
+Disk UUID match
+Disk check OK C: 1
+OpenVirtualDisk success
+VentoyAttachVirtualDisk success
+Mount ISO FILE: SUCCESS
+```
+
+Windows Explorer also showed a DVD volume named `微PE工具箱` (UDF, 228 MiB),
+matching the mounted original WinPE ISO. Its stable Explorer drive letter was
+**E:**, although `vtoyjump` reported **F:** from an instantaneous drive-bit
+difference. Do not assume the transient letter remains constant.
+
+Screenshots directly from the running Windows guest, plus test inputs, are
+retained in `../out/testenv/work/winpe-verified-20261009/`:
+
+- `sata-vtoyjump-mount-log.png`: actual Windows `ventoy.log`.
+- `sata-mounted-udf-dvd.png`: actual Explorer UDF DVD volume.
+- `virtio-guest-ventoy-log.png`: negative control showing the original error.
+
+**Result:** On the historical Windows-compatible disk bus, the previously
+working WinPE EFI+WIM chain **also mounts the original ISO through vtoyjump**.
+This was verified in the guest, not inferred from successful firmware launch.
+The guest mount remains a **manual visual assertion**, not an automatically
+machine-parsed pass condition in `--boot`.
+
+**Separate observation:** two QEMU guests run concurrently once displayed
+a Windows interactive-logon initialization error. The subsequent solo
+test did not reproduce it. The cause has not been established.
+
+**Scope:** Windows boot here uses the current `ventoy.mod` **internal
+`vt_*` command sequence**. The public `ventoy PATH` single-command entry
+is still restricted to Linux ISOs, and the GRUBFM GUI Windows action has
+not been implemented.
 
 ## Test modes and legitimate assertions
 
 ```sh
 tests/ventoy_consumer_qemu.sh --prepare
-# Current GRUB WIM chain producer only; NOT final-version equivalence.
+# Assert UDF, complete WIM patch and golden Chain length (1667736).
 
 tests/ventoy_consumer_qemu.sh --trace
-# Uses original Windows isoefi/FirstTry semantics, records EFI DevicePath,
-# and checks passage to Windows StartImage. NOT desktop verification.
+# Assert golden OS parameter, four Overrides, virtual bytes,
+# CDROM DevicePath and successful Windows EFI StartImage entry.
 
-tests/ventoy_consumer_qemu.sh --boot
-# Attempts the same handoff without diagnostic keyboard events;
-# QEMU timeout/nonreturn by itself is NOT a PASS.
+VENTOY_TEST_KEEP=1 VENTOY_SCREENSHOT=1 VENTOY_CAPTURE_AFTER=135 \
+  tests/ventoy_consumer_qemu.sh --boot
+# Saves an actual guest framebuffer; inspect winpe-screen.png visually.
+# The script intentionally returns 2 UNVERIFIED on QEMU timeout.
 
 tests/ventoy_consumer_qemu.sh --invalid-params
 # Deliberately wrong isoefi=on + forced FirstTry NEGATIVE CONTROL only.
 # NEVER cite its failure as evidence against the working Consumer.
 ```
 
-The test pins the historical Consumer and ISO/UDF driver SHA256, uses a
-disposable EFI system disk/OVMF variables and attaches source RAW disks
-read-only. `VENTOY_RUN_ROOT=../out/testenv/work` and
+The test pins the historical Consumer, ISO/UDF drivers and the
+`vtoyjump64.exe` SHA256
+(`5787798ecc49c6a179bca0b6b07854b9f46a3f96b11731f8d1c4cc6fe8b5ecce`),
+uses disposable EFI System Partition/OVMF variables and, by default,
+IDE/SATA guests with writable QCOW2 overlays backed by unchanged RAW files. `VENTOY_RUN_ROOT=../out/testenv/work` and
 `VENTOY_TEST_KEEP=1` preserve diagnostics.
 
 The newly added `extras/ventoy/consumer-status.patch` was based on the
@@ -103,14 +202,16 @@ applied or installed. The underlying source's unconditional
 `EFI_SUCCESS` on exit is an independent code fact, but not evidence that
 the confirmed working boot flow fails.
 
-## Follow-up test work
+## Follow-up
 
-1. Recreate the historical WinPE UDF WIM override map, compare the 4
-   override chunks and virtual length byte-for-byte before launching.
-2. Reproduce the final version's complete EFI and QEMU disk configuration,
-   including boot-media topology and boot catalog.
-3. Verify reaching actual WinPE user space rather than merely loading its
-   EFI boot manager. Treat EFI protocol and OS-stage results separately.
+- The verified WinPE ISO+EFI Consumer now reaches GUI in QEMU using the
+  internal `vt_*` path. Implement Windows support in the high-level
+  `ventoy PATH` command and GRUBFM only after it reuses this exact plan,
+  UDF override and jump runtime; do not fork another parameter generator.
+- Formalize the now-verified in-guest `vtoyjump` log/volume checks as
+  machine-readable QEMU assertions if needed. The saved screenshots prove
+  this exact test, but a QEMU timeout alone remains UNVERIFIED.
+- Investigate the one-off concurrent-QEMU interactive-login error separately.
 
 Do not change or rebuild EFI Consumer based on the obsolete forced-ISOEFI
 failure; the legacy Ventoy EDK2 source tree also contains preexisting deleted
