@@ -69,6 +69,7 @@ Windows ISO / WIM / WinPE、VHD(x)、VTOY、IMG 和 BIOS 的单命令启动尚�
 tests/ventoy_boot_qemu.sh --check
 tests/ventoy_boot_qemu.sh --boot
 tests/ventoy_boot_qemu.sh --grubfm
+tests/ventoy_boot_qemu.sh --plain
 
 # 带屏幕截图（保留至临时目录）
 VENTOY_TEST_KEEP=1 VENTOY_BOOT_CAPTURE=1 tests/ventoy_boot_qemu.sh --boot
@@ -80,3 +81,14 @@ QEMU 默认使用 3 GiB 内存，以免现代 Arch Linux initramfs 在不足 1 G
 的虚拟机内发生 OOM 或 EFI Stub 加载失败。所有测试镜像以只读方式挂载。
 
 详细行为及限制：`docs/ventoy/DIRECT_BOOT.md`。
+
+### 关于普通磁盘的兼容提示
+
+`--plain` 测试使用 QCOW2 覆盖层删除原测试盘的 Ventoy 专用第二分区，
+并将运行资源放在另外的 EFI 分区中。Linux ISO 仍能进入启动菜单，
+验证了不强制要求原版分区布局。
+
+**现存限制**：没有 Ventoy 专用分区时，原版 `ventoy_x64.efi` 可能会
+错误提示设备不受支持、等待 10 秒后继续启动。这是外部 EFI Consumer
+的硬编码警告，不能通过假冒 VLNK 参数安全解决；后续需要配套移植
+Consumer 的明确 direct-boot 模式。

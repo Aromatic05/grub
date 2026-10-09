@@ -13,8 +13,8 @@ ovmf_vars=${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}
 mode=${1:---check}
 
 case "$mode" in
-  --check|--boot|--grubfm) ;;
-  *) echo "Usage: $0 [--check|--boot|--grubfm]" >&2; exit 2 ;;
+  --check|--boot|--grubfm|--plain) ;;
+  *) echo "Usage: $0 [--check|--boot|--grubfm|--plain]" >&2; exit 2 ;;
 esac
 for tool in mkfs.vfat mmd mcopy qemu-system-x86_64 timeout grep sed; do
   command -v "$tool" >/dev/null 2>&1 || {
@@ -71,6 +71,21 @@ else
   echo VTOY_CHECK_RUNTIME_REJECTED
 fi
 echo VTOY_TEST_DONE
+halt
+GRUBCFG
+elif test "$mode" = "--plain"; then
+  cat > "$test_work/grub.cfg" <<'GRUBCFG'
+serial --speed=115200
+terminal_input serial
+terminal_output serial
+set pager=0
+set vtoy_diag=on
+set debug=ventoyboot,chain
+set ventoy_runtime=(hd0)/ventoy
+echo VTOY_BOOT_PLAIN_BEGIN
+insmod ventoy
+ventoy (hd1,msdos1)/ISO/@ARCH_ISO@
+echo VTOY_BOOT_RETURNED
 halt
 GRUBCFG
 elif test "$mode" = "--grubfm"; then
@@ -131,6 +146,28 @@ if test "$mode" = "--grubfm"; then
   mcopy -i "$test_work/esp.img" "$repo/extras/grubfm/boot/grubfm/types/iso" ::/boot/grubfm/types/iso
   mcopy -i "$test_work/esp.img" "$repo/extras/grubfm/boot/grubfm/rules/ventoy.cfg" ::/boot/grubfm/rules/ventoy.cfg
 fi
+# Remove the second (Ventoy-specific) partition from a sparse copy-on-write
+# view of the source disk. EFI runtime files are served from the unrelated ESP.
+# This deliberately does not modify or copy the 3 GiB backing test image.
+disk_file="$test_disk"
+disk_format=raw
+if test "$mode" = "--plain"; then
+  for tool in qemu-img qemu-io; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Missing: $tool" >&2; exit 1; }
+  done
+  disk_file="$test_work/plain.qcow2"
+  disk_format=qcow2
+  qemu-img create -q -f qcow2 -F raw -b "$test_disk" "$disk_file"
+  qemu-io -f qcow2 -c "write -P 0 462 16" "$disk_file" >"$test_work/overlay.log"
+  runtime_dir=${VENTOY_RUNTIME_FILES:-"$repo/../out/testenv/work/ventoy-runtime-p1"}
+  mmd -i "$test_work/esp.img" ::/ventoy
+  for name in ventoy.cpio ventoy_x86.cpio ventoy_x64.efi iso9660_x64.efi; do
+    test -f "$runtime_dir/$name" || {
+      echo "Missing runtime: $runtime_dir/$name" >&2; exit 1;
+    }
+    mcopy -i "$test_work/esp.img" "$runtime_dir/$name" "::/ventoy/$name"
+  done
+fi
 cp "$ovmf_vars" "$test_work/OVMF_VARS.fd"
 
 qemu_status=0
@@ -150,7 +187,7 @@ timeout "$qemu_timeout" qemu-system-x86_64 -machine q35,accel=tcg -cpu qemu64 -m
   -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
   -drive "if=pflash,format=raw,file=$test_work/OVMF_VARS.fd" \
   -drive "if=virtio,format=raw,readonly=on,file=$test_work/esp.img" \
-  -drive "if=virtio,format=raw,readonly=on,file=$test_disk" \
+  -drive "if=virtio,format=$disk_format,readonly=on,file=$disk_file" \
   >"$test_work/qemu.log" 2>&1 &
 qemu_pid=$!
 
@@ -185,6 +222,7 @@ if test "$qemu_status" -ne 0 && test "$qemu_status" -ne 124; then
 fi
 if test "$mode" = "--check"; then start_marker=VTOY_TEST_BEGIN
 elif test "$mode" = "--grubfm"; then start_marker=VTOY_GRUBFM_BEGIN
+elif test "$mode" = "--plain"; then start_marker=VTOY_BOOT_PLAIN_BEGIN
 else start_marker=VTOY_BOOT_LINUX_BEGIN; fi
 grep -q "$start_marker" "$test_work/serial.log" || {
   echo "Boot did not reach test script" >&2
@@ -222,7 +260,7 @@ else
   # GRUBFM's configfile executes in a separate GRUB environment scope;
   # vtoy_diag need not be exported from the test script. The actual
   # Arch EFI menu check below validates the GRUBFM execution path.
-  if test "$mode" = "--boot"; then
+  if test "$mode" != "--grubfm"; then
     grep -q '\[VTOY_DIAG\] linux_chain done:' "$test_work/serial.log" || {
       echo "Linux chain data construction did not finish" >&2
       tail -n 70 "$test_work/serial.log" >&2

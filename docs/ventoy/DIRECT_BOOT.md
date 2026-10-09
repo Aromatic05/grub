@@ -73,12 +73,22 @@ point as the direct command. No `vt_*` calls are embedded in GRUBFM.
   opening an ISO through GRUB's Disk Pipeline does not guarantee compatibility.
 - A fully booted guest OS is not implied by an EFI/Chain metadata smoke test.
 - Existing module unload behavior is unchanged.
+- The **unmodified legacy EFI consumer** can display an incorrect
+  “not a standard Ventoy device” warning and pause for 10 seconds when the
+  source disk has no Ventoy EFI partition. This has been reproduced with a
+  QCOW2 disk whose Ventoy second-partition MBR entry is removed; the same
+  command still reaches the Arch Linux EFI boot menu. A clean direct-boot
+  experience on completely ordinary disks needs a versioned update to the
+  EFI consumer, not a false `vtoy_reserved[6]` flag (that byte means VLNK
+  and changes other Ventoy components' behavior).
 
 On a host with the Ventoy test disk, Arch Linux ISO and OVMF:
 
 ```sh
 tests/ventoy_boot_qemu.sh --check
 tests/ventoy_boot_qemu.sh --boot
+tests/ventoy_boot_qemu.sh --grubfm
+tests/ventoy_boot_qemu.sh --plain
 ```
 
 Only temporary EFI System Partition and OVMF variable images are written.
