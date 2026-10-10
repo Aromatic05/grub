@@ -25,6 +25,11 @@
 #include <grub/command.h>
 #include <grub/extcmd.h>
 #include <grub/i18n.h>
+#include <grub/bitmap.h>
+#include <grub/bitmap_scale.h>
+#include <grub/font.h>
+#include <grub/gfxmenu_view.h>
+#include <grub/lua.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -269,6 +274,61 @@ enum videomode_options
   GFXMODE_CURRENT
 };
 
+/* Space separated "WxHxD " list of the active (or first usable) adapter.  */
+static char *
+video_mode_list (void)
+{
+  grub_video_adapter_t adapter;
+  grub_video_driver_id_t id;
+  struct s_hook_ctx ctx;
+
+#ifdef GRUB_MACHINE_PCBIOS
+  grub_dl_load ("vbe");
+#endif
+
+  id = grub_video_get_driver_id ();
+  FOR_VIDEO_ADAPTERS (adapter)
+    {
+      if (!adapter->iterate)
+	continue;
+
+      if (adapter->id != id)
+	{
+	  if (id != GRUB_VIDEO_DRIVER_NONE)
+	    continue;
+	  if (adapter->init () != GRUB_ERR_NONE)
+	    {
+	      grub_errno = GRUB_ERR_NONE;
+	      continue;
+	    }
+	}
+
+      ctx.data = NULL;
+      ctx.len = 0;
+      adapter->iterate (s_hook, &ctx);
+      ctx.data = grub_malloc (ctx.len + 1);
+      if (!ctx.data)
+	{
+	  if (adapter->id != id)
+	    adapter->fini ();
+	  return NULL;
+	}
+      ctx.len = 0;
+      adapter->iterate (s_hook, &ctx);
+      ctx.data[ctx.len] = '\0';
+
+      if (adapter->id != id)
+	adapter->fini ();
+
+      if (id != GRUB_VIDEO_DRIVER_NONE || ctx.len)
+	return ctx.data;
+
+      grub_free (ctx.data);
+    }
+
+  return grub_strdup ("");
+}
+
 static grub_err_t
 grub_cmd_videomode (grub_extcmd_context_t ctxt, int argc, char **args)
 {
@@ -296,62 +356,202 @@ grub_cmd_videomode (grub_extcmd_context_t ctxt, int argc, char **args)
       return 0;
     }
 
-#ifdef GRUB_MACHINE_PCBIOS
-  grub_dl_load ("vbe");
-#endif
-
   {
-    grub_video_adapter_t adapter;
-    grub_video_driver_id_t id = grub_video_get_driver_id ();
-    struct s_hook_ctx ctx;
+    char *modes = video_mode_list ();
 
-    FOR_VIDEO_ADAPTERS (adapter)
-      {
-	if (!adapter->iterate)
-	  continue;
-
-	if (adapter->id != id)
-	  {
-	    if (id != GRUB_VIDEO_DRIVER_NONE)
-	      continue;
-	    if (adapter->init () != GRUB_ERR_NONE)
-	      {
-		grub_errno = GRUB_ERR_NONE;
-		continue;
-	      }
-	  }
-
-	ctx.data = NULL;
-	ctx.len = 0;
-	adapter->iterate (s_hook, &ctx);
-	ctx.data = grub_malloc (ctx.len + 1);
-	if (!ctx.data)
-	  {
-	    if (adapter->id != id)
-	      adapter->fini ();
-	    return grub_errno;
-	  }
-	ctx.len = 0;
-	adapter->iterate (s_hook, &ctx);
-	ctx.data[ctx.len] = '\0';
-
-	if (adapter->id != id)
-	  adapter->fini ();
-
-	if (id != GRUB_VIDEO_DRIVER_NONE || ctx.len)
-	  {
-	    grub_env_set (args[0], ctx.data);
-	    grub_free (ctx.data);
-	    return 0;
-	  }
-
-	grub_free (ctx.data);
-      }
+    if (!modes)
+      return grub_errno;
+    grub_env_set (args[0], modes);
+    grub_free (modes);
   }
-
-  grub_env_set (args[0], "");
   return 0;
 }
+
+/* Lua "video" library.  */
+
+static grub_video_color_t
+lua_video_check_color (lua_State *state, int narg)
+{
+  grub_video_color_t color;
+
+  luaL_argcheck (state, lua_istable (state, narg), narg, "should be a color");
+  lua_getfield (state, narg, "r");
+  lua_getfield (state, narg, "g");
+  lua_getfield (state, narg, "b");
+  lua_getfield (state, narg, "a");
+  color = grub_video_map_rgba (luaL_checkint (state, -4),
+			       luaL_checkint (state, -3),
+			       luaL_checkint (state, -2),
+			       luaL_optint (state, -1, 255));
+  lua_pop (state, 4);
+  return color;
+}
+
+static struct grub_video_bitmap *
+lua_video_check_bitmap (lua_State *state, int narg)
+{
+  luaL_checktype (state, narg, LUA_TLIGHTUSERDATA);
+  return lua_touserdata (state, narg);
+}
+
+/* video.swap_buffers ()  */
+static int
+lua_video_swap_buffers (lua_State *state)
+{
+  if (grub_video_swap_buffers () != GRUB_ERR_NONE)
+    return luaL_error (state, "Error swapping video buffers: %s", grub_errmsg);
+  return 0;
+}
+
+/* video.fill_rect (color, x, y, width, height)  */
+static int
+lua_video_fill_rect (lua_State *state)
+{
+  grub_video_color_t color = lua_video_check_color (state, 1);
+
+  if (grub_video_fill_rect (color, luaL_checkint (state, 2),
+			    luaL_checkint (state, 3),
+			    luaL_checkint (state, 4),
+			    luaL_checkint (state, 5)) != GRUB_ERR_NONE)
+    return luaL_error (state, "Error filling rectangle: %s", grub_errmsg);
+  return 0;
+}
+
+/* video.draw_pixel (color, x, y)  */
+static int
+lua_video_draw_pixel (lua_State *state)
+{
+  grub_video_color_t color = lua_video_check_color (state, 1);
+
+  if (grub_video_fill_rect (color, luaL_checkint (state, 2),
+			    luaL_checkint (state, 3), 1, 1) != GRUB_ERR_NONE)
+    return luaL_error (state, "Error filling rectangle: %s", grub_errmsg);
+  return 0;
+}
+
+/* width, height = video.get_info ()  */
+static int
+lua_video_get_info (lua_State *state)
+{
+  struct grub_video_mode_info info;
+  unsigned int width = 0, height = 0;
+
+  if (grub_video_get_info (&info) == GRUB_ERR_NONE)
+    {
+      width = info.width;
+      height = info.height;
+    }
+  else
+    grub_errno = GRUB_ERR_NONE;
+  lua_pushinteger (state, width);
+  lua_pushinteger (state, height);
+  return 2;
+}
+
+/* video.draw_string (text, font, color, x, y)  */
+static int
+lua_video_draw_string (lua_State *state)
+{
+  const char *text = luaL_checkstring (state, 1);
+  grub_font_t font = grub_font_get (luaL_checkstring (state, 2));
+  grub_video_color_t color = lua_video_check_color (state, 3);
+
+  grub_font_draw_string (text, font, color, luaL_checkint (state, 4),
+			 luaL_checkint (state, 5));
+  return 0;
+}
+
+/* modes = video.info ()  */
+static int
+lua_video_info (lua_State *state)
+{
+  char *modes = video_mode_list ();
+
+  if (!modes)
+    return luaL_error (state, "%s", grub_errmsg);
+  lua_pushstring (state, modes);
+  grub_free (modes);
+  return 1;
+}
+
+/* bitmap = video.bitmap_load (file)  */
+static int
+lua_video_bitmap_load (lua_State *state)
+{
+  struct grub_video_bitmap *bitmap = NULL;
+
+  grub_video_bitmap_load (&bitmap, luaL_checkstring (state, 1));
+  save_errno (state);
+  if (!bitmap)
+    return 0;
+  lua_pushlightuserdata (state, bitmap);
+  return 1;
+}
+
+/* video.bitmap_close (bitmap)  */
+static int
+lua_video_bitmap_close (lua_State *state)
+{
+  grub_video_bitmap_destroy (lua_video_check_bitmap (state, 1));
+  return 0;
+}
+
+/* width, height = video.bitmap_info (bitmap)  */
+static int
+lua_video_bitmap_info (lua_State *state)
+{
+  struct grub_video_bitmap *bitmap = lua_video_check_bitmap (state, 1);
+
+  lua_pushinteger (state, grub_video_bitmap_get_width (bitmap));
+  lua_pushinteger (state, grub_video_bitmap_get_height (bitmap));
+  return 2;
+}
+
+/* video.bitmap_blit (bitmap, x, y, offset_x, offset_y, width, height)  */
+static int
+lua_video_bitmap_blit (lua_State *state)
+{
+  struct grub_video_bitmap *bitmap = lua_video_check_bitmap (state, 1);
+
+  grub_video_blit_bitmap (bitmap, GRUB_VIDEO_BLIT_BLEND,
+			  luaL_checkint (state, 2), luaL_checkint (state, 3),
+			  luaL_checkint (state, 4), luaL_checkint (state, 5),
+			  luaL_checkint (state, 6), luaL_checkint (state, 7));
+  return 0;
+}
+
+/* new_bitmap = video.bitmap_rescale (bitmap, width, height)  */
+static int
+lua_video_bitmap_rescale (lua_State *state)
+{
+  struct grub_video_bitmap *bitmap = lua_video_check_bitmap (state, 1);
+  struct grub_video_bitmap *scaled = NULL;
+
+  grub_video_bitmap_create_scaled (&scaled, luaL_checkint (state, 2),
+				   luaL_checkint (state, 3), bitmap,
+				   GRUB_VIDEO_BITMAP_SCALE_METHOD_BEST);
+  save_errno (state);
+  if (!scaled)
+    return 0;
+  lua_pushlightuserdata (state, scaled);
+  return 1;
+}
+
+static luaL_Reg videolib[] =
+  {
+    {"swap_buffers", lua_video_swap_buffers},
+    {"fill_rect", lua_video_fill_rect},
+    {"draw_pixel", lua_video_draw_pixel},
+    {"get_info", lua_video_get_info},
+    {"draw_string", lua_video_draw_string},
+    {"info", lua_video_info},
+    {"bitmap_load", lua_video_bitmap_load},
+    {"bitmap_close", lua_video_bitmap_close},
+    {"bitmap_info", lua_video_bitmap_info},
+    {"bitmap_blit", lua_video_bitmap_blit},
+    {"bitmap_rescale", lua_video_bitmap_rescale},
+    {0, 0}
+  };
 
 static grub_command_t cmd;
 #ifdef GRUB_MACHINE_PCBIOS
@@ -383,6 +583,12 @@ GRUB_MOD_INIT(videoinfo)
 					N_("[--list|--current] VAR"),
 					N_("Store video mode information in variable VAR."),
 					videomode_options);
+  if (grub_lua_global_state)
+    {
+      lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
+      luaL_register (grub_lua_global_state, "video", videolib);
+      lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
+    }
 }
 
 GRUB_MOD_FINI(videoinfo)
