@@ -53,6 +53,7 @@ enum grub_disk_dev_id
     GRUB_DISK_DEVICE_XEN,
     GRUB_DISK_DEVICE_OBDISK_ID,
     GRUB_DISK_DEVICE_MEM_ID,
+    GRUB_DISK_DEVICE_INITRD_ID,
   };
 
 struct grub_disk;
