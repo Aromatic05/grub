@@ -295,6 +295,7 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
   int fallback_dev_opened = 0;
   int text_mode = 0;
   int quiet = 0;
+  int boot_now = 0;
 
   while (argc > 0)
     {
@@ -308,6 +309,13 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
       if (grub_strcmp (argv[0], "-q") == 0 || grub_strcmp (argv[0], "--quiet") == 0)
 	{
 	  quiet = 1;
+	  argc--;
+	  argv++;
+	  continue;
+	}
+      if (grub_strcmp (argv[0], "-b") == 0 || grub_strcmp (argv[0], "--boot") == 0)
+	{
+	  boot_now = 1;
 	  argc--;
 	  argv++;
 	  continue;
@@ -555,6 +563,8 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
   grub_loader_set_ex (grub_chainloader_boot, grub_chainloader_unload, image_handle, 0);
   grub_dprintf ("chain", "chainloader setup complete image_handle=%p\n",
 		image_handle);
+  if (boot_now)
+    return grub_chainloader_boot (image_handle);
   return 0;
 
  fail:
