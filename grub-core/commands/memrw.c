@@ -23,6 +23,7 @@
 #include <grub/env.h>
 #include <grub/i18n.h>
 #include <grub/file.h>
+#include <grub/lua.h>
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/api.h>
 #include <grub/efi/efi.h>
@@ -262,6 +263,40 @@ fail:
   return grub_errno;
 }
 
+/* Lua "memrw" library: raw physical memory access.  */
+
+#define LUA_MEMRW(type, name)						\
+  static int								\
+  lua_read_##name (lua_State *state)					\
+  {									\
+    grub_addr_t addr = luaL_checkinteger (state, 1);			\
+    lua_pushinteger (state, *(volatile type *) addr);			\
+    return 1;								\
+  }									\
+									\
+  static int								\
+  lua_write_##name (lua_State *state)					\
+  {									\
+    grub_addr_t addr = luaL_checkinteger (state, 1);			\
+    *(volatile type *) addr = luaL_checkinteger (state, 2);		\
+    return 0;								\
+  }
+
+LUA_MEMRW (grub_uint8_t, byte)
+LUA_MEMRW (grub_uint16_t, word)
+LUA_MEMRW (grub_uint32_t, dword)
+
+static luaL_Reg memlib[] =
+  {
+    {"read_byte", lua_read_byte},
+    {"read_word", lua_read_word},
+    {"read_dword", lua_read_dword},
+    {"write_byte", lua_write_byte},
+    {"write_word", lua_write_word},
+    {"write_dword", lua_write_dword},
+    {0, 0}
+  };
+
 GRUB_MOD_INIT(memrw)
 {
   cmd_read_byte =
@@ -300,6 +335,12 @@ GRUB_MOD_INIT(memrw)
 			  N_("[OPTIONS] FILE"),
 			  N_("Load file content into memory."),
 			  options_loadfile);
+  if (grub_lua_global_state)
+    {
+      lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
+      luaL_register (grub_lua_global_state, "memrw", memlib);
+      lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
+    }
 }
 
 GRUB_MOD_FINI(memrw)
