@@ -25,10 +25,14 @@ VARIABLE(grub_reboot_start)
 	.code16
 	
 	/* set 0x472 to 0x0000 for cold boot (0x1234 for warm boot) */
-	movw	$0x0472, %di
+	movw	%cs:(grub_reboot_flag - grub_reboot_start), %bx
 	xorw	%ax, %ax
-	movw	%ax, (%di)
+	movw	%ax, %ds
+	movw	%bx, 0x0472
 	ljmp	$0xf000, $0xfff0
+
+VARIABLE(grub_reboot_flag)
+	.word	0
 
 	.code32
 VARIABLE(grub_reboot_end)

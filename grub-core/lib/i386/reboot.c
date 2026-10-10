@@ -25,8 +25,11 @@
 #include <grub/cpu/reboot.h>
 #include <grub/i386/floppy.h>
 
-void
-grub_reboot (void)
+#define GRUB_REBOOT_FLAG_COLD 0x0000
+#define GRUB_REBOOT_FLAG_WARM 0x1234
+
+static void __attribute__ ((noreturn))
+reboot_with_flag (grub_uint16_t flag)
 {
   struct grub_relocator *relocator = NULL;
   grub_relocator_chunk_t ch;
@@ -46,6 +49,8 @@ grub_reboot (void)
     while (1);
   buf = get_virtual_current_address (ch);
   grub_memcpy (buf, grub_reboot_start, grub_reboot_end - grub_reboot_start);
+  grub_set_unaligned16 ((grub_uint8_t *) buf
+			+ (grub_reboot_flag - grub_reboot_start), flag);
 
   segment = ((grub_addr_t) get_physical_target_address (ch)) >> 4;
   state.gs = state.fs = state.es = state.ds = state.ss = segment;
@@ -59,6 +64,18 @@ grub_reboot (void)
   err = grub_relocator16_boot (relocator, state);
 
   while (1);
+}
+
+void
+grub_reboot (void)
+{
+  reboot_with_flag (GRUB_REBOOT_FLAG_COLD);
+}
+
+void
+grub_reboot_warm (void)
+{
+  reboot_with_flag (GRUB_REBOOT_FLAG_WARM);
 }
 
 #endif /* GRUB_MACHINE_EFI */

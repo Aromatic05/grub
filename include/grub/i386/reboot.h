@@ -22,6 +22,9 @@
 #ifndef ASM_FILE
 
 extern grub_uint8_t grub_reboot_end[], grub_reboot_start[];
+extern grub_uint8_t grub_reboot_flag[];
+
+void grub_reboot_warm (void) __attribute__ ((noreturn));
 
 #endif
 
