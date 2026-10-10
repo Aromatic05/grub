@@ -19,8 +19,21 @@
 
 #include <grub/dl.h>
 #include <grub/command.h>
+#include <grub/extcmd.h>
 #include <grub/misc.h>
+#include <grub/mm.h>
 #include <grub/i18n.h>
+
+#ifdef GRUB_MACHINE_EFI
+#include <grub/efi/api.h>
+#include <grub/efi/efi.h>
+#include <grub/kernel.h>
+#include <grub/loader.h>
+#elif defined (__i386__) && !defined (GRUB_MACHINE_XEN) \
+  && !defined (GRUB_MACHINE_XEN_PVH) && !defined (GRUB_MACHINE_EMU)
+#define RESET_HAS_BIOS_WARM 1
+#include <grub/i386/reboot.h>
+#endif
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -32,15 +45,102 @@ grub_cmd_reboot (grub_command_t cmd __attribute__ ((unused)),
   grub_reboot ();
 }
 
-static grub_command_t cmd;
-
+static const struct grub_arg_option options[] =
+  {
+    {"shutdown", 's', 0, N_("Perform a shutdown."), 0, 0},
+    {"warm", 'w', 0, N_("Perform a warm boot."), 0, 0},
+    {"cold", 'c', 0, N_("Perform a cold boot. [default]"), 0, 0},
+    {"fwui", 'f', 0,
+     N_("Perform a reset back to the firmware user interface."), 0, 0},
+    {0, 0, 0, 0, 0, 0}
+  };
+
+enum
+  {
+    RESET_SHUTDOWN,
+    RESET_WARM,
+    RESET_COLD,
+    RESET_FWUI,
+  };
+
+#ifdef GRUB_MACHINE_EFI
+static void
+request_fwui (void)
+{
+  static grub_guid_t global = GRUB_EFI_GLOBAL_VARIABLE_GUID;
+  grub_efi_uint64_t *supported = NULL;
+  grub_efi_uint64_t *old = NULL;
+  grub_efi_uint64_t os_indications = GRUB_EFI_OS_INDICATIONS_BOOT_TO_FW_UI;
+  grub_size_t size = 0;
+
+  grub_efi_get_variable ("OsIndicationsSupported", &global, &size,
+			 (void **) &supported);
+  if (!supported || size != sizeof (*supported)
+      || !(*supported & GRUB_EFI_OS_INDICATIONS_BOOT_TO_FW_UI))
+    goto done;
+
+  grub_efi_get_variable ("OsIndications", &global, &size, (void **) &old);
+  if (old && size == sizeof (os_indications))
+    os_indications |= *old;
+
+  grub_efi_set_variable ("OsIndications", &global, &os_indications,
+			 sizeof (os_indications));
+
+ done:
+  grub_free (supported);
+  grub_free (old);
+}
+#endif
+
+static grub_err_t __attribute__ ((noreturn))
+grub_cmd_reset (grub_extcmd_context_t ctxt,
+		int argc __attribute__ ((unused)),
+		char **args __attribute__ ((unused)))
+{
+  struct grub_arg_list *state = ctxt->state;
+
+#ifdef GRUB_MACHINE_EFI
+  if (state[RESET_FWUI].set)
+    request_fwui ();
+#endif
+
+  if (state[RESET_SHUTDOWN].set)
+#ifdef GRUB_MACHINE_PCBIOS
+    grub_halt (0);
+#else
+    grub_halt ();
+#endif
+
+  if (state[RESET_WARM].set)
+    {
+#ifdef GRUB_MACHINE_EFI
+      grub_machine_fini (GRUB_LOADER_FLAG_NORETURN |
+			 GRUB_LOADER_FLAG_EFI_KEEP_ALLOCATED_MEMORY);
+      grub_efi_system_table->runtime_services->reset_system (GRUB_EFI_RESET_WARM,
+							     GRUB_EFI_SUCCESS,
+							     0, NULL);
+#elif defined (RESET_HAS_BIOS_WARM)
+      grub_reboot_warm ();
+#endif
+    }
+
+  grub_reboot ();
+}
+
+static grub_command_t reboot_cmd;
+static grub_extcmd_t reset_cmd;
+
 GRUB_MOD_INIT(reboot)
 {
-  cmd = grub_register_command ("reboot", grub_cmd_reboot,
-			       0, N_("Reboot the computer."));
+  reboot_cmd = grub_register_command ("reboot", grub_cmd_reboot,
+				      0, N_("Reboot the computer."));
+  reset_cmd = grub_register_extcmd ("reset", grub_cmd_reset, 0,
+				    N_("[-w|-s|-c] [-f]"),
+				    N_("Reset the system."), options);
 }
 
 GRUB_MOD_FINI(reboot)
 {
-  grub_unregister_command (cmd);
+  grub_unregister_command (reboot_cmd);
+  grub_unregister_extcmd (reset_cmd);
 }
