@@ -82,13 +82,13 @@ kernel = {
   riscv64_efi_stripflags   = '--strip-unneeded -K start -R .note -R .comment -R .note.gnu.gold-version -R .eh_frame';
 
   i386_pc_ldflags          = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags          = '$(TARGET_IMG_BASE_LDOPT),0x9000';
+  i386_pc_ldflags          = '-Wl,-Ttext,0x9000';
   i386_qemu_ldflags        = '$(TARGET_IMG_LDFLAGS)';
   i386_qemu_ldflags        = '$(TARGET_IMG_BASE_LDOPT),0x9000';
   i386_coreboot_ldflags    = '$(TARGET_IMG_LDFLAGS)';
   i386_coreboot_ldflags    = '$(TARGET_IMG_BASE_LDOPT),0x9000';
   i386_multiboot_ldflags   = '$(TARGET_IMG_LDFLAGS)';
-  i386_multiboot_ldflags   = '$(TARGET_IMG_BASE_LDOPT),0x9000';
+  i386_multiboot_ldflags   = '-Wl,-Ttext,0x9000';
   i386_ieee1275_ldflags    = '$(TARGET_IMG_LDFLAGS)';
   i386_ieee1275_ldflags    = '$(TARGET_IMG_BASE_LDOPT),0x10000';
   i386_xen_ldflags         = '$(TARGET_IMG_LDFLAGS)';
@@ -584,7 +584,7 @@ image = {
   i386_pc_nodist = rs_decoder.h;
 
   objcopyflags = '-O binary';
-  ldflags = '$(TARGET_IMG_LDFLAGS) $(TARGET_IMG_BASE_LDOPT),0x8200';
+  ldflags = '$(TARGET_IMG_LDFLAGS) -Wl,-Ttext,0x8200';
   enable = i386_pc;
 };
 
