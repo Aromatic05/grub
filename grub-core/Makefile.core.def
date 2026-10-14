@@ -960,6 +960,12 @@ module = {
 };
 
 module = {
+  name = mbinfo;
+  common = commands/i386/multiboot/mbinfo.c;
+  enable = i386_multiboot;
+};
+
+module = {
   name = vboot;
   i386_pc = vboot/vboot.c;
   i386_pc = vboot/dl.c;

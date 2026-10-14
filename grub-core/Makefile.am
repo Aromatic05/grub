@@ -148,6 +148,7 @@ if COND_i386_multiboot
 KERNEL_HEADER_FILES += $(top_builddir)/include/grub/machine/kernel.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/i386/tsc.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/acpi.h
+KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/i386/multiboot_info.h
 endif
 
 if COND_i386_qemu
