@@ -16,7 +16,7 @@ font=${A1C_FONT:-/usr/share/grub/unicode.pf2}
 ovmf_code=${OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}
 ovmf_vars=${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}
 
-for tool in qemu-system-x86_64 mkfs.vfat mmd mcopy cpio gzip socat python3 timeout; do
+for tool in qemu-system-x86_64 mkfs.vfat mmd mcopy cpio gzip socat python3 timeout xorriso; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Missing: $tool" >&2; exit 1; }
 done
 for path in "$efi_build/grub-mkstandalone" "$pc_build/grub-mkstandalone" \
@@ -317,12 +317,22 @@ reset_pc()
   printf 'serial --speed=115200\nterminal_output serial\necho A1C_RESET\nreset %s\necho A1C_ERROR_RETURNED\n' \
     "$2" > "$work/$1.cfg"
   if ! "$pc_build/grub-mkstandalone" -O i386-pc-eltorito -d "$pc_build/grub-core" \
-    -o "$work/$1.iso" --fonts='' --locales='' --themes='' \
+    -o "$work/$1.eltorito.img" --fonts='' --locales='' --themes='' \
     --install-modules='serial terminal normal echo reboot halt biosdisk iso9660' \
     --modules='serial terminal normal echo reboot halt biosdisk iso9660' \
     "boot/grub/grub.cfg=$work/$1.cfg" > "$work/$1-pack.log" 2>&1; then
     tail -n 5 "$work/$1-pack.log" >&2
     fail "$1: could not construct BIOS boot image"
+  fi
+  # grub-mkstandalone emits an El Torito boot image, NOT an ISO9660 volume.
+  # SeaBIOS -cdrom requires an actual ISO containing its El Torito catalog.
+  mkdir -p "$work/$1-iso-root/boot/grub"
+  cp "$work/$1.eltorito.img" "$work/$1-iso-root/boot/grub/eltorito.img"
+  if ! xorriso -as mkisofs -quiet -R \
+    -b boot/grub/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table \
+    -o "$work/$1.iso" "$work/$1-iso-root" > "$work/$1-iso.log" 2>&1; then
+    tail -n 5 "$work/$1-iso.log" >&2
+    fail "$1: could not package El Torito boot image in ISO9660"
   fi
   timeout 60s qemu-system-x86_64 -machine pc,accel=tcg -m 256M -display none \
     -action reboot=shutdown,shutdown=pause \
