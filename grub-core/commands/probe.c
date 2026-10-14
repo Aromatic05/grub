@@ -25,6 +25,7 @@
 #include <grub/disk.h>
 #include <grub/partition.h>
 #include <grub/gpt_partition.h>
+#include <grub/msdos_partition.h>
 #include <grub/net.h>
 #include <grub/fs.h>
 #include <grub/file.h>
@@ -49,6 +50,8 @@ static const struct grub_arg_option options[] =
     {"label",		'l', 0, N_("Determine filesystem label."), 0, 0},
     {"part-uuid",	0,   0, N_("Determine partition UUID."), 0, 0},
     {"quiet",           'q', 0, N_("Don't print error."), 0, 0},
+    {"partuuid",	'g', 0, N_("Determine partition UUID."), 0, 0},
+    {"bootable",	'b', 0, N_("Determine if bootable / active flag is set."), 0, 0},
     {0, 0, 0, 0, 0, 0}
   };
 
@@ -102,10 +105,15 @@ grub_cmd_probe (grub_extcmd_context_t ctxt, int argc, char **args)
       grub_device_close (dev);
       return GRUB_ERR_NONE;
     }
-  if (state[6].set)
+  if (state[6].set || state[8].set)
     {
       /* AAAABBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF + null terminator */
       char val[37] = "none";
+      /* The a1ive --partuuid/-g form printed an empty string for an
+         unpartitioned device.  Retain the existing --part-uuid fallback. */
+      if (state[8].set && !state[6].set &&
+          !(dev->disk && dev->disk->partition))
+        val[0] = '\0';
       if (dev->disk && dev->disk->partition)
 	{
 	  struct grub_partition *p = dev->disk->partition;
@@ -146,6 +154,58 @@ grub_cmd_probe (grub_extcmd_context_t ctxt, int argc, char **args)
 			       grub_le_to_cpu32(nt_disk_sig), 1 + p->number);
 	    }
 	  grub_disk_close(disk);
+	}
+      if (state[0].set)
+	grub_env_set (state[0].arg, val);
+      else
+	grub_printf ("%s", val);
+      grub_device_close (dev);
+      return GRUB_ERR_NONE;
+    }
+  if (state[9].set)
+    {
+      const char *val = "none";
+      if (dev->disk && dev->disk->partition)
+	{
+	  struct grub_partition *p = dev->disk->partition;
+	  grub_disk_t disk = grub_disk_open (dev->disk->name);
+
+	  if (! disk)
+	    {
+	      grub_device_close (dev);
+	      return grub_errno;
+	    }
+
+	  if (grub_strcmp (p->partmap->name, "msdos") == 0)
+	    {
+	      struct grub_msdos_partition_mbr mbr;
+
+	      if (grub_disk_read (disk, p->offset, 0, sizeof (mbr),
+				  &mbr) == 0)
+		{
+		  if (mbr.entries[p->index].flag & 0x80)
+		    val = "bootable";
+		}
+	      else
+		grub_errno = GRUB_ERR_NONE;
+	    }
+	  else if (grub_strcmp (p->partmap->name, "gpt") == 0)
+	    {
+	      struct grub_gpt_partentry entry;
+	      grub_packed_guid_t efi_system = GRUB_GPT_PARTITION_TYPE_EFI_SYSTEM;
+
+	      if (grub_disk_read (disk, p->offset, p->index,
+				  sizeof (entry), &entry) == 0)
+		{
+		  if (grub_memcmp (&entry.type, &efi_system,
+				   sizeof (efi_system)) == 0)
+		    val = "bootable";
+		}
+	      else
+		grub_errno = GRUB_ERR_NONE;
+	    }
+
+	  grub_disk_close (disk);
 	}
       if (state[0].set)
 	grub_env_set (state[0].arg, val);
