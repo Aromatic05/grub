@@ -30,6 +30,7 @@ GRUB_MOD_LICENSE ("GPLv3+");
 static grub_guid_t acpi_guid = GRUB_EFI_ACPI_TABLE_GUID;
 static grub_guid_t acpi2_guid = GRUB_EFI_ACPI_20_TABLE_GUID;
 static grub_guid_t smbios_guid = GRUB_EFI_SMBIOS_TABLE_GUID;
+static grub_guid_t smbios3_guid = GRUB_EFI_SMBIOS3_TABLE_GUID;
 
 #define EBDA_SEG_ADDR	0x40e
 #define LOW_MEM_ADDR	0x413
@@ -39,19 +40,11 @@ static grub_guid_t smbios_guid = GRUB_EFI_SMBIOS_TABLE_GUID;
 #define VBIOS_ADDR	0xc0000
 #define SBIOS_ADDR	0xf0000
 
-static int
-enable_rom_area (void)
+void
+grub_efi_unlock_rom_area (void)
 {
   grub_pci_address_t addr;
-  grub_uint32_t *rom_ptr;
   grub_pci_device_t dev = { .bus = 0, .device = 0, .function = 0};
-
-  rom_ptr = grub_absolute_pointer (VBIOS_ADDR);
-  if (*rom_ptr != BLANK_MEM)
-    {
-      grub_puts_ (N_("ROM image is present."));
-      return 0;
-    }
 
   /* FIXME: should be macroified.  */
   addr = grub_pci_make_address (dev, 144);
@@ -63,6 +56,21 @@ enable_rom_area (void)
   grub_pci_write_byte (addr++, 0x33);
   grub_pci_write_byte (addr++, 0x33);
   grub_pci_write_byte (addr, 0);
+}
+
+static int
+enable_rom_area (void)
+{
+  grub_uint32_t *rom_ptr;
+
+  rom_ptr = grub_absolute_pointer (VBIOS_ADDR);
+  if (*rom_ptr != BLANK_MEM)
+    {
+      grub_puts_ (N_("ROM image is present."));
+      return 0;
+    }
+
+  grub_efi_unlock_rom_area ();
 
   *rom_ptr = 0;
   if (*rom_ptr != 0)
@@ -74,8 +82,8 @@ enable_rom_area (void)
   return 1;
 }
 
-static void
-lock_rom_area (void)
+void
+grub_efi_lock_rom_area (void)
 {
   grub_pci_address_t addr;
   grub_pci_device_t dev = { .bus = 0, .device = 0, .function = 0};
@@ -89,10 +97,10 @@ lock_rom_area (void)
   grub_pci_write_byte (addr, 0x11);
 }
 
-static void
-fake_bios_data (int use_rom)
+void
+grub_efi_fake_bios_data (int use_rom)
 {
-  void *acpi, *smbios;
+  void *acpi, *smbios, *smbios3;
   grub_uint16_t *ebda_seg_ptr, *low_mem_ptr;
 
   ebda_seg_ptr = grub_absolute_pointer (EBDA_SEG_ADDR);
@@ -109,6 +117,8 @@ fake_bios_data (int use_rom)
 
   smbios = grub_efi_find_configuration_table (&smbios_guid);
   grub_dprintf ("efi", "SMBIOS: %p\n", smbios);
+  smbios3 = grub_efi_find_configuration_table (&smbios3_guid);
+  grub_dprintf ("efi", "SMBIOS3: %p\n", smbios3);
 
   *ebda_seg_ptr = FAKE_EBDA_SEG;
   *low_mem_ptr = (FAKE_EBDA_SEG >> 6);
@@ -119,8 +129,13 @@ fake_bios_data (int use_rom)
   if (acpi)
     grub_memcpy ((char *) ((FAKE_EBDA_SEG << 4) + 16), acpi, 1024 - 16);
 
-  if ((use_rom) && (smbios))
-    grub_memcpy ((char *) SBIOS_ADDR, (char *) smbios + 16, 16);
+  if (use_rom)
+    {
+      if (smbios)
+        grub_memcpy ((char *) SBIOS_ADDR, smbios, 31);
+      if (smbios3)
+        grub_memcpy ((char *) SBIOS_ADDR + 32, smbios3, 24);
+    }
 }
 
 static grub_err_t
@@ -130,11 +145,11 @@ grub_cmd_fakebios (struct grub_command *cmd __attribute__ ((unused)),
 {
   if (enable_rom_area ())
     {
-      fake_bios_data (1);
-      lock_rom_area ();
+      grub_efi_fake_bios_data (1);
+      grub_efi_lock_rom_area ();
     }
   else
-    fake_bios_data (0);
+    grub_efi_fake_bios_data (0);
 
   return 0;
 }
@@ -175,8 +190,8 @@ grub_cmd_loadbios (grub_command_t cmd __attribute__ ((unused)),
   else if (enable_rom_area ())
     {
       grub_file_read (file, (void *) VBIOS_ADDR, size);
-      fake_bios_data (size <= 0x40000);
-      lock_rom_area ();
+      grub_efi_fake_bios_data (size <= 0x40000);
+      grub_efi_lock_rom_area ();
     }
 
   grub_file_close (file);

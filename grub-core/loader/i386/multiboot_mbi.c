@@ -39,6 +39,8 @@
 
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/efi.h>
+/* This file is built for Multiboot 1 only, never Multiboot 2.  */
+int grub_multiboot_no_exit;
 #endif
 
 /* The bits in the required part of flags field we don't support.  */
@@ -616,9 +618,12 @@ grub_multiboot_make_mbi (grub_uint32_t *target)
 #endif
 
 #ifdef GRUB_MACHINE_EFI
-  err = grub_efi_finish_boot_services (NULL, NULL, NULL, NULL, NULL);
-  if (err)
-    return err;
+  if (!grub_multiboot_no_exit)
+    {
+      err = grub_efi_finish_boot_services (NULL, NULL, NULL, NULL, NULL);
+      if (err)
+	return err;
+    }
 #endif
 
   return GRUB_ERR_NONE;

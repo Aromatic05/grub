@@ -195,4 +195,9 @@ grub_efinet_get_device_handle (struct grub_net_card *card);
 
 char *EXPORT_FUNC (grub_efi_device_path_to_str) (grub_efi_device_path_t *dp);
 
+/* BIOS compatibility structures used by the EFI Multiboot 1 loader.  */
+void grub_efi_unlock_rom_area (void);
+void grub_efi_lock_rom_area (void);
+void grub_efi_fake_bios_data (int use_rom);
+
 #endif /* ! GRUB_EFI_EFI_HEADER */

@@ -55,6 +55,10 @@ GRUB_MOD_LICENSE ("GPLv3+");
 
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/efi.h>
+#ifndef GRUB_USE_MULTIBOOT2
+/* State is defined only by the Multiboot 1 MBI module.  */
+extern int grub_multiboot_no_exit;
+#endif
 #endif
 
 struct grub_relocator *GRUB_MULTIBOOT (relocator) = NULL;
@@ -188,7 +192,11 @@ grub_multiboot_boot (void)
   if (err)
     return err;
 
+#if defined (GRUB_MACHINE_EFI) && !defined (GRUB_USE_MULTIBOOT2)
+  if (grub_multiboot_no_exit || grub_efi_is_finished)
+#else
   if (grub_efi_is_finished)
+#endif
     normal_boot (GRUB_MULTIBOOT (relocator), state);
   else
     efi_boot (GRUB_MULTIBOOT (relocator), state.MULTIBOOT_MBI_REGISTER);
@@ -295,6 +303,9 @@ grub_cmd_multiboot (grub_command_t cmd __attribute__ ((unused)),
 
 #ifndef GRUB_USE_MULTIBOOT2
   grub_multiboot_quirks = GRUB_MULTIBOOT_QUIRKS_NONE;
+#ifdef GRUB_MACHINE_EFI
+  grub_multiboot_no_exit = 0;
+#endif
   int option_found = 0;
 
   do
@@ -315,6 +326,26 @@ grub_cmd_multiboot (grub_command_t cmd __attribute__ ((unused)),
 	  option_found = 1;
 	  grub_multiboot_quirks |= GRUB_MULTIBOOT_QUIRK_MODULES_AFTER_KERNEL;
 	}
+#if defined (GRUB_MACHINE_EFI) && (defined (__i386__) || defined (__x86_64__))
+      if (argc != 0 && grub_strcmp (argv[0], "--fake-bios") == 0)
+	{
+	  argc--;
+	  argv++;
+	  option_found = 1;
+	  grub_efi_unlock_rom_area ();
+	  grub_efi_fake_bios_data (1);
+	  grub_efi_lock_rom_area ();
+	}
+#endif
+#ifdef GRUB_MACHINE_EFI
+      if (argc != 0 && grub_strcmp (argv[0], "--no-exit") == 0)
+	{
+	  argc--;
+	  argv++;
+	  option_found = 1;
+	  grub_multiboot_no_exit = 1;
+	}
+#endif
     } while (option_found);
 #endif
 
