@@ -36,6 +36,12 @@ static const struct grub_arg_option options[] =
      0, 0},
     {"fs-uuid",		'u', 0, N_("Search devices by a filesystem UUID."),
      0, 0},
+    {"part-label",	'L', 0, N_("Search devices by a partition label."),
+     0, 0},
+    {"part-uuid",	'g', 0, N_("Search devices by a partition UUID."),
+     0, 0},
+    {"disk-uuid",	'U', 0, N_("Search devices by a disk UUID."),
+     0, 0},
     {"set",		's', GRUB_ARG_OPTION_OPTIONAL,
      N_("Set a variable to the first device found."), N_("VARNAME"),
      ARG_TYPE_STRING},
@@ -74,6 +80,9 @@ enum options
     SEARCH_FILE,
     SEARCH_LABEL,
     SEARCH_FS_UUID,
+    SEARCH_PART_LABEL,
+    SEARCH_PART_UUID,
+    SEARCH_DISK_UUID,
     SEARCH_SET,
     SEARCH_NO_FLOPPY,
     SEARCH_QUIET,
@@ -203,6 +212,12 @@ grub_cmd_search (grub_extcmd_context_t ctxt, int argc, char **args)
     grub_search_label (id, var, flags, hints, nhints);
   else if (state[SEARCH_FS_UUID].set)
     grub_search_fs_uuid (id, var, flags, hints, nhints);
+  else if (state[SEARCH_PART_LABEL].set)
+    grub_search_part_label (id, var, flags, hints, nhints);
+  else if (state[SEARCH_PART_UUID].set)
+    grub_search_part_uuid (id, var, flags, hints, nhints);
+  else if (state[SEARCH_DISK_UUID].set)
+    grub_search_disk_uuid (id, var, flags, hints, nhints);
   else if (state[SEARCH_FILE].set)
     grub_search_fs_file (id, var, flags, hints, nhints);
   else
@@ -220,8 +235,8 @@ GRUB_MOD_INIT(search)
   cmd =
     grub_register_extcmd ("search", grub_cmd_search,
 			  GRUB_COMMAND_FLAG_EXTRACTOR | GRUB_COMMAND_ACCEPT_DASH,
-			  N_("[-f|-l|-u|-s|-n|-q] [--cryptodisk-only] [--hint HINT [--hint HINT] ...]"
-			     " NAME"),
+			  N_("[-f|-l|-u|-L|-g|-U|-s|-n|-q] [--cryptodisk-only]"
+			     " [--hint HINT [--hint HINT] ...] NAME"),
 			  N_("Search devices by file, filesystem label"
 			     " or filesystem UUID."
 			     " If --set is specified, the first device found is"

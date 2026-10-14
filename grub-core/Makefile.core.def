@@ -1385,6 +1385,21 @@ module = {
 };
 
 module = {
+  name = search_part_label;
+  common = commands/search_part_label.c;
+};
+
+module = {
+  name = search_part_uuid;
+  common = commands/search_part_uuid.c;
+};
+
+module = {
+  name = search_disk_uuid;
+  common = commands/search_disk_uuid.c;
+};
+
+module = {
   name = stat;
   common = commands/stat.c;
 };
