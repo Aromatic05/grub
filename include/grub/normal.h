@@ -57,6 +57,7 @@ struct grub_term_screen_geometry
   int first_entry_x;
   int entry_width;
   int timeout_y;
+  int help_y;
   int timeout_lines;
   int border;
   int right_margin;

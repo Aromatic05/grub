@@ -30,6 +30,8 @@
 /* The component ID identifying GUI components to be updated as the timeout
    status changes.  */
 #define GRUB_GFXMENU_TIMEOUT_COMPONENT_ID "__timeout__"
+#define GRUB_GFXMENU_HELPMSG_COMPONENT_ID "__help__"
+#define GRUB_GFXMENU_TITLE_COMPONENT_ID "__title__"
 
 typedef struct grub_gui_component *grub_gui_component_t;
 typedef struct grub_gui_container *grub_gui_container_t;

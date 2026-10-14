@@ -64,6 +64,9 @@ struct grub_menu_entry
   /* The sourcecode of the menu entry, used by the editor.  */
   const char *sourcecode;
 
+  /* Optional a1ive menu help text, shown for the selected entry. */
+  const char *help_message;
+
   /* Parameters to be passed to menu definition.  */
   int argc;
   char **args;

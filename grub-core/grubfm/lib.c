@@ -185,6 +185,7 @@ add_menu (const char *title, const char *icon, const char *id,
                  const char *hotkey, const char *src, int hidden)
 {
   const char *show_hidden = NULL;
+  int entry_hidden = hidden;
   char **args = NULL;
   char **class = NULL;
 
@@ -193,8 +194,10 @@ add_menu (const char *title, const char *icon, const char *id,
       show_hidden = grub_env_get ("grubfm_show_hidden");
       if (!show_hidden || show_hidden[0] != '1')
         show_hidden = grub_env_get ("grub_show_hidden");
-      if (!show_hidden || show_hidden[0] != '1')
-        return;
+      /* Keep hidden entries registered for hotkeys and later menu updates.
+         The visibility switch only changes whether they are displayed. */
+      if (show_hidden && show_hidden[0] == '1')
+        entry_hidden = 0;
     }
   grub_dprintf ("grubfm", "add_menu: title=%s icon=%s id=%s hotkey=%s hidden=%d\n",
                 title ? title : "(null)", icon ? icon : "(none)",
@@ -211,7 +214,7 @@ add_menu (const char *title, const char *icon, const char *id,
     class[0] = grub_strdup (icon);
     class[1] = NULL;
     grub_normal_add_menu_entry (1, (const char **) args, class, id, NULL, hotkey,
-                                NULL, src, 0, 0, NULL);
+                                NULL, src, entry_hidden, 0, NULL);
     if (class[0])
       grub_free (class[0]);
     if (class)
@@ -219,7 +222,7 @@ add_menu (const char *title, const char *icon, const char *id,
   }
   else
     grub_normal_add_menu_entry (1, (const char **) args, NULL, id, NULL, hotkey,
-                                NULL, src, 0, 0, NULL);
+                                NULL, src, entry_hidden, 0, NULL);
   if (args[0])
     grub_free (args[0]);
   grub_free (args);

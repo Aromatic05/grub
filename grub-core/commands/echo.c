@@ -28,9 +28,60 @@ GRUB_MOD_LICENSE ("GPLv3+");
 static const struct grub_arg_option options[] =
   {
     {0, 'n', 0, N_("Do not output the trailing newline."), 0, 0},
-    {0, 'e', 0, N_("Enable interpretation of backslash escapes."), 0, 0},
+    {0, 'e', 0, N_("Enable interpretation of backslash escapes, e.g. "
+		   "\\t=tab,\\n=new line,\\e0x1f=white text on blue background."),
+     0, 0},
     {0, 0, 0, 0, 0, 0}
   };
+
+static const char *color_list[16] =
+  {
+    "black", "blue", "green", "cyan", "red", "magenta", "brown",
+    "light-gray", "dark-gray", "light-blue", "light-green", "light-cyan",
+    "light-red", "light-magenta", "yellow", "white"
+  };
+
+static grub_uint8_t
+read_xdigit (char num)
+{
+  if (num >= '0' && num <= '9')
+    return num - '0';
+  if (num >= 'a' && num <= 'z')
+    return num - 'a' + 0x0a;
+  if (num >= 'A' && num <= 'Z')
+    return num - 'A' + 0x0a;
+  return 0;
+}
+
+/* Parse an a1ive `\e0xBG` escape (BG = background, FG = foreground).
+   Return the number of characters consumed after the backslash, or 0.  */
+static int
+parse_bash_color (const char *text)
+{
+  char str[5];
+  char src[64];
+  grub_uint8_t fg, bg;
+
+  if (! text || grub_strlen (text) < 4)
+    return 0;
+
+  grub_memcpy (str, text, 4);
+  str[4] = '\0';
+  if (str[0] != '0' || (str[1] != 'x' && str[1] != 'X')
+      || ! grub_isxdigit (str[2]) || ! grub_isxdigit (str[3]))
+    return 0;
+
+  bg = read_xdigit (str[2]);
+  fg = read_xdigit (str[3]);
+  if (fg > 0x0f || bg > 0x0f)
+    return 0;
+
+  grub_snprintf (src, sizeof (src), "set color_normal=%s/%s",
+		 color_list[fg], color_list[bg]);
+  grub_script_execute_sourcecode (src);
+  grub_refresh ();
+  return 4;
+}
 
 static grub_err_t
 grub_cmd_echo (grub_extcmd_context_t ctxt, int argc, char **args)
@@ -95,6 +146,16 @@ grub_cmd_echo (grub_extcmd_context_t ctxt, int argc, char **args)
 
 		case 'v':
 		  *p++ = '\v';
+		  break;
+
+		case 'e':
+		  if (p != unescaped)
+		    {
+		      *p = '\0';
+		      grub_xputs (unescaped);
+		      p = unescaped;
+		    }
+		  arg += parse_bash_color (arg + 1);
 		  break;
 		}
 	      arg++;
