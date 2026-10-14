@@ -94,6 +94,40 @@ if cat --set=found3 (hd1)/other/other.txt; then
 else
   echo A1C_ERROR_BTRFS_OTHER_OPEN
 fi
+
+# The mount table must redirect file opens to the selected subvolume tree,
+# without replacing unrelated paths or accepting invalid mounts.
+if btrfs-mount-subvol (hd1) /other /rootfs; then echo A1C_OK_BTRFS_MOUNT; else echo A1C_ERROR_BTRFS_MOUNT; fi
+if cat --set=mounted (hd1)/other/default.txt; then
+  if [ "$mounted" = "A1C_BTRFS_DEFAULT_OK" ]; then echo A1C_OK_BTRFS_MOUNT_READ; else echo A1C_ERROR_BTRFS_MOUNT_CONTENT; fi
+else
+  echo A1C_ERROR_BTRFS_MOUNT_OPEN
+fi
+if btrfs-mount-subvol (hd1) /missing-dir /rootfs; then echo A1C_ERROR_BTRFS_BAD_MOUNT_DIR; else echo A1C_OK_BTRFS_BAD_MOUNT_DIR; fi
+if btrfs-mount-subvol (hd1) /other /missing-subvol; then echo A1C_ERROR_BTRFS_BAD_MOUNT_SUBVOL; else echo A1C_OK_BTRFS_BAD_MOUNT_SUBVOL; fi
+
+# Both historical environment hooks must change the root used by file open.
+set btrfs_subvolid=256
+if cat --set=by_id (hd1)/default.txt; then
+  if [ "$by_id" = "A1C_BTRFS_DEFAULT_OK" ]; then echo A1C_OK_BTRFS_SELECT_ID; else echo A1C_ERROR_BTRFS_SELECT_ID_CONTENT; fi
+else
+  echo A1C_ERROR_BTRFS_SELECT_ID_OPEN
+fi
+set btrfs_subvol=other
+if cat --set=by_name (hd1)/other.txt; then
+  if [ "$by_name" = "A1C_BTRFS_OTHER_OK" ]; then echo A1C_OK_BTRFS_SELECT_NAME; else echo A1C_ERROR_BTRFS_SELECT_NAME_CONTENT; fi
+else
+  echo A1C_ERROR_BTRFS_SELECT_NAME_OPEN
+fi
+set btrfs_subvol=
+set btrfs_subvolid=
+set btrfs_relative_path=1
+if cat --set=by_relative (hd1)/default.txt; then
+  if [ "$by_relative" = "A1C_BTRFS_DEFAULT_OK" ]; then echo A1C_OK_BTRFS_RELATIVE; else echo A1C_ERROR_BTRFS_RELATIVE_CONTENT; fi
+else
+  echo A1C_ERROR_BTRFS_RELATIVE_OPEN
+fi
+set btrfs_relative_path=
 echo A1C_BTRFS_DONE
 halt
 GRUB
@@ -124,7 +158,10 @@ for token in A1C_BTRFS_BEGIN A1C_BTRFS_DONE \
   A1C_OK_BTRFS_DEFAULT_ID A1C_OK_BTRFS_DEFAULT_PATH A1C_OK_BTRFS_DEFAULT_IDPATH \
   A1C_OK_BTRFS_LIST_IDS A1C_OK_BTRFS_LIST_PATHS A1C_OK_BTRFS_LIST_DEFAULT \
   A1C_OK_BTRFS_LEGACY_VAR \
-  A1C_OK_BTRFS_ROOTFS_READ A1C_OK_BTRFS_SECOND_READ; do
+  A1C_OK_BTRFS_ROOTFS_READ A1C_OK_BTRFS_SECOND_READ \
+  A1C_OK_BTRFS_MOUNT A1C_OK_BTRFS_MOUNT_READ \
+  A1C_OK_BTRFS_BAD_MOUNT_DIR A1C_OK_BTRFS_BAD_MOUNT_SUBVOL \
+  A1C_OK_BTRFS_SELECT_ID A1C_OK_BTRFS_SELECT_NAME A1C_OK_BTRFS_RELATIVE; do
   grep -aq "$token" "$log" || fail "missing marker: $token"
 done
 if grep -aq A1C_ERROR_ "$log"; then
@@ -138,4 +175,4 @@ grep -aq 'A1C_LIST_PATHS=/rootfs' "$log" || fail 'Btrfs -p did not include rootf
 grep -aq '/other' "$log" || fail 'Btrfs -p did not include other path'
 grep -aq 'ID 256 path /rootfs' "$log" || fail 'Btrfs default format did not report ID and path'
 passed=1
-echo 'PASS: Btrfs filesystem, actual default subvolume, root ref listing, env output'
+echo 'PASS: Btrfs default/list/path, mount redirection, variable root selection'
