@@ -300,7 +300,7 @@ PY
 }
 
 if test "${A1C_SKIP_EFI_RESET:-0}" = 1; then
-  echo "SKIP: EFI reset -c/-w/-f (firmware ResetSystem not supported by this QEMU/OVMF environment)"
+  echo "SKIP: EFI reset -c/-w/-f (A1C_SKIP_EFI_RESET=1 explicitly requested)"
 else
   reset_efi efi_cold -c 7
   reset_efi efi_warm -w 7
@@ -344,7 +344,9 @@ reset_pc()
   wait_paused "$1"
   grep -aq A1C_RESET "$work/$1.serial" || fail "$1: script not reached"
   ! grep -aq A1C_ERROR_RETURNED "$work/$1.serial" || fail "$1: reset returned"
-  monitor "$work/$1.sock" 'xp /1hx 0x472' | grep -ao '0000000000000472: 0x[0-9a-f]*' |
+  grep -aq 'qemu_system_shutdown_request reason=7' "$work/$1.qemu" ||
+    fail "$1: QEMU did not observe a guest reset"
+  monitor "$work/$1.sock" 'xp /1hx 0x472' | grep -aoE '0*472: 0x[0-9a-fA-F]+' |
     sed 's/.*: //' > "$work/$1.flag"
   stop_qemu "$1"
 }
@@ -353,8 +355,6 @@ reset_pc pc_cold -c
 reset_pc pc_warm -w
 test "$(cat "$work/pc_cold.flag")" = 0x0000 || fail "BIOS reset -c flag: $(cat "$work/pc_cold.flag")"
 test "$(cat "$work/pc_warm.flag")" = 0x1234 || fail "BIOS reset -w flag: $(cat "$work/pc_warm.flag")"
-grep -a qemu_system_shutdown_request "$work/pc_warm.qemu" | head -n 1 | grep -aq 'reason=7' ||
-  fail "BIOS reset -w did not reset the machine"
 echo "PASS: BIOS reset -c / -w (BDA 0x472 flag)"
 
 pass=1
