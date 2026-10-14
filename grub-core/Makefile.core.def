@@ -953,6 +953,13 @@ module = {
 };
 
 module = {
+  name = geometry;
+  common = commands/i386/pc/geometry.c;
+  enable = i386_pc;
+  enable = i386_multiboot;
+};
+
+module = {
   name = boot;
   common = commands/boot.c;
   i386_pc = lib/i386/pc/biosnum.c;
