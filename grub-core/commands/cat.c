@@ -25,12 +25,14 @@
 #include <grub/extcmd.h>
 #include <grub/i18n.h>
 #include <grub/charset.h>
+#include <grub/env.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
 static const struct grub_arg_option options[] =
   {
     {"dos", -1, 0, N_("Accept DOS-style CR/NL line endings."), 0, 0},
+    {"set", 's', 0, N_("Store the contents of a file in a variable."), N_("VARNAME"), ARG_TYPE_STRING},
     {0, 0, 0, 0, 0, 0}
   };
 
@@ -59,6 +61,67 @@ grub_cmd_cat (grub_extcmd_context_t ctxt, int argc, char **args)
   file = grub_file_open (args[0], GRUB_FILE_TYPE_CAT);
   if (! file)
     return grub_errno;
+
+  if (state[1].set)
+    {
+      grub_size_t capacity = 0, used = 0;
+      char *contents = 0;
+
+      while ((size = grub_file_read (file, buf, sizeof (buf))) > 0)
+	{
+	  grub_size_t needed = used + size + 1;
+	  if (needed < used)
+	    {
+	      grub_free (contents);
+	      grub_file_close (file);
+	      return grub_error (GRUB_ERR_OUT_OF_RANGE, N_("file is too large"));
+	    }
+	  if (needed > capacity)
+	    {
+	      grub_size_t new_capacity = capacity ? capacity : sizeof (buf);
+	      char *new_contents;
+	      while (new_capacity < needed)
+		{
+		  if (new_capacity > (grub_size_t) -1 / 2)
+		    { new_capacity = needed; break; }
+		  new_capacity *= 2;
+		}
+	      new_contents = grub_realloc (contents, new_capacity);
+	      if (!new_contents)
+		{
+		  grub_free (contents);
+		  grub_file_close (file);
+		  return grub_errno;
+		}
+	      contents = new_contents;
+	      capacity = new_capacity;
+	    }
+	  grub_memcpy (contents + used, buf, size);
+	  used += size;
+	}
+      if (size < 0)
+	{
+	  grub_free (contents);
+	  grub_file_close (file);
+	  return grub_errno;
+	}
+      if (used == capacity)
+	{
+	  char *new_contents = grub_realloc (contents, capacity + 1);
+	  if (!new_contents)
+	    {
+	      grub_free (contents);
+	      grub_file_close (file);
+	      return grub_errno;
+	    }
+	  contents = new_contents;
+	}
+      contents[used] = '\0';
+      grub_env_set (state[1].arg, contents);
+      grub_free (contents);
+      grub_file_close (file);
+      return grub_errno;
+    }
 
   while ((size = grub_file_read (file, buf, sizeof (buf))) > 0
 	 && key != GRUB_TERM_ESC)

@@ -31,7 +31,8 @@ GRUB_MOD_LICENSE ("GPLv3+");
 
 static const struct grub_arg_option options[] =
   {
-    {0, 'v', 0, N_("Enable verbose output"), 0, 0},
+    {"quiet", 'q', 0, N_("Don't print info."), 0, 0},
+    {"verbose", 'v', 0, N_("Enable verbose output"), 0, 0},
     {0, 0, 0, 0, 0, 0}
   };
 
@@ -50,7 +51,7 @@ grub_cmd_cmp (grub_extcmd_context_t ctxt,
   if (argc != 2)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("two arguments expected"));
 
-  if (ctxt->state[0].set)
+  if (ctxt->state[1].set)
     grub_printf_ (N_("Compare file `%s' with `%s':\n"), args[0], args[1]);
 
   file1 = grub_file_open (args[0], GRUB_FILE_TYPE_CMP);
@@ -58,12 +59,15 @@ grub_cmd_cmp (grub_extcmd_context_t ctxt,
   if (! file1 || ! file2)
     goto cleanup;
 
-  if (ctxt->state[0].set && (grub_file_size (file1) != grub_file_size (file2)))
+  if (ctxt->state[1].set && (grub_file_size (file1) != grub_file_size (file2)))
     grub_printf_ (N_("Files differ in size: %llu [%s], %llu [%s]\n"),
 		  (unsigned long long) grub_file_size (file1), args[0],
 		  (unsigned long long) grub_file_size (file2), args[1]);
   else
     {
+      if (!ctxt->state[0].set
+          && grub_file_size (file1) != grub_file_size (file2))
+	goto cleanup;
       pos = 0;
 
       buf1 = grub_malloc (BUFFER_SIZE);
@@ -86,7 +90,7 @@ grub_cmd_cmp (grub_extcmd_context_t ctxt,
 	    {
 	      if (buf1[i] != buf2[i])
 		{
-		  if (ctxt->state[0].set)
+		  if (ctxt->state[1].set)
 		    grub_printf_ (N_("Files differ at the offset %llu: 0x%x [%s], 0x%x [%s]\n"),
 				  (unsigned long long) (i + pos), buf1[i],
 				  args[0], buf2[i], args[1]);
@@ -99,7 +103,7 @@ grub_cmd_cmp (grub_extcmd_context_t ctxt,
       while (rd2);
 
       /* TRANSLATORS: it's always exactly 2 files.  */
-      if (ctxt->state[0].set)
+      if (ctxt->state[1].set)
         grub_printf_ (N_("The files are identical.\n"));
       err = GRUB_ERR_NONE;
     }
