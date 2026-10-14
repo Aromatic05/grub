@@ -240,6 +240,46 @@ handle_dgram (struct grub_net_buff *nb,
   {
     struct udphdr *udph;
     udph = (struct udphdr *) nb->data;
+    if (proto == GRUB_NET_IP_UDP
+        && source->type == GRUB_NET_NETWORK_LEVEL_PROTOCOL_IPV6
+        && dest->type == GRUB_NET_NETWORK_LEVEL_PROTOCOL_IPV6
+        && nb->tail - nb->data >= (grub_ssize_t) sizeof (*udph)
+        && grub_be_to_cpu16 (udph->dst) == DHCP6_CLIENT_PORT)
+      {
+        grub_uint16_t chk = udph->chksum;
+        grub_uint16_t expected;
+        grub_uint16_t udp_len = grub_be_to_cpu16 (udph->len);
+        grub_ssize_t udp_size = nb->tail - nb->data;
+
+        if (udp_size < (grub_ssize_t) sizeof (*udph)
+            || udp_size > 0xffff
+            || udp_len < sizeof (*udph)
+            || udp_len != (grub_uint16_t) udp_size)
+          {
+            grub_netbuff_free (nb);
+            return GRUB_ERR_NONE;
+          }
+        if (!chk)
+          {
+            grub_netbuff_free (nb);
+            return GRUB_ERR_NONE;
+          }
+        udph->chksum = 0;
+        expected = grub_net_ip_transport_checksum (nb, GRUB_NET_IP_UDP,
+                                                   source, dest);
+        udph->chksum = chk;
+        if (expected != chk || grub_be_to_cpu16 (udph->src) != DHCP6_SERVER_PORT)
+          {
+            grub_netbuff_free (nb);
+            return GRUB_ERR_NONE;
+          }
+        err = grub_netbuff_pull (nb, sizeof (*udph));
+        if (!err)
+          err = grub_net_process_dhcp6 (nb, card);
+        grub_netbuff_free (nb);
+        return err;
+      }
+
     if (proto == GRUB_NET_IP_UDP && grub_be_to_cpu16 (udph->dst) == 68)
       {
 	const struct grub_net_bootp_packet *bootp;

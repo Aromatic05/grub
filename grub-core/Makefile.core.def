@@ -2812,6 +2812,12 @@ module = {
 };
 
 module = {
+  name = efi_netfs;
+  efi = net/efi/efi_netfs.c;
+  enable = efi;
+};
+
+module = {
   name = emunet;
   emu = net/drivers/emu/emunet.c;
   enable = emu;
