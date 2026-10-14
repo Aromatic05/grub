@@ -14,11 +14,6 @@
 #include <grub/mm.h>
 #include <grub/misc.h>
 
-/* Registered once on first construction; common BLOCK hooks are
-   independent from GRUB Loopback and from EFI Map publishers. */
-void grub_disk_overlay_register (void);
-void grub_disk_source_register (void);
-
 static struct grub_disk_hook *grub_disk_hooks;
 
 grub_err_t

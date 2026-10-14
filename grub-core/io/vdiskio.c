@@ -80,6 +80,31 @@ static struct grub_disk_hook grub_vdisk_hooks[] =
       .probe = grub_vdisk_stage_probe, .run = grub_vdisk_stage_open }
   };
 
+/* a1ive `vhd` was an alias of `loopback`, and `loopback` mapped unrecognized
+   files verbatim.  Keep that contract: once every real container parser has
+   declined, expose the source unchanged instead of failing the FORMAT stage.
+   The hook runs last and only for GRUB Loopback, so the EFI `map --format`
+   stage still reports an unrecognized container. */
+static int
+grub_vdisk_raw_probe (struct grub_disk_pipeline *ctx,
+                      const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  return ctx->target == GRUB_DISK_TARGET_LOOPBACK;
+}
+
+static grub_err_t
+grub_vdisk_raw_open (struct grub_disk_pipeline *ctx,
+                     const struct grub_disk_hook *hook __attribute__ ((unused)))
+{
+  /* No transform: the source file, its size and direct writes stay as-is. */
+  ctx->formatted = 1;
+  return GRUB_ERR_NONE;
+}
+
+static struct grub_disk_hook grub_vdisk_raw_hook =
+  { .name = "raw", .stage = GRUB_DISK_FORMAT, .order = 1000,
+    .probe = grub_vdisk_raw_probe, .run = grub_vdisk_raw_open };
+
 GRUB_MOD_INIT(vhd)
 {
   grub_size_t i;
@@ -88,11 +113,13 @@ GRUB_MOD_INIT(vhd)
       grub_vdisk_hooks[i].data = &grub_vdisk_formats[i];
       grub_disk_hook_register (&grub_vdisk_hooks[i], mod);
     }
+  grub_disk_hook_register (&grub_vdisk_raw_hook, mod);
 }
 
 GRUB_MOD_FINI(vhd)
 {
   grub_size_t i;
+  grub_disk_hook_unregister (&grub_vdisk_raw_hook);
   for (i = 0; i < ARRAY_SIZE (grub_vdisk_hooks); i++)
     grub_disk_hook_unregister (&grub_vdisk_hooks[i]);
 }

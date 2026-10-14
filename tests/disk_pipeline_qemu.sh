@@ -95,6 +95,16 @@ vhd vdx (hd1)/raw.vhd.xz
 cat (vdx)/MARKER.TXT
 loopback -d vdx
 
+# a1ive loopback transparently detects a virtual-disk container, even when
+# it is compressed.  The new format pipeline must not require the vhd alias.
+if loopback autodetect (hd1)/raw.vhd.xz; then
+  echo PIPELINE_VHD_AUTODETECT_OK
+else
+  echo PIPELINE_ERROR_VHD_AUTODETECT
+fi
+cat (autodetect)/MARKER.TXT
+loopback -d autodetect
+
 if vhd broken (hd1)/bad.vhd; then
   echo PIPELINE_ERROR_MALFORMED_VHD_ACCEPTED
 else
@@ -180,11 +190,14 @@ else
   echo PIPELINE_PHYSICAL_REJECTED
 fi
 
-if vhd invalid (hd1)/raw.img; then
-  echo PIPELINE_ERROR_FORMAT_NOT_REJECTED
+# a1ive vhd is an alias of loopback, so it must also accept raw images.
+if vhd aliasraw (hd1)/raw.img; then
+  echo PIPELINE_VHD_RAW_ALIAS_OK
 else
-  echo PIPELINE_FORMAT_REJECTED
+  echo PIPELINE_ERROR_VHD_RAW_ALIAS
 fi
+cat (aliasraw)/MARKER.TXT
+loopback -d aliasraw
 
 loopback duplicate (hd1)/raw.img
 if loopback duplicate (hd1)/raw.img; then
@@ -225,8 +238,8 @@ fi
 
 grep -q 'PIPELINE_TEST_DONE' "$test_work/serial.log"
 marker_count=$(grep -c 'PIPELINE_TEST_MARKER_2026' "$test_work/serial.log")
-test "$marker_count" -eq 15 || {
-  echo "Expected 15 successful file reads, got $marker_count" >&2
+test "$marker_count" -eq 17 || {
+  echo "Expected 17 successful file reads, got $marker_count" >&2
   exit 1
 }
 grep -q '50 49 50 45' "$test_work/serial.log"
@@ -239,7 +252,7 @@ done
 test "$(grep -c 'PIPELINE_EFI_UNMAP_OK_evcow' "$test_work/serial.log")" -eq 2
 grep -q 'PIPELINE_EFI_FORMAT_BEGIN' "$test_work/serial.log"
 grep -q 'eb 3c 90 6d' "$test_work/serial.log"
-for marker in RESERVED_REJECTED PHYSICAL_REJECTED FORMAT_REJECTED DUPLICATE_REJECTED MALFORMED_VHD_REJECTED; do
+for marker in RESERVED_REJECTED PHYSICAL_REJECTED DUPLICATE_REJECTED MALFORMED_VHD_REJECTED VHD_AUTODETECT_OK VHD_RAW_ALIAS_OK; do
   grep -q "PIPELINE_$marker" "$test_work/serial.log" || {
     echo "Failed check: $marker" >&2
     exit 1
@@ -253,4 +266,4 @@ fi
 grep '^loopback:' "$build/grub-core/moddep.lst" | grep -qv 'vhd'
 
 pass=1
-echo "PASS: RAW, nested XZ/Gzip, VHD.XZ, parser rollback, RAM, blocklist, COW and name conflicts"
+echo "PASS: RAW, nested XZ/Gzip, VHD.XZ automatic detection, vhd RAW alias, parser rollback, RAM, blocklist, COW and name conflicts"

@@ -121,8 +121,11 @@ delete_loopback (const char *name)
     if (grub_strcmp (dev->pipeline->name, name) == 0)
       break;
 
+  /* a1ive `loopback -d` was a no-op for a name that was never mapped (the
+     old handler returned success), and GrubFM relies on that when it tears
+     down mappings that may not exist.  Keep the delete idempotent. */
   if (!dev)
-    return grub_error (GRUB_ERR_BAD_DEVICE, "device not found");
+    return GRUB_ERR_NONE;
   if (dev->refcnt)
     return grub_error (GRUB_ERR_STILL_REFERENCED, "device still referenced");
 
@@ -130,8 +133,7 @@ delete_loopback (const char *name)
 }
 
 static grub_err_t
-grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
-                          int format)
+grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args)
 {
   struct grub_arg_list *state = ctxt->state;
   struct grub_disk_pipeline *ctx;
@@ -152,20 +154,18 @@ grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
     if (grub_strcmp (dev->pipeline->name, args[0]) == 0)
       return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name already exists");
 
-  if (format)
-    {
-      if (!grub_disk_stage_available (GRUB_DISK_FORMAT))
-        {
+  /* a1ive `vhd` was an alias of `loopback`, and `loopback` auto-unwrapped a
+     virtual-disk container while mapping any other file verbatim.  Both
+     commands therefore share one handler that asks the optional `vhd`
+     module to detect a container; when the module is absent the FORMAT
+     stage is simply skipped and the file is mapped raw. */
 #ifndef GRUB_UTIL
-          if (!grub_dl_load ("vhd"))
-            return grub_errno;
-#else
-          return grub_error (GRUB_ERR_BAD_FILE_TYPE,
-                             "no virtual disk parser registered");
+  if (!grub_disk_stage_available (GRUB_DISK_FORMAT))
+    grub_dl_load ("vhd");
+  grub_errno = GRUB_ERR_NONE;
 #endif
-        }
-      flags |= GRUB_DISK_PIPELINE_FORMAT;
-    }
+  if (grub_disk_stage_available (GRUB_DISK_FORMAT))
+    flags |= GRUB_DISK_PIPELINE_FORMAT;
   if (state[1].set)
     flags |= GRUB_DISK_PIPELINE_MEMORY;
   if (state[2].set)
@@ -185,18 +185,6 @@ grub_cmd_loopback_create (grub_extcmd_context_t ctxt, int argc, char **args,
       grub_errno = err;
     }
   return err;
-}
-
-static grub_err_t
-grub_cmd_loopback (grub_extcmd_context_t ctxt, int argc, char **args)
-{
-  return grub_cmd_loopback_create (ctxt, argc, args, 0);
-}
-
-static grub_err_t
-grub_cmd_vhd (grub_extcmd_context_t ctxt, int argc, char **args)
-{
-  return grub_cmd_loopback_create (ctxt, argc, args, 1);
 }
 
 static int
@@ -297,10 +285,10 @@ GRUB_MOD_INIT(loopback)
   for (i = 0; i < ARRAY_SIZE (grub_loopback_hooks); i++)
     grub_disk_hook_register (&grub_loopback_hooks[i], mod);
 
-  cmd = grub_register_extcmd ("loopback", grub_cmd_loopback, 0,
+  cmd = grub_register_extcmd ("loopback", grub_cmd_loopback_create, 0,
                               N_("[-d] [-m] [-l] [-D] [-C] DEVICENAME FILE."),
                               N_("Make a virtual drive from a file."), options);
-  cmd_vhd = grub_register_extcmd ("vhd", grub_cmd_vhd, 0,
+  cmd_vhd = grub_register_extcmd ("vhd", grub_cmd_loopback_create, 0,
                                  N_("[-d] [-m] [-l] [-D] [-C] DEVICENAME FILE."),
                                  N_("Map a virtual disk image."), options);
   grub_disk_dev_register (&grub_loopback_dev);

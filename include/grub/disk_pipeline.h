@@ -83,6 +83,10 @@ struct grub_disk_hook
   struct grub_disk_hook *next;
 };
 
+/* Core SOURCE and BLOCK hooks installed on the first pipeline construction. */
+void grub_disk_source_register (void);
+void grub_disk_overlay_register (void);
+
 grub_err_t EXPORT_FUNC (grub_disk_hook_register) (struct grub_disk_hook *hook,
                                                    grub_dl_t module);
 void EXPORT_FUNC (grub_disk_hook_unregister) (struct grub_disk_hook *hook);
