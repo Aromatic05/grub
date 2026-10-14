@@ -12,8 +12,9 @@ done
 for path in "$efi_build/grub-mkstandalone" "$ovmf_code" "$ovmf_vars"; do
   test -f "$path" || { echo "Missing: $path" >&2; exit 1; }
 done
+test -f "$repo/tests/a1ive_qmp_guest_event.py" || { echo "Missing QMP verifier" >&2; exit 1; }
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/g12-efi-reset.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/a1ive-efi-reset.XXXXXX")
 echo "Artifacts: $work"
 failed=0
 passed=0
@@ -40,36 +41,38 @@ case_reset() {
   mkfs.vfat "$work/$name.fat" >/dev/null
   mmd -i "$work/$name.fat" ::/EFI ::/EFI/BOOT
   mcopy -i "$work/$name.fat" "$work/$name.efi" ::/EFI/BOOT/BOOTX64.EFI
-  { sleep 8; echo 'info status'; sleep 1; echo quit; } | \
-    timeout 12s qemu-system-x86_64 -machine q35,accel=tcg -m 512M -display none \
+  expected=guest-reset
+  test "$arg" != -s || expected=guest-shutdown
+  if python3 -I "$repo/tests/a1ive_qmp_guest_event.py" \
+    --expect "$expected" --timeout 35 \
+    --qmp-log "$work/$name.qmp.json" --qemu-log "$work/$name.qemu" -- \
+    qemu-system-x86_64 -machine q35,accel=tcg -m 512M -display none \
     -no-reboot -action reboot=shutdown,shutdown=pause \
-    -trace qemu_system_shutdown_request \
-    -monitor stdio \
     -serial "file:$work/$name.serial" \
     -drive if=pflash,format=raw,unit=0,file="$ovmf_code",readonly=on \
     -drive if=pflash,format=raw,unit=1,file="$work/$name.vars" \
-    -drive format=raw,file="$work/$name.fat" \
-    >"$work/$name.qemu" 2>&1
+    -drive format=raw,file="$work/$name.fat"; then
+    qmp_verified=1
+  else
+    qmp_verified=0
+  fi
   test -f "$work/$name.serial" || : > "$work/$name.serial"
   printf '\n=== %s (%s) ===\n' "$name" "$arg"
   printf 'serial: '; tr '\n' ' ' < "$work/$name.serial"; printf '\n'
-  printf 'qemu trace: '; grep -E 'qemu_system_shutdown_request|reset|shutdown' "$work/$name.qemu" | tail -n 5 | tr '\n' ' '; printf '\n'
-  printf 'monitor status: '; grep -aE 'VM status:|paused|running' "$work/$name.qemu" | tail -n 3 | tr '\n' ' '; printf '\n'
   if grep -aq "A1C_RETURNED_$name" "$work/$name.serial"; then
     echo "RESULT: firmware ResetSystem returned to GRUB"
+    failed=1
+  elif grep -aiq 'error:' "$work/$name.serial"; then
+    echo "RESULT: GRUB reported an error before reset"
     failed=1
   elif ! grep -aq "A1C_BEFORE_$name" "$work/$name.serial"; then
     echo "RESULT: GRUB reset command was not reached"
     failed=1
+  elif test "$qmp_verified" = 1; then
+    echo "RESULT: QMP confirmed guest=true reason=$expected before host cleanup"
   else
-    expected=2
-    test "$arg" = -s && expected=6
-    if grep -aq "qemu_system_shutdown_request reason=$expected" "$work/$name.qemu"; then
-      echo "RESULT: QEMU observed request reason=$expected"
-    else
-      echo "RESULT: expected QEMU request reason=$expected was not observed"
-      failed=1
-    fi
+    echo "RESULT: expected QMP guest event $expected was not observed"
+    failed=1
   fi
 }
 
