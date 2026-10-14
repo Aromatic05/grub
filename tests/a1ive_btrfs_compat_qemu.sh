@@ -53,6 +53,16 @@ if btrfs-get-default-subvol -i -o default_id (hd1); then
 else
   echo A1C_ERROR_BTRFS_DEFAULT_CMD
 fi
+if btrfs-get-default-subvol -p -o default_path (hd1); then
+  if [ "$default_path" = "/rootfs" ]; then echo A1C_OK_BTRFS_DEFAULT_PATH; else echo "A1C_ERROR_DEFAULT_PATH=$default_path"; fi
+else
+  echo A1C_ERROR_BTRFS_DEFAULT_PATH_CMD
+fi
+if btrfs-get-default-subvol -p -i -o idpath (hd1); then
+  if [ "$idpath" = "256 /rootfs" ]; then echo A1C_OK_BTRFS_DEFAULT_IDPATH; else echo "A1C_ERROR_DEFAULT_IDPATH=$idpath"; fi
+else
+  echo A1C_ERROR_BTRFS_DEFAULT_IDPATH_CMD
+fi
 
 if btrfs-list-subvols -i -o all_ids (hd1); then
   if [ -n "$all_ids" ]; then echo A1C_OK_BTRFS_LIST_IDS; else echo A1C_ERROR_BTRFS_LIST_EMPTY; fi
@@ -60,9 +70,16 @@ if btrfs-list-subvols -i -o all_ids (hd1); then
 else
   echo A1C_ERROR_BTRFS_LIST_CMD
 fi
+if btrfs-list-subvols -p -o all_paths (hd1); then
+  if [ -n "$all_paths" ]; then echo A1C_OK_BTRFS_LIST_PATHS; else echo A1C_ERROR_BTRFS_PATHS_EMPTY; fi
+  echo "A1C_LIST_PATHS=$all_paths"
+else
+  echo A1C_ERROR_BTRFS_LIST_PATHS_CMD
+fi
+if btrfs-list-subvols (hd1); then echo A1C_OK_BTRFS_LIST_DEFAULT; else echo A1C_ERROR_BTRFS_LIST_DEFAULT; fi
 
 if btrfs-get-default-subvol (hd1) legacy_id; then
-  if [ "$legacy_id" = "$default_id" ]; then echo A1C_OK_BTRFS_LEGACY_VAR; else echo A1C_ERROR_BTRFS_LEGACY_VAR; fi
+  if [ "$legacy_id" = "$default_path" ]; then echo A1C_OK_BTRFS_LEGACY_VAR; else echo A1C_ERROR_BTRFS_LEGACY_VAR; fi
 else
   echo A1C_ERROR_BTRFS_LEGACY_CMD
 fi
@@ -104,7 +121,9 @@ fi
 log="$work/serial.log"
 for token in A1C_BTRFS_BEGIN A1C_BTRFS_DONE \
   A1C_OK_INSMOD_BTRFS A1C_OK_INSMOD_CAT A1C_OK_BTRFS_INFO \
-  A1C_OK_BTRFS_DEFAULT_ID A1C_OK_BTRFS_LIST_IDS A1C_OK_BTRFS_LEGACY_VAR \
+  A1C_OK_BTRFS_DEFAULT_ID A1C_OK_BTRFS_DEFAULT_PATH A1C_OK_BTRFS_DEFAULT_IDPATH \
+  A1C_OK_BTRFS_LIST_IDS A1C_OK_BTRFS_LIST_PATHS A1C_OK_BTRFS_LIST_DEFAULT \
+  A1C_OK_BTRFS_LEGACY_VAR \
   A1C_OK_BTRFS_ROOTFS_READ A1C_OK_BTRFS_SECOND_READ; do
   grep -aq "$token" "$log" || fail "missing marker: $token"
 done
@@ -115,5 +134,8 @@ fi
 grep -aq "Label: 'A1CBTRFS'" "$log" || fail 'btrfs-info did not report fixture label'
 grep -aq 'A1C_LIST_IDS=256' "$log" || fail 'Btrfs list did not include subvol 256'
 grep -aq '257' "$log" || fail 'Btrfs list did not include second subvol 257'
+grep -aq 'A1C_LIST_PATHS=/rootfs' "$log" || fail 'Btrfs -p did not include rootfs path'
+grep -aq '/other' "$log" || fail 'Btrfs -p did not include other path'
+grep -aq 'ID 256 path /rootfs' "$log" || fail 'Btrfs default format did not report ID and path'
 passed=1
 echo 'PASS: Btrfs filesystem, actual default subvolume, root ref listing, env output'

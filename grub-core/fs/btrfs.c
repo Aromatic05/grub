@@ -2606,28 +2606,87 @@ grub_cmd_btrfs_info (grub_command_t cmd __attribute__ ((unused)), int argc,
   return GRUB_ERR_NONE;
 }
 
+/* Resolve a subvolume's name from its ROOT_BACKREF and INODE_REF records. */
+static grub_err_t
+grub_btrfs_subvol_path (struct grub_btrfs_data *data, grub_uint64_t id,
+			char **path)
+{
+  struct grub_btrfs_key key, outkey;
+  struct grub_btrfs_leaf_descriptor desc = {0};
+  grub_disk_addr_t addr;
+  grub_size_t size;
+  struct grub_btrfs_root_ref *ref = NULL;
+  grub_uint64_t parent;
+  grub_size_t i, name_len;
+  grub_err_t err;
+  char *result = NULL;
+
+  key.object_id = grub_cpu_to_le64 (id);
+  key.type = GRUB_BTRFS_ITEM_TYPE_ROOT_BACKREF;
+  key.offset = 0;
+  err = lower_bound (data, &key, &outkey, data->sblock.root_tree,
+		     &addr, &size, &desc, 0);
+  if (err)
+    goto out;
+  while (outkey.object_id != key.object_id || outkey.type != key.type)
+    {
+      int r = next (data, &desc, &addr, &size, &outkey);
+      if (r < 0) { err = -r; goto out; }
+      if (!r) { err = grub_error (GRUB_ERR_FILE_NOT_FOUND, "subvolume backref not found"); goto out; }
+      if (outkey.object_id != key.object_id || outkey.type != key.type)
+	{ err = grub_error (GRUB_ERR_FILE_NOT_FOUND, "subvolume backref not found"); goto out; }
+    }
+  if (size < sizeof (*ref))
+    { err = grub_error (GRUB_ERR_BAD_FS, "invalid Btrfs subvolume backref"); goto out; }
+  ref = grub_malloc (size);
+  if (!ref) { err = grub_errno; goto out; }
+  err = grub_btrfs_read_logical (data, addr, ref, size, 0);
+  if (err) goto out;
+  name_len = grub_le_to_cpu16 (ref->name_len);
+  if (name_len > size - sizeof (*ref))
+    { err = grub_error (GRUB_ERR_BAD_FS, "invalid Btrfs subvolume name"); goto out; }
+  for (i = 0; i < name_len; i++)
+    if (!ref->name[i] || ref->name[i] == '/')
+      { err = grub_error (GRUB_ERR_BAD_FS, "invalid Btrfs subvolume name"); goto out; }
+
+  parent = grub_le_to_cpu64 (outkey.offset);
+  /* The common direct-child case is the FS_TREE (id 5). */
+  if (parent != GRUB_BTRFS_ROOT_VOL_OBJECTID)
+    { err = grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET, "nested subvolume path has unknown ancestor"); goto out; }
+  result = grub_malloc (name_len + 2);
+  if (!result) { err = grub_errno; goto out; }
+  result[0] = '/';
+  grub_memcpy (result + 1, ref->name, name_len);
+  result[name_len + 1] = 0;
+  *path = result;
+  result = NULL;
+  err = GRUB_ERR_NONE;
+out:
+  grub_free (result);
+  grub_free (ref);
+  free_iterator (&desc);
+  return err;
+}
+
 static grub_err_t
 grub_cmd_btrfs_get_default_subvol (struct grub_extcmd_context *ctxt,
                                   int argc, char **argv)
 {
   struct grub_btrfs_data *data;
-  struct grub_btrfs_dir_item *items, *item;
+  struct grub_btrfs_dir_item *items = NULL, *item;
   struct grub_btrfs_key key, key_out;
   grub_device_t dev;
   grub_disk_addr_t addr;
   grub_size_t size;
   grub_uint64_t id;
   grub_err_t err;
-  char *devname, *value;
+  char *devname, *value = NULL, *path = NULL;
   const char name[] = "default";
   char *varname = NULL;
 
   if (argc < 1 || argc > 2)
     return grub_error (GRUB_ERR_BAD_ARGUMENT,
                        "device name required; optional output variable");
-  if (ctxt->state[1].set)
-    return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
-                       "Btrfs subvolume path resolution is unavailable");
   if (ctxt->state[0].set)
     varname = ctxt->state[0].arg;
   devname = grub_file_get_device_name (argv[0]);
@@ -2663,10 +2722,7 @@ grub_cmd_btrfs_get_default_subvol (struct grub_extcmd_context *ctxt,
     }
   err = grub_btrfs_read_logical (data, addr, items, size, 0);
   if (err)
-    {
-      grub_free (items);
-      goto default_out;
-    }
+    goto default_out;
   item = items;
   while ((grub_size_t) ((grub_uint8_t *) item - (grub_uint8_t *) items)
          + sizeof (*item) <= size)
@@ -2690,23 +2746,38 @@ grub_cmd_btrfs_get_default_subvol (struct grub_extcmd_context *ctxt,
   else
     {
       id = grub_le_to_cpu64 (item->key.object_id);
-      value = grub_xasprintf ("%" PRIuGRUB_UINT64_T, id);
+      if (!ctxt->state[2].set || ctxt->state[1].set)
+        {
+          err = grub_btrfs_subvol_path (data, id, &path);
+          if (err)
+            goto default_out;
+        }
+      if (ctxt->state[2].set && ctxt->state[1].set)
+        value = grub_xasprintf ("%" PRIuGRUB_UINT64_T " %s", id, path);
+      else if (ctxt->state[2].set)
+        value = grub_xasprintf ("%" PRIuGRUB_UINT64_T, id);
+      else
+        value = grub_xasprintf ("%s", path);
       if (!value)
         err = grub_errno;
       else if (varname || argc == 2)
         {
           err = grub_env_set (varname ? varname : argv[1], value);
           grub_free (value);
+          value = NULL;
         }
       else
         {
           grub_printf ("%s\n", value);
           grub_free (value);
+          value = NULL;
           err = GRUB_ERR_NONE;
         }
     }
-  grub_free (items);
 default_out:
+  grub_free (path);
+  grub_free (value);
+  grub_free (items);
   grub_btrfs_unmount (data);
   grub_device_close (dev);
   return err;
@@ -2735,9 +2806,6 @@ grub_cmd_btrfs_list_subvols (struct grub_extcmd_context *ctxt, int argc,
 
   if (argc != 1)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "device name required");
-  if (ctxt->state[1].set)
-    return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET,
-                       "Btrfs subvolume path resolution is unavailable");
   devname = grub_file_get_device_name (argv[0]);
   if (!devname)
     return grub_errno;
@@ -2764,7 +2832,7 @@ grub_cmd_btrfs_list_subvols (struct grub_extcmd_context *ctxt, int argc,
   while (outkey.object_id == key.object_id
          && outkey.type == GRUB_BTRFS_ROOT_REF_KEY)
     {
-      char *line, *old;
+      char *line, *old, *path = NULL;
       struct grub_btrfs_root_ref *ref;
       if (size < sizeof (*ref))
         { err = grub_error (GRUB_ERR_BAD_FS, "invalid Btrfs root reference"); goto list_out; }
@@ -2779,12 +2847,25 @@ grub_cmd_btrfs_list_subvols (struct grub_extcmd_context *ctxt, int argc,
           goto list_out;
         }
       grub_free (ref);
+      if (!ctxt->state[2].set || ctxt->state[1].set)
+        {
+          err = grub_btrfs_subvol_path (data,
+                                        grub_le_to_cpu64 (outkey.offset),
+                                        &path);
+          if (err) goto list_out;
+        }
       if (ctxt->state[2].set)
-        line = grub_xasprintf ("%" PRIuGRUB_UINT64_T "\n",
-                               grub_le_to_cpu64 (outkey.offset));
+        line = ctxt->state[0].set
+          ? grub_xasprintf ("%" PRIuGRUB_UINT64_T "\n",
+                            grub_le_to_cpu64 (outkey.offset))
+          : grub_xasprintf ("ID %" PRIuGRUB_UINT64_T "\n",
+                            grub_le_to_cpu64 (outkey.offset));
+      else if (ctxt->state[1].set)
+        line = grub_xasprintf ("%s\n", path);
       else
-        line = grub_xasprintf ("ID %" PRIuGRUB_UINT64_T "\n",
-                               grub_le_to_cpu64 (outkey.offset));
+        line = grub_xasprintf ("ID %" PRIuGRUB_UINT64_T " path %s\n",
+                               grub_le_to_cpu64 (outkey.offset), path);
+      grub_free (path);
       if (!line) { err = grub_errno; goto list_out; }
       old = value;
       value = grub_xasprintf ("%s%s", old ? old : "", line);
