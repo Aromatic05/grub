@@ -25,9 +25,12 @@ for path in "$efi_build/grub-mkstandalone" "$pc_build/grub-mkstandalone" \
 done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/a1ive-compat.XXXXXX")
+monitor_dir=$(mktemp -d /tmp/a1ive-monitor.XXXXXX)
 pass=0
 cleanup()
 {
+  rm -f "$monitor_dir"/*.sock 2>/dev/null || :
+  rmdir "$monitor_dir" 2>/dev/null || :
   if test "$pass" = 1 && test "${A1C_KEEP:-0}" != 1; then rm -rf "$work"
   else echo "Test output kept: $work" >&2; fi
 }
@@ -139,7 +142,7 @@ run_efi()
     -display none -vga std -no-user-config -nodefaults -device VGA \
     -action reboot=shutdown,shutdown=pause \
     -trace qemu_system_shutdown_request \
-    -monitor "unix:$work/$1.sock,server,nowait" \
+    -monitor "unix:$monitor_dir/$1.sock,server,nowait" \
     -serial "file:$work/$1.serial" \
     -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
     -drive "if=pflash,format=raw,file=$work/$1.vars" \
@@ -150,7 +153,7 @@ run_efi()
 
 stop_qemu()
 {
-  monitor "$work/$1.sock" quit >/dev/null 2>&1 || true
+  monitor "$monitor_dir/$1.sock" quit >/dev/null 2>&1 || true
   wait "$qemu_pid" || true
 }
 
@@ -219,9 +222,9 @@ mk_efi main "$work/main.cfg"
 run_efi main
 wait_for "$work/main.serial" A1C_VIEW_START 90 || fail "main: view.lua not reached"
 sleep 5
-monitor "$work/main.sock" "screendump $work/view.ppm" >/dev/null
+monitor "$monitor_dir/main.sock" "screendump $work/view.ppm" >/dev/null
 # view.lua blocks in input.getkey until a key arrives.
-monitor "$work/main.sock" "sendkey ret" >/dev/null
+monitor "$monitor_dir/main.sock" "sendkey ret" >/dev/null
 wait_paused main
 stop_qemu main
 log="$work/main.serial"
@@ -276,17 +279,23 @@ echo "PASS: EFI mkinitrd, Lua memrw, Lua video/view.lua, chainloader -b, reset -
 # ------------------------------------------------------------ EFI resets
 reset_efi()
 {
-  # reset_efi NAME ARGS EXPECTED_REASON
+  # reset_efi NAME ARG: QMP guest:true reset must precede host cleanup.
   printf 'serial --speed=115200\nterminal_output serial\necho A1C_RESET\nreset %s\necho A1C_ERROR_RETURNED\n' \
     "$2" > "$work/$1.cfg"
   mk_efi "$1" "$work/$1.cfg"
-  run_efi "$1"
-  wait_paused "$1"
-  stop_qemu "$1"
+  python3 -I "$repo/tests/a1ive_qmp_guest_event.py" \
+    --expect guest-reset --timeout 40 \
+    --qmp-log "$work/$1.qmp.json" --qemu-log "$work/$1.qemu" -- \
+    qemu-system-x86_64 -machine q35,accel=tcg -cpu qemu64 -m 512M \
+    -display none -vga std -no-user-config -nodefaults -device VGA \
+    -action reboot=shutdown,shutdown=pause \
+    -serial "file:$work/$1.serial" \
+    -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
+    -drive "if=pflash,format=raw,file=$work/$1.vars" \
+    -drive "if=virtio,format=raw,file=$work/$1.img" \
+    || fail "$1: QMP guest reset was not observed"
   grep -aq A1C_RESET "$work/$1.serial" || fail "$1: script not reached"
   ! grep -aq A1C_ERROR_RETURNED "$work/$1.serial" || fail "$1: reset returned"
-  grep -a 'qemu_system_shutdown_request' "$work/$1.qemu" | head -n 1 |
-    grep -aq "reason=$3" || fail "$1: expected shutdown reason $3"
 }
 
 has_os_indications()
@@ -302,10 +311,10 @@ PY
 if test "${A1C_SKIP_EFI_RESET:-0}" = 1; then
   echo "SKIP: EFI reset -c/-w/-f (A1C_SKIP_EFI_RESET=1 explicitly requested)"
 else
-  reset_efi efi_cold -c 7
-  reset_efi efi_warm -w 7
+  reset_efi efi_cold -c
+  reset_efi efi_warm -w
   ! has_os_indications "$work/efi_cold.vars" || fail "reset -c touched OsIndications"
-  reset_efi efi_fwui -f 7
+  reset_efi efi_fwui -f
   has_os_indications "$work/efi_fwui.vars" || fail "reset -f did not set OsIndications"
   echo "PASS: EFI reset -c / -w / -f"
 fi
@@ -334,21 +343,18 @@ reset_pc()
     tail -n 5 "$work/$1-iso.log" >&2
     fail "$1: could not package El Torito boot image in ISO9660"
   fi
-  timeout 60s qemu-system-x86_64 -machine pc,accel=tcg -m 256M -display none \
+  python3 -I "$repo/tests/a1ive_qmp_guest_event.py" \
+    --expect guest-reset --timeout 40 \
+    --qmp-log "$work/$1.qmp.json" --qemu-log "$work/$1.qemu" \
+    --bda-output "$work/$1.bda" -- \
+    qemu-system-x86_64 -machine pc,accel=tcg -m 256M -display none \
     -action reboot=shutdown,shutdown=pause \
-    -trace qemu_system_shutdown_request \
-    -monitor "unix:$work/$1.sock,server,nowait" \
     -serial "file:$work/$1.serial" -cdrom "$work/$1.iso" -boot d \
-    > "$work/$1.qemu" 2>&1 &
-  qemu_pid=$!
-  wait_paused "$1"
+    || fail "$1: QMP guest reset was not observed"
   grep -aq A1C_RESET "$work/$1.serial" || fail "$1: script not reached"
   ! grep -aq A1C_ERROR_RETURNED "$work/$1.serial" || fail "$1: reset returned"
-  grep -aq 'qemu_system_shutdown_request reason=7' "$work/$1.qemu" ||
-    fail "$1: QEMU did not observe a guest reset"
-  monitor "$work/$1.sock" 'xp /1hx 0x472' | grep -aoE '0*472: 0x[0-9a-fA-F]+' |
+  grep -aoE '0*472: 0x[0-9a-fA-F]+' "$work/$1.bda" |
     sed 's/.*: //' > "$work/$1.flag"
-  stop_qemu "$1"
 }
 
 reset_pc pc_cold -c
