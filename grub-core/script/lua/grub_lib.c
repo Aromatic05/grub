@@ -682,14 +682,20 @@ grub_lua_add_icon_menu (lua_State *state)
 static int
 grub_lua_add_hidden_menu (lua_State *state)
 {
-  const char *show_hidden = grub_env_get ("grubfm_show_hidden");
+  int n;
+  int hidden;
+  const char *source;
+  const char *show_hidden;
+
+  /* a1ive registers a hidden hotkey entry unconditionally, so never drop the
+     entry here.  The port's visibility switch (grubfm_show_hidden /
+     grub_show_hidden) only decides whether the entry is listed: hidden=0 when
+     the UI asks to show hidden entries, hidden=1 (hotkey-only) otherwise.  */
+  show_hidden = grub_env_get ("grubfm_show_hidden");
   if (!show_hidden || show_hidden[0] != '1')
     show_hidden = grub_env_get ("grub_show_hidden");
-  if (!show_hidden || show_hidden[0] != '1')
-    return push_result (state);
+  hidden = !(show_hidden && show_hidden[0] == '1');
 
-  int n;
-  const char *source;
   source = luaL_checklstring (state, 2, 0);
   n = lua_gettop (state) - 2;
   if (n > 0)
@@ -706,9 +712,12 @@ grub_lua_add_hidden_menu (lua_State *state)
 
     p = grub_strdup (source);
     if (! p)
-      return push_result (state);
+      {
+        grub_free (args);
+        return push_result (state);
+      }
     hotkey = luaL_checklstring (state, 1, 0);
-    grub_normal_add_menu_entry (n, args, NULL, NULL, NULL, hotkey, NULL, p, 1, 0, NULL);
+    grub_normal_add_menu_entry (n, args, NULL, NULL, NULL, hotkey, NULL, p, hidden, 0, NULL);
     grub_free (p);
     grub_free (args);
   }

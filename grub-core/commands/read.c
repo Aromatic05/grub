@@ -28,6 +28,7 @@
 #include <grub/file.h>
 #include <grub/i18n.h>
 #include <grub/safemath.h>
+#include <grub/read.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -37,7 +38,7 @@ static const struct grub_arg_option options[] =
     {0, 0, 0, 0, 0, 0}
   };
 
-static char *
+char *
 grub_getline (int hide_mode)
 {
   grub_size_t i;
@@ -91,11 +92,13 @@ grub_getline (int hide_mode)
 	grub_printf ("*");
       if (grub_add (i, 1, &i))
         {
+          grub_free (line);
           grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
           return NULL;
         }
       if (grub_add (i, 1 + sizeof('\0'), &alloc_size))
         {
+          grub_free (line);
           grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
           return NULL;
         }

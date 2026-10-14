@@ -24,6 +24,7 @@
 #include <grub/i18n.h>
 #include <grub/lua.h>
 #include <grub/normal.h>
+#include <grub/read.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -63,8 +64,11 @@ static int
 lua_input_read (lua_State *state)
 {
   char *line;
-  (void) state;
-  line = grub_cmdline_get ("");
+  int hide = (lua_gettop (state) > 0) ? luaL_checkinteger (state, 1) : 0;
+
+  /* The a1ive API accepts 0 (visible), 1 (asterisks), or 2 (silent).
+     Reuse read's input path so editing and masking stay consistent. */
+  line = grub_getline (hide);
   if (! line)
     lua_pushnil(state);
   else
