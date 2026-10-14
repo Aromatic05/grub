@@ -33,6 +33,11 @@
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/efi.h>
 #include <grub/efi/api.h>
+#include <grub/video.h>
+#ifndef efi_call_1
+#define efi_call_1(func, a) (func)(a)
+#define efi_call_3(func, a, b, c) (func)(a, b, c)
+#endif
 #endif
 
 #pragma GCC diagnostic ignored "-Wcast-align"
@@ -50,7 +55,12 @@ enum
     OPTION_OEMTABLEREV,
     OPTION_OEMTABLECREATOR,
     OPTION_OEMTABLECREATORREV,
-    OPTION_NO_EBDA
+    OPTION_NO_EBDA,
+    OPTION_SLIC,
+    OPTION_MSDM,
+#ifdef GRUB_MACHINE_EFI
+    OPTION_BGRT,
+#endif
   };
 
 static const struct grub_arg_option options[] = {
@@ -74,6 +84,11 @@ static const struct grub_arg_option options[] = {
   {"no-ebda", 'e', 0, N_("Don't update EBDA. May fix failures or hangs on some "
    "BIOSes but makes it ineffective with OS not receiving RSDP from GRUB."),
    0, ARG_TYPE_NONE},
+  {"slic", 's', 0, N_("Load or replace the host SLIC table."), 0, ARG_TYPE_NONE},
+  {"msdm", 0, 0, N_("Print the loaded MSDM table."), 0, ARG_TYPE_NONE},
+#ifdef GRUB_MACHINE_EFI
+  {"bgrt", 0, 0, N_("Load a BMP file as the BGRT boot image."), 0, ARG_TYPE_NONE},
+#endif
   {0, 0, 0, 0, 0, 0}
 };
 
@@ -479,6 +494,167 @@ free_tables (void)
   table_dsdt = 0;
 }
 
+struct grub_acpi_msdm
+{
+  struct grub_acpi_table_header header;
+  grub_uint32_t version, reserved, data_type, data_reserved, data_length;
+  char data[29];
+} GRUB_PACKED;
+
+static grub_err_t
+print_msdm (struct grub_acpi_table_header *header)
+{
+  struct grub_acpi_msdm *msdm = (struct grub_acpi_msdm *) header;
+  grub_size_t i;
+
+  if (header->length < sizeof (*msdm))
+    {
+      return grub_error (GRUB_ERR_BAD_OS, "invalid MSDM table length");
+    }
+  grub_printf ("MSDM table: OEM %.6s, data length %u\n",
+               header->oemid, msdm->data_length);
+  grub_printf ("Product key: ");
+  for (i = 0; i < sizeof (msdm->data); i++)
+    grub_printf ("%c", msdm->data[i]);
+  grub_printf ("\n");
+  return GRUB_ERR_NONE;
+}
+
+#ifdef GRUB_MACHINE_EFI
+struct grub_acpi_bmp_header
+{
+  grub_uint8_t type[2];
+  grub_uint32_t size;
+  grub_uint16_t reserved[2];
+  grub_uint32_t pixel_offset, dib_size;
+  grub_int32_t width, height;
+  grub_uint16_t planes, bits_per_pixel;
+  grub_uint32_t compression, image_size;
+} GRUB_PACKED;
+
+struct grub_acpi_bgrt
+{
+  struct grub_acpi_table_header header;
+  grub_uint16_t version;
+  grub_uint8_t status, image_type;
+  grub_uint64_t image_address;
+  grub_uint32_t x_offset, y_offset;
+} GRUB_PACKED;
+
+/* The firmware and OS use the BMP address after this command returns. */
+static void *bgrt_image;
+
+static grub_err_t
+load_bgrt (const char *path)
+{
+  grub_file_t file;
+  grub_size_t size;
+  struct grub_acpi_bmp_header *bmp;
+  struct grub_acpi_bgrt *bgrt;
+  struct efiemu_acpi_table *table;
+  grub_efi_status_t status;
+  grub_uint32_t screen_width = 0, screen_height = 0;
+  grub_uint32_t image_width, image_height;
+  struct grub_video_mode_info video_info;
+
+  file = grub_file_open (path, GRUB_FILE_TYPE_ACPI_TABLE);
+  if (!file)
+    return grub_errno;
+  size = grub_file_size (file);
+  if (size < sizeof (*bmp))
+    {
+      grub_file_close (file);
+      return grub_error (GRUB_ERR_BAD_OS, "invalid BMP file");
+    }
+  status = efi_call_3 (grub_efi_system_table->boot_services->allocate_pool,
+                      GRUB_EFI_ACPI_RECLAIM_MEMORY, size, &bgrt_image);
+  if (status != GRUB_EFI_SUCCESS)
+    {
+      grub_file_close (file);
+      return grub_error (GRUB_ERR_OUT_OF_MEMORY, "could not allocate BGRT image");
+    }
+  if (grub_file_read (file, bgrt_image, size) != (int) size)
+    {
+      grub_file_close (file);
+      efi_call_1 (grub_efi_system_table->boot_services->free_pool, bgrt_image);
+      bgrt_image = 0;
+      if (!grub_errno)
+        grub_error (GRUB_ERR_BAD_OS, "could not read BMP file");
+      return grub_errno;
+    }
+  grub_file_close (file);
+  bmp = bgrt_image;
+  if (bmp->type[0] != 'B' || bmp->type[1] != 'M'
+      || bmp->size < sizeof (*bmp) || bmp->size > size
+      || bmp->pixel_offset >= bmp->size || bmp->dib_size < 40
+      || bmp->dib_size > bmp->size - 14
+      || bmp->width <= 0 || bmp->height == 0)
+    {
+      efi_call_1 (grub_efi_system_table->boot_services->free_pool, bgrt_image);
+      bgrt_image = 0;
+      return grub_error (GRUB_ERR_BAD_OS, "invalid BMP header");
+    }
+
+  bgrt = grub_zalloc (sizeof (*bgrt));
+  table = grub_malloc (sizeof (*table));
+  if (!bgrt || !table)
+    {
+      grub_free (bgrt);
+      grub_free (table);
+      efi_call_1 (grub_efi_system_table->boot_services->free_pool, bgrt_image);
+      bgrt_image = 0;
+      return grub_errno;
+    }
+  grub_memcpy (bgrt->header.signature, "BGRT", 4);
+  bgrt->header.length = sizeof (*bgrt);
+  bgrt->header.revision = 1;
+  grub_memcpy (bgrt->header.oemid, "GRUB  ", 6);
+  grub_memcpy (bgrt->header.oemtable, "GRUBBGRT", 8);
+  grub_memcpy (bgrt->header.creator_id, "GRUB", 4);
+  bgrt->header.creator_rev = 1;
+  bgrt->version = 1;
+  bgrt->status = 1;
+  bgrt->image_address = (grub_uint64_t) (grub_addr_t) bgrt_image;
+  image_width = bmp->width;
+  image_height = bmp->height < 0 ? (grub_uint32_t) -((grub_int64_t) bmp->height)
+    : (grub_uint32_t) bmp->height;
+  if (grub_video_get_info (&video_info) == GRUB_ERR_NONE)
+    {
+      screen_width = video_info.width;
+      screen_height = video_info.height;
+    }
+  if (screen_width > image_width)
+    bgrt->x_offset = (screen_width - image_width) / 2;
+  if (screen_height > image_height)
+    bgrt->y_offset = (screen_height - image_height) / 2;
+  bgrt->header.checksum = 0;
+  bgrt->header.checksum = 0 - grub_byte_checksum (bgrt, sizeof (*bgrt));
+  table->addr = bgrt;
+  table->size = sizeof (*bgrt);
+  {
+    struct efiemu_acpi_table **link = &acpi_tables;
+    while (*link)
+      {
+        struct efiemu_acpi_table *old = *link;
+        if (grub_memcmp (((struct grub_acpi_table_header *) old->addr)->signature,
+                         "BGRT", 4) == 0)
+          {
+            *link = old->next;
+            playground_size -= old->size;
+            grub_free (old->addr);
+            grub_free (old);
+            continue;
+          }
+        link = &old->next;
+      }
+  }
+  table->next = acpi_tables;
+  acpi_tables = table;
+  playground_size += table->size;
+  return GRUB_ERR_NONE;
+}
+#endif
+
 static grub_err_t
 grub_cmd_acpi (struct grub_extcmd_context *ctxt, int argc, char **args)
 {
@@ -487,6 +663,7 @@ grub_cmd_acpi (struct grub_extcmd_context *ctxt, int argc, char **args)
   struct efiemu_acpi_table *cur, *t;
   int i, mmapregion;
   int numoftables;
+  int saw_slic = 0;
 
   /* Default values if no RSDP is found. */
   rev1 = 1;
@@ -659,6 +836,26 @@ grub_cmd_acpi (struct grub_extcmd_context *ctxt, int argc, char **args)
   if (state[OPTION_OEMTABLECREATORREV].set)
     root_creator_rev = grub_strtoul (state[OPTION_OEMTABLECREATORREV].arg, 0, 0);
 
+  if (state[OPTION_SLIC].set && argc != 1)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                       "--slic requires exactly one SLIC table file");
+#ifdef GRUB_MACHINE_EFI
+  if (state[OPTION_BGRT].set)
+    {
+      grub_err_t err;
+      if (argc != 1 || state[OPTION_SLIC].set)
+        return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                           "--bgrt requires exactly one BMP file");
+      err = load_bgrt (args[0]);
+      if (err)
+        {
+          free_tables ();
+          return err;
+        }
+      argc = 0;
+    }
+#endif
+
   /* Load user tables */
   for (i = 0; i < argc; i++)
     {
@@ -701,6 +898,21 @@ grub_cmd_acpi (struct grub_extcmd_context *ctxt, int argc, char **args)
 	}
       grub_file_close (file);
 
+      if (state[OPTION_SLIC].set)
+	{
+	  struct grub_acpi_table_header *header =
+	    (struct grub_acpi_table_header *) buf;
+	  if (grub_memcmp (header->signature, "SLIC", 4)
+	      || header->length != size || saw_slic)
+	    {
+	      grub_free (buf);
+	      free_tables ();
+	      return grub_error (GRUB_ERR_BAD_OS,
+			 "--slic requires one valid SLIC table");
+	    }
+	  saw_slic = 1;
+	}
+
       if (grub_memcmp (((struct grub_acpi_table_header *) buf)->signature,
 		       "DSDT", 4) == 0)
 	{
@@ -725,6 +937,56 @@ grub_cmd_acpi (struct grub_extcmd_context *ctxt, int argc, char **args)
 
 	  table->next = acpi_tables;
 	  acpi_tables = table;
+	}
+    }
+
+  if (state[OPTION_SLIC].set)
+    {
+      struct efiemu_acpi_table **link = &acpi_tables;
+      int kept = 0;
+      for (; *link; )
+	{
+	  struct efiemu_acpi_table *table = *link;
+	  if (grub_memcmp (((struct grub_acpi_table_header *) table->addr)->signature,
+			   "SLIC", 4) == 0)
+	    {
+	      if (!kept)
+		{
+		  kept = 1;
+		  link = &table->next;
+		  continue;
+		}
+	      *link = table->next;
+	      playground_size -= table->size;
+	      grub_free (table->addr);
+	      grub_free (table);
+	      continue;
+	    }
+	  link = &table->next;
+	}
+    }
+
+  if (state[OPTION_MSDM].set)
+    {
+      struct efiemu_acpi_table *table;
+      for (table = acpi_tables; table; table = table->next)
+	if (grub_memcmp (((struct grub_acpi_table_header *) table->addr)->signature,
+			 "MSDM", 4) == 0)
+	  break;
+      if (!table)
+	{
+	  free_tables ();
+	  return grub_error (GRUB_ERR_FILE_NOT_FOUND, "MSDM table not found");
+	}
+      if (print_msdm (table->addr))
+	{
+	  free_tables ();
+	  return grub_errno;
+	}
+      if (argc == 0)
+	{
+	  free_tables ();
+	  return GRUB_ERR_NONE;
 	}
     }
 
