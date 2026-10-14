@@ -115,6 +115,15 @@ static const struct grub_arg_option efienv_options[] =
     {0, 0, 0, 0, 0, 0}
   };
 
+static const struct grub_arg_option efienv_set_options[] =
+  {
+    {"guid", 'g', 0, N_("EFI variable GUID."), N_("GUID"), ARG_TYPE_STRING},
+    {"type", 't', 0, N_("Value type: string/wstring/uint8/hex."),
+     N_("TYPE"), ARG_TYPE_STRING},
+    {"nv", 'n', 0, N_("Store the EFI variable as non-volatile."), 0, 0},
+    {0, 0, 0, 0, 0, 0}
+  };
+
 static const struct grub_arg_option efienv_list_options[] =
   {
     {"guid", 'g', 0, N_("EFI variable GUID."), N_("GUID"), ARG_TYPE_STRING},
@@ -588,14 +597,13 @@ grub_cmd_setenv_efi (grub_extcmd_context_t ctxt, int argc, char **argv)
 {
   grub_guid_t guid;
   enum efivar_value_type type = EFIVAR_TYPE_HEX;
-  grub_efi_uint32_t attrs = (GRUB_EFI_VARIABLE_NON_VOLATILE
-			     | GRUB_EFI_VARIABLE_BOOTSERVICE_ACCESS
+  grub_efi_uint32_t attrs = (GRUB_EFI_VARIABLE_BOOTSERVICE_ACCESS
 			     | GRUB_EFI_VARIABLE_RUNTIME_ACCESS);
   grub_err_t err;
 
   if (argc != 2)
     return grub_error (GRUB_ERR_BAD_ARGUMENT,
-		       "usage: setenv [--guid GUID] [--type TYPE] EFI_ENV VALUE");
+		       "usage: setenv [--guid GUID] [--type TYPE] [--nv] EFI_ENV VALUE");
 
   err = get_guid_from_args (ctxt, &guid);
   if (err != GRUB_ERR_NONE)
@@ -603,6 +611,9 @@ grub_cmd_setenv_efi (grub_extcmd_context_t ctxt, int argc, char **argv)
 
   if (ctxt->state[1].set && !parse_type (ctxt->state[1].arg, &type))
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid type");
+
+  if (ctxt->state[2].set)
+    attrs |= GRUB_EFI_VARIABLE_NON_VOLATILE;
 
   switch (type)
     {
@@ -727,7 +738,7 @@ GRUB_MOD_INIT (efivar)
   cmd_setenv = grub_register_extcmd ("setenv", grub_cmd_setenv_efi, 0,
 				     N_("EFI_ENV VALUE"),
 				     N_("Write EFI variable."),
-				     efienv_options);
+				     efienv_set_options);
   cmd_lsefienv = grub_register_extcmd ("lsefienv", grub_cmd_lsefienv, 0,
 				       N_(""),
 				       N_("List EFI variables."),

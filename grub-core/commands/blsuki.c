@@ -1413,7 +1413,8 @@ blsuki_create_entries (bool show_default, bool show_non_default, char *entry_id,
 }
 
 static grub_err_t
-blsuki_cmd (grub_extcmd_context_t ctxt, enum blsuki_cmd_type cmd_type)
+blsuki_cmd (grub_extcmd_context_t ctxt, int argc, char **args,
+	    enum blsuki_cmd_type cmd_type)
 {
   grub_err_t err;
   struct grub_arg_list *state = ctxt->state;
@@ -1444,6 +1445,36 @@ blsuki_cmd (grub_extcmd_context_t ctxt, enum blsuki_cmd_type cmd_type)
       entry_id = state[4].arg;
       all = false;
     }
+  if (argc > 1)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("unexpected argument(s) found, see --help"));
+  if (argc == 1 && cmd_type == BLSUKI_BLS_CMD)
+    {
+      if (grub_strcmp (args[0], "default") == 0 ||
+	  grub_strcmp (args[0], "non-default") == 0)
+	{
+	  if (state[2].set || state[3].set || state[4].set)
+	    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+			       N_("positional filtering cannot be combined with entry selection options"));
+	  show_default = grub_strcmp (args[0], "default") == 0;
+	  show_non_default = !show_default;
+	  all = false;
+	}
+      else if (args[0][0] == '(')
+	{
+	  if (state[0].set)
+	    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+			       N_("device argument cannot be combined with --path"));
+	  path = args[0];
+	}
+      else
+	{
+	  if (state[2].set || state[3].set || state[4].set)
+	    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+			       N_("positional entry cannot be combined with entry selection options"));
+	  entry_id = args[0];
+	  all = false;
+	}
+    }
   if (all == true)
     {
       show_default = true;
@@ -1459,14 +1490,13 @@ blsuki_cmd (grub_extcmd_context_t ctxt, enum blsuki_cmd_type cmd_type)
 
 static grub_err_t
 grub_cmd_blscfg (grub_extcmd_context_t ctxt, int argc,
-		 char **args __attribute__ ((unused)))
+		 char **args)
 {
-  if (argc != 0)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("unexpected argument(s) found, see --help"));
-  return blsuki_cmd (ctxt, BLSUKI_BLS_CMD);
+  return blsuki_cmd (ctxt, argc, args, BLSUKI_BLS_CMD);
 }
 
 static grub_extcmd_t bls_cmd;
+static grub_extcmd_t bls_import_cmd;
 
 #ifdef GRUB_MACHINE_EFI
 static grub_err_t
@@ -1475,7 +1505,7 @@ grub_cmd_uki (grub_extcmd_context_t ctxt, int argc,
 {
   if (argc != 0)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("unexpected argument(s) found, see --help"));
-  return blsuki_cmd (ctxt, BLSUKI_UKI_CMD);
+  return blsuki_cmd (ctxt, 0, NULL, BLSUKI_UKI_CMD);
 }
 
 static grub_extcmd_t uki_cmd;
@@ -1487,6 +1517,10 @@ GRUB_MOD_INIT(blsuki)
 				  N_("[-p|--path] DIR [-f|--enable-fallback] [-d|--show-default] [-n|--show-non-default] [-e|--entry] FILE"),
 				  N_("Import Boot Loader Specification snippets."),
 				  bls_opt);
+  bls_import_cmd = grub_register_extcmd ("bls_import", grub_cmd_blscfg, 0,
+					 N_("[default|non-default|(DEVICE)|ENTRY_ID]"),
+					 N_("Import Boot Loader Specification snippets."),
+					 bls_opt);
 #ifdef GRUB_MACHINE_EFI
   uki_cmd = grub_register_extcmd ("uki", grub_cmd_uki, 0,
 				  N_("[-p|--path] DIR [-f|--enable-fallback] [-d|--show-default] [-n|--show-non-default] [-e|--entry] FILE"),
@@ -1497,6 +1531,7 @@ GRUB_MOD_INIT(blsuki)
 GRUB_MOD_FINI(blsuki)
 {
   grub_unregister_extcmd (bls_cmd);
+  grub_unregister_extcmd (bls_import_cmd);
 #ifdef GRUB_MACHINE_EFI
   grub_unregister_extcmd (uki_cmd);
 #endif

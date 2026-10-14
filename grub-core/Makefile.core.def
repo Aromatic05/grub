@@ -855,6 +855,12 @@ module = {
 };
 
 module = {
+  name = bcfg;
+  efi = commands/efi/bcfg.c;
+  enable = efi;
+};
+
+module = {
   name = efienv;
   efi = commands/efi/env.c;
   enable = efi;
@@ -935,6 +941,15 @@ module = {
   enable = emu;
   cflags = '$(CFLAGS_POSIX) $(CFLAGS_GNULIB)';
   cppflags = '$(CPPFLAGS_POSIX) $(CPPFLAGS_GNULIB)';
+};
+
+module = {
+  name = blscfg;
+  common = commands/blscfg_compat.c;
+  enable = powerpc_ieee1275;
+  enable = efi;
+  enable = i386_pc;
+  enable = emu;
 };
 
 module = {
