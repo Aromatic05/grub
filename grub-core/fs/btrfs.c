@@ -44,7 +44,7 @@
 #include <grub/crypto.h>
 #include <grub/diskfilter.h>
 #include <grub/safemath.h>
-#include <grub/ventoy_data.h>
+#include <grub/disk_blockmap.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -2529,7 +2529,7 @@ grub_btrfs_label (grub_device_t device, char **label)
 
 int
 EXPORT_FUNC (grub_btrfs_get_file_chunk) (grub_uint64_t part_start, grub_file_t file,
-					 ventoy_img_chunk_list *chunk_list)
+					 grub_disk_blockmap *chunk_list)
 {
   grub_uint32_t i = 0;
   grub_off_t size = 0;
@@ -2545,11 +2545,11 @@ EXPORT_FUNC (grub_btrfs_get_file_chunk) (grub_uint64_t part_start, grub_file_t f
 
   if (data->n_devices_attached != 1)
     {
-      chunk_list->err_code = VTOY_CHUNK_ERR_MULTI_DEV;
+      chunk_list->err_code = GRUB_BLOCKMAP_ERR_MULTI_DEV;
       return 1;
     }
 
-  buf = grub_malloc (VTOY_CHUNK_BUF_SIZE);
+  buf = grub_malloc (GRUB_BLOCKMAP_BUFFER_SIZE);
   if (!buf)
     return 1;
 
@@ -2559,13 +2559,13 @@ EXPORT_FUNC (grub_btrfs_get_file_chunk) (grub_uint64_t part_start, grub_file_t f
 
   if (g_last_chunk_type != GRUB_BTRFS_CHUNK_TYPE_SINGLE)
     {
-      chunk_list->err_code = VTOY_CHUNK_ERR_RAID;
+      chunk_list->err_code = GRUB_BLOCKMAP_ERR_RAID;
       grub_free (buf);
       return 1;
     }
   else if (g_last_compress_type != GRUB_BTRFS_COMPRESSION_NONE)
     {
-      chunk_list->err_code = VTOY_CHUNK_ERR_COMPRESS;
+      chunk_list->err_code = GRUB_BLOCKMAP_ERR_COMPRESS;
       grub_free (buf);
       return 1;
     }
@@ -2574,7 +2574,7 @@ EXPORT_FUNC (grub_btrfs_get_file_chunk) (grub_uint64_t part_start, grub_file_t f
   read_hook = disk->read_hook;
   read_hook_data = disk->read_hook_data;
 
-  disk->read_hook = (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read2;
+  disk->read_hook = grub_disk_blockmap_buffered_hook;
   disk->read_hook_data = chunk_list;
 
   chunk_list->buf = buf;
@@ -2583,7 +2583,7 @@ EXPORT_FUNC (grub_btrfs_get_file_chunk) (grub_uint64_t part_start, grub_file_t f
 
   for (size = file->size; size > 0 && chunk_list->err_code == 0; size -= read)
     {
-      read = (size > VTOY_CHUNK_BUF_SIZE) ? VTOY_CHUNK_BUF_SIZE : size;
+      read = (size > GRUB_BLOCKMAP_BUFFER_SIZE) ? GRUB_BLOCKMAP_BUFFER_SIZE : size;
       grub_file_read (file, buf, read);
     }
 

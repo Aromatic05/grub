@@ -3413,7 +3413,9 @@ int ventoy_get_block_list(grub_file_t file, ventoy_img_chunk_list *chunklist, gr
     }
     else
     {
-        file->read_hook = (grub_disk_read_hook_t)(void *)grub_disk_blocklist_read;
+        grub_disk_read_hook_t previous_hook = file->read_hook;
+        void *previous_data = file->read_hook_data;
+        file->read_hook = grub_disk_blockmap_probe_hook;
         file->read_hook_data = chunklist;
 
         for (size = file->size; size > 0; size -= read)
@@ -3421,6 +3423,8 @@ int ventoy_get_block_list(grub_file_t file, ventoy_img_chunk_list *chunklist, gr
             read = (size > VTOY_SIZE_1GB) ? VTOY_SIZE_1GB : size;
             grub_file_read(file, NULL, read);
         }
+        file->read_hook = previous_hook;
+        file->read_hook_data = previous_data;
 
         for (i = 0; start > 0 && i < chunklist->cur_chunk; i++)
         {

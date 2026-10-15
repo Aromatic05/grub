@@ -47,7 +47,7 @@
 #include <grub/types.h>
 #include <grub/fshelp.h>
 #include <grub/safemath.h>
-#include <grub/ventoy_data.h>
+#include <grub/disk_blockmap.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -354,7 +354,7 @@ struct grub_ext2_data
 };
 
 static grub_dl_t my_mod;
-static int g_ventoy_block_count;
+static int g_ext_block_count;
 
 
 
@@ -548,7 +548,7 @@ grub_ext2_read_block (grub_fshelp_node_t node, grub_disk_addr_t fileblock)
 
 	              start = grub_le_to_cpu16 (ext[i].start_hi);
 	              start = (start << 32) + grub_le_to_cpu32 (ext[i].start);
-	              g_ventoy_block_count = (int) (grub_le_to_cpu16 (ext[i].len) - fileblock);
+	              g_ext_block_count = (int) (grub_le_to_cpu16 (ext[i].len) - fileblock);
 
 	              ret = fileblock + start;
 	            }
@@ -1128,7 +1128,7 @@ grub_ext2_mtime (grub_device_t device, grub_int64_t *tm)
 
 int
 EXPORT_FUNC (grub_ext_get_file_chunk) (grub_uint64_t part_start, grub_file_t file,
-				       ventoy_img_chunk_list *chunk_list)
+				       grub_disk_blockmap *chunk_list)
 {
   int blocksize;
   int log2blocksize;
@@ -1151,18 +1151,18 @@ EXPORT_FUNC (grub_ext_get_file_chunk) (grub_uint64_t part_start, grub_file_t fil
 
   while (i < blockcnt)
     {
-      g_ventoy_block_count = 1;
+      g_ext_block_count = 1;
       blknr = grub_ext2_read_block (node, i);
       if (blknr == 0)
 	return 0;
       if (blknr == (grub_disk_addr_t) -1)
 	return 1;
 
-      i += (grub_disk_addr_t) g_ventoy_block_count;
+      i += (grub_disk_addr_t) g_ext_block_count;
       blknr = blknr << log2blocksize;
 
-      if (grub_disk_blocklist_read (chunk_list, blknr,
-				    (grub_uint64_t) g_ventoy_block_count * blocksize,
+      if (grub_disk_blockmap_append (chunk_list, blknr,
+				    (grub_uint64_t) g_ext_block_count * blocksize,
 				    disk->log_sector_size) != GRUB_ERR_NONE)
 	return 1;
     }

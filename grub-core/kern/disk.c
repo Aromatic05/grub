@@ -25,7 +25,7 @@
 #include <grub/time.h>
 #include <grub/file.h>
 #include <grub/i18n.h>
-#include <grub/ventoy_data.h>
+#include <grub/disk_blockmap.h>
 
 #define	GRUB_CACHE_TIMEOUT	2
 
@@ -413,6 +413,14 @@ grub_disk_read_small_real (grub_disk_t disk, grub_disk_addr_t sector,
   }
 }
 
+/* Blockmap probes apply to the current file payload, not to disk metadata. */
+static int
+grub_disk_blockmap_is_probe (grub_disk_read_hook_t hook)
+{
+  return (hook == grub_disk_blockmap_probe_hook
+          || hook == grub_disk_blockmap_buffered_hook);
+}
+
 static grub_err_t
 grub_disk_read_small (grub_disk_t disk, grub_disk_addr_t sector,
 		      grub_off_t offset, grub_size_t size, void *buf)
@@ -422,9 +430,7 @@ grub_disk_read_small (grub_disk_t disk, grub_disk_addr_t sector,
   err = grub_disk_read_small_real (disk, sector, offset, size, buf);
   if (err)
     return err;
-  if (disk->read_hook
-      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read
-      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read2)
+  if (disk->read_hook && !grub_disk_blockmap_is_probe (disk->read_hook))
     err = (disk->read_hook) (sector + (offset >> GRUB_DISK_SECTOR_BITS),
 			     offset & (GRUB_DISK_SECTOR_SIZE - 1),
 			     size, buf, disk->read_hook_data);
@@ -432,84 +438,123 @@ grub_disk_read_small (grub_disk_t disk, grub_disk_addr_t sector,
 }
 
 grub_err_t
-grub_disk_blocklist_read (void *chunklist, grub_uint64_t sector,
-			  grub_uint64_t size, grub_uint32_t log_sector_size)
+grub_disk_blockmap_append (grub_disk_blockmap *map, grub_uint64_t sector,
+                           grub_uint64_t size, grub_uint32_t log_sector_size)
 {
-  grub_uint64_t sizeshift;
-  ventoy_img_chunk *last_chunk = NULL;
-  ventoy_img_chunk *new_chunk = NULL;
-  ventoy_img_chunk_list *chunk_list = (ventoy_img_chunk_list *) chunklist;
+  grub_uint64_t disk_sectors = size >> log_sector_size;
+  grub_uint64_t image_sectors = size >> 11;
+  grub_disk_blockmap_chunk *last, *chunk;
 
-  sizeshift = (size >> log_sector_size);
-  if (sizeshift == 0)
-    sizeshift = 1;
+  if (!disk_sectors)
+    disk_sectors = 1;
+  if (!image_sectors)
+    image_sectors = 1;
 
-  if (chunk_list->cur_chunk == 0)
+  if (!map->cur_chunk)
     {
-      chunk_list->chunk[0].img_start_sector = 0;
-      chunk_list->chunk[0].img_end_sector = (size >> 11) - 1;
-      chunk_list->chunk[0].disk_start_sector = sector;
-      chunk_list->chunk[0].disk_end_sector = sector + sizeshift - 1;
-      chunk_list->cur_chunk = 1;
+      map->chunk[0].img_start_sector = 0;
+      map->chunk[0].img_end_sector = image_sectors - 1;
+      map->chunk[0].disk_start_sector = sector;
+      map->chunk[0].disk_end_sector = sector + disk_sectors - 1;
+      map->cur_chunk = 1;
       return GRUB_ERR_NONE;
     }
 
-  last_chunk = chunk_list->chunk + chunk_list->cur_chunk - 1;
-  if (last_chunk->disk_end_sector + 1 == sector)
+  last = map->chunk + map->cur_chunk - 1;
+  if (last->disk_end_sector + 1 == sector)
     {
-      last_chunk->img_end_sector += (size >> 11);
-      last_chunk->disk_end_sector += sizeshift;
+      last->img_end_sector += image_sectors;
+      last->disk_end_sector += disk_sectors;
       return GRUB_ERR_NONE;
     }
 
-  if (chunk_list->cur_chunk == chunk_list->max_chunk)
+  if (map->cur_chunk == map->max_chunk)
     {
-      new_chunk = grub_realloc (chunk_list->chunk,
-				chunk_list->max_chunk * 2 * sizeof (ventoy_img_chunk));
-      if (!new_chunk)
-	return GRUB_ERR_OUT_OF_MEMORY;
-
-      chunk_list->chunk = new_chunk;
-      chunk_list->max_chunk *= 2;
-      last_chunk = chunk_list->chunk + chunk_list->cur_chunk - 1;
+      grub_disk_blockmap_chunk *more =
+        grub_realloc (map->chunk, map->max_chunk * 2 * sizeof (*more));
+      if (!more)
+        return grub_errno;
+      map->chunk = more;
+      map->max_chunk *= 2;
+      last = map->chunk + map->cur_chunk - 1;
     }
 
-  new_chunk = chunk_list->chunk + chunk_list->cur_chunk;
-  new_chunk->img_start_sector = last_chunk->img_end_sector + 1;
-  new_chunk->img_end_sector = new_chunk->img_start_sector + (size >> 11) - 1;
-  new_chunk->disk_start_sector = sector;
-  new_chunk->disk_end_sector = sector + sizeshift - 1;
+  chunk = map->chunk + map->cur_chunk++;
+  chunk->img_start_sector = last->img_end_sector + 1;
+  chunk->img_end_sector = chunk->img_start_sector + image_sectors - 1;
+  chunk->disk_start_sector = sector;
+  chunk->disk_end_sector = sector + disk_sectors - 1;
+  return GRUB_ERR_NONE;
+}
 
-  chunk_list->cur_chunk++;
+/* Marker callbacks are intercepted by grub_disk_read before physical I/O.
+   They have ordinary read-hook signatures and never require function casts. */
+grub_err_t
+grub_disk_blockmap_probe_hook (grub_disk_addr_t sector, unsigned offset,
+                               unsigned length, char *buf, void *data)
+{
+  (void) sector;
+  (void) offset;
+  (void) length;
+  (void) buf;
+  (void) data;
   return GRUB_ERR_NONE;
 }
 
 grub_err_t
-grub_disk_blocklist_read2 (grub_disk_t disk, grub_uint64_t sector,
-			   grub_uint64_t size, char *buf)
+grub_disk_blockmap_buffered_hook (grub_disk_addr_t sector, unsigned offset,
+                                  unsigned length, char *buf, void *data)
 {
-  ventoy_img_chunk_list *chunk_list = (ventoy_img_chunk_list *) disk->read_hook_data;
+  (void) sector;
+  (void) offset;
+  (void) length;
+  (void) buf;
+  (void) data;
+  return GRUB_ERR_NONE;
+}
 
-  if (buf < chunk_list->buf || buf >= chunk_list->buf + VTOY_CHUNK_BUF_SIZE)
-    return 2;
+/* Buffered probes must ignore metadata reads targeting other buffers. */
+grub_err_t
+grub_disk_blockmap_capture (grub_disk_t disk, grub_disk_addr_t sector,
+                            grub_off_t offset, grub_size_t size, char *buf,
+                            void *data, int *handled)
+{
+  grub_disk_blockmap *map = data;
+  grub_uint32_t buf_size = GRUB_BLOCKMAP_BUFFER_SIZE;
 
-  if ((chunk_list->buf + chunk_list->last_offset) != buf)
+  *handled = 0;
+  if (map->buf)
     {
-      chunk_list->err_code = VTOY_CHUNK_ERR_NOT_FLAT;
-      return GRUB_ERR_NONE;
+      if (buf < map->buf || buf >= map->buf + buf_size)
+        return GRUB_ERR_NONE;
+      *handled = 1;
+      if (buf != map->buf + map->last_offset || offset)
+        {
+          map->err_code = GRUB_BLOCKMAP_ERR_NOT_FLAT;
+          return GRUB_ERR_NONE;
+        }
+      if (map->last_offset + size > buf_size)
+        {
+          map->err_code = GRUB_BLOCKMAP_ERR_OVER_FLOW;
+          return GRUB_ERR_NONE;
+        }
+      map->last_offset += size;
+      if (map->last_offset == buf_size)
+        map->last_offset = 0;
+    }
+  else
+    {
+      if (buf)
+        return GRUB_ERR_NONE;
+      *handled = 1;
+      if (offset)
+        {
+          map->err_code = GRUB_BLOCKMAP_ERR_NOT_FLAT;
+          return GRUB_ERR_NONE;
+        }
     }
 
-  if (chunk_list->last_offset + size > VTOY_CHUNK_BUF_SIZE)
-    {
-      chunk_list->err_code = VTOY_CHUNK_ERR_OVER_FLOW;
-      return GRUB_ERR_NONE;
-    }
-
-  chunk_list->last_offset += (grub_uint32_t) size;
-  if (chunk_list->last_offset == VTOY_CHUNK_BUF_SIZE)
-    chunk_list->last_offset = 0;
-
-  return grub_disk_blocklist_read (chunk_list, sector, size, disk->log_sector_size);
+  return grub_disk_blockmap_append (map, sector, size, disk->log_sector_size);
 }
 
 /* Read data from the disk.  */
@@ -519,14 +564,18 @@ grub_disk_read (grub_disk_t disk, grub_disk_addr_t sector,
 {
   grub_err_t err = GRUB_ERR_NONE;
 
-  if (disk->read_hook == (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read)
-    return grub_disk_blocklist_read ((ventoy_img_chunk_list *) disk->read_hook_data,
-				     sector, size, disk->log_sector_size);
-  else if (disk->read_hook == (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read2)
+  /* File extent probes bypass I/O only while a filesystem has installed
+     its typed payload hook. Normal disk reads retain their old behavior. */
+  if (disk->read_hook == grub_disk_blockmap_probe_hook)
+    return grub_disk_blockmap_append (disk->read_hook_data, sector, size,
+                                      disk->log_sector_size);
+  else if (disk->read_hook == grub_disk_blockmap_buffered_hook)
     {
-      grub_err_t rv = grub_disk_blocklist_read2 (disk, sector, size, (char *) buf);
-      if (rv != 2)
-	return rv;
+      int handled = 0;
+      err = grub_disk_blockmap_capture (disk, sector, offset, size, buf,
+                                         disk->read_hook_data, &handled);
+      if (err != GRUB_ERR_NONE || handled)
+        return err;
     }
 
   /* First of all, check if the region is within the disk.  */
@@ -619,9 +668,7 @@ grub_disk_read (grub_disk_t disk, grub_disk_addr_t sector,
 					    + GRUB_DISK_SECTOR_BITS)));
 
 
-	  if (disk->read_hook
-	      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read
-	      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read2)
+	  if (disk->read_hook && !grub_disk_blockmap_is_probe (disk->read_hook))
 	    (disk->read_hook) (sector, 0, agglomerate << (GRUB_DISK_CACHE_BITS + GRUB_DISK_SECTOR_BITS),
 			       buf, disk->read_hook_data);
 
@@ -633,9 +680,7 @@ grub_disk_read (grub_disk_t disk, grub_disk_addr_t sector,
 
       if (data)
 	{
-	  if (disk->read_hook
-	      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read
-	      && disk->read_hook != (grub_disk_read_hook_t) (void *) grub_disk_blocklist_read2)
+	  if (disk->read_hook && !grub_disk_blockmap_is_probe (disk->read_hook))
 	    (disk->read_hook) (sector, 0, (GRUB_DISK_CACHE_SIZE << GRUB_DISK_SECTOR_BITS),
 			       buf, disk->read_hook_data);
 	  sector += GRUB_DISK_CACHE_SIZE;

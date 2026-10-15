@@ -30,7 +30,7 @@
 #include <grub/lockdown.h>
 #include <grub/udf.h>
 #include <grub/safemath.h>
-#include <grub/ventoy_data.h>
+#include <grub/disk_blockmap.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 

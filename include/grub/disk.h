@@ -150,6 +150,7 @@ struct grub_disk
 
   /* Device-specific data.  */
   void *data;
+
 };
 typedef struct grub_disk *grub_disk_t;
 
@@ -253,14 +254,20 @@ grub_disk_dev_iterate (grub_disk_dev_iterate_hook_t hook, void *hook_data)
 
 grub_disk_t EXPORT_FUNC(grub_disk_open) (const char *name);
 void EXPORT_FUNC(grub_disk_close) (grub_disk_t disk);
-grub_err_t EXPORT_FUNC(grub_disk_blocklist_read) (void *chunklist,
-                                                  grub_uint64_t sector,
-                                                  grub_uint64_t size,
-                                                  grub_uint32_t log_sector_size);
-grub_err_t EXPORT_FUNC(grub_disk_blocklist_read2) (grub_disk_t disk,
-                                                   grub_uint64_t sector,
-                                                   grub_uint64_t size,
-                                                   char *buf);
+struct grub_disk_blockmap;
+/* Typed read-hook markers: disk.c records file payload reads before I/O. */
+grub_err_t EXPORT_FUNC(grub_disk_blockmap_probe_hook)
+  (grub_disk_addr_t sector, unsigned offset, unsigned length,
+   char *buf, void *data);
+grub_err_t EXPORT_FUNC(grub_disk_blockmap_buffered_hook)
+  (grub_disk_addr_t sector, unsigned offset, unsigned length,
+   char *buf, void *data);
+grub_err_t EXPORT_FUNC(grub_disk_blockmap_append)
+  (struct grub_disk_blockmap *map, grub_uint64_t sector,
+   grub_uint64_t size, grub_uint32_t log_sector_size);
+grub_err_t EXPORT_FUNC(grub_disk_blockmap_capture)
+  (grub_disk_t disk, grub_disk_addr_t sector, grub_off_t offset,
+   grub_size_t size, char *buf, void *data, int *handled);
 grub_err_t EXPORT_FUNC(grub_disk_read) (grub_disk_t disk,
 					grub_disk_addr_t sector,
 					grub_off_t offset,

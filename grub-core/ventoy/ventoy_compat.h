@@ -12,8 +12,6 @@
 #include <grub/efi/efi.h>
 #endif
 
-#define VTOY_CHUNK_BUF_SIZE          (4 * 1024 * 1024)
-
 #ifndef GRUB_FILE_TYPE_NO_VLNK
 #define GRUB_FILE_TYPE_NO_VLNK 0
 #endif

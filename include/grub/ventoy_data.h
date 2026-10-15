@@ -1,61 +1,24 @@
 /*
- * Shared Ventoy on-disk/in-memory data layouts used by non-ventoy modules.
+ * Compatibility aliases for GRUB's generic file-to-disk block map.
  */
 
 #ifndef GRUB_VENTOY_DATA_HEADER
 #define GRUB_VENTOY_DATA_HEADER 1
 
-#include <grub/types.h>
-#include <grub/file.h>
+#include <grub/disk_blockmap.h>
 
-#ifndef VTOY_CHUNK_BUF_SIZE
-#define VTOY_CHUNK_BUF_SIZE          (4 * 1024 * 1024)
-#endif
+#define VTOY_CHUNK_BUF_SIZE GRUB_BLOCKMAP_BUFFER_SIZE
+#define DEFAULT_CHUNK_NUM GRUB_BLOCKMAP_DEFAULT_CHUNKS
 
-typedef struct
-{
-  grub_uint32_t img_start_sector; /* sector size: 2KB */
-  grub_uint32_t img_end_sector;   /* included */
-  grub_uint64_t disk_start_sector;
-  grub_uint64_t disk_end_sector;  /* included */
-} ventoy_img_chunk;
+typedef grub_disk_blockmap_chunk ventoy_img_chunk;
+typedef grub_disk_blockmap ventoy_img_chunk_list;
 
-#define DEFAULT_CHUNK_NUM   1024
-
-typedef struct
-{
-  grub_uint32_t max_chunk;
-  grub_uint32_t cur_chunk;
-  grub_uint32_t err_code;
-  grub_uint32_t last_offset;
-  ventoy_img_chunk *chunk;
-  char *buf;
-} ventoy_img_chunk_list;
-
-enum
-{
-  VTOY_CHUNK_ERR_NONE = 0,
-  VTOY_CHUNK_ERR_MULTI_DEV,
-  VTOY_CHUNK_ERR_RAID,
-  VTOY_CHUNK_ERR_COMPRESS,
-  VTOY_CHUNK_ERR_NOT_FLAT,
-  VTOY_CHUNK_ERR_OVER_FLOW,
-  VTOY_CHUNK_ERR_MAX
-};
-
-int EXPORT_FUNC(grub_fat_get_file_chunk) (grub_uint64_t part_start,
-					  grub_file_t file,
-					  ventoy_img_chunk_list *chunk_list);
-int EXPORT_FUNC(grub_ext_get_file_chunk) (grub_uint64_t part_start,
-					  grub_file_t file,
-					  ventoy_img_chunk_list *chunk_list);
-int EXPORT_FUNC(grub_btrfs_get_file_chunk) (grub_uint64_t part_start,
-					    grub_file_t file,
-					    ventoy_img_chunk_list *chunk_list);
-grub_uint64_t EXPORT_FUNC(grub_udf_get_file_offset) (grub_file_t file);
-grub_uint64_t EXPORT_FUNC(grub_udf_get_last_pd_size_offset) (void);
-grub_uint64_t EXPORT_FUNC(grub_udf_get_last_file_attr_offset) (grub_file_t file,
-							       grub_uint32_t *startBlock,
-							       grub_uint64_t *fe_entry_size_offset);
+#define VTOY_CHUNK_ERR_NONE GRUB_BLOCKMAP_ERR_NONE
+#define VTOY_CHUNK_ERR_MULTI_DEV GRUB_BLOCKMAP_ERR_MULTI_DEV
+#define VTOY_CHUNK_ERR_RAID GRUB_BLOCKMAP_ERR_RAID
+#define VTOY_CHUNK_ERR_COMPRESS GRUB_BLOCKMAP_ERR_COMPRESS
+#define VTOY_CHUNK_ERR_NOT_FLAT GRUB_BLOCKMAP_ERR_NOT_FLAT
+#define VTOY_CHUNK_ERR_OVER_FLOW GRUB_BLOCKMAP_ERR_OVER_FLOW
+#define VTOY_CHUNK_ERR_MAX GRUB_BLOCKMAP_ERR_MAX
 
 #endif

@@ -34,7 +34,7 @@
 #endif
 #include <grub/fshelp.h>
 #include <grub/i18n.h>
-#include <grub/ventoy_data.h>
+#include <grub/disk_blockmap.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -1284,7 +1284,7 @@ grub_disk_addr_t
 #ifndef MODE_EXFAT
 int
 EXPORT_FUNC (grub_fat_get_file_chunk) (grub_uint64_t part_start, grub_file_t file,
-				       ventoy_img_chunk_list *chunk_list)
+				       grub_disk_blockmap *chunk_list)
 {
   grub_size_t size;
   grub_uint32_t i;
@@ -1392,7 +1392,7 @@ EXPORT_FUNC (grub_fat_get_file_chunk) (grub_uint64_t part_start, grub_file_t fil
       if (chunk_list->cur_chunk > 0
           && chunk_list->chunk[chunk_list->cur_chunk - 1].disk_end_sector + 1 == sector + part_start)
         {
-          ventoy_img_chunk *chunk = &chunk_list->chunk[chunk_list->cur_chunk - 1];
+          grub_disk_blockmap_chunk *chunk = &chunk_list->chunk[chunk_list->cur_chunk - 1];
           grub_uint32_t disk_sectors = (grub_uint32_t) (size >> disk->log_sector_size);
           grub_uint32_t img_sectors = (grub_uint32_t) (size >> 11);
 
@@ -1401,12 +1401,12 @@ EXPORT_FUNC (grub_fat_get_file_chunk) (grub_uint64_t part_start, grub_file_t fil
         }
       else
         {
-          ventoy_img_chunk *chunk;
+          grub_disk_blockmap_chunk *chunk;
 
           if (chunk_list->cur_chunk >= chunk_list->max_chunk)
             {
-              grub_uint32_t new_max = chunk_list->max_chunk ? chunk_list->max_chunk * 2 : DEFAULT_CHUNK_NUM;
-              ventoy_img_chunk *new_chunk =
+              grub_uint32_t new_max = chunk_list->max_chunk ? chunk_list->max_chunk * 2 : GRUB_BLOCKMAP_DEFAULT_CHUNKS;
+              grub_disk_blockmap_chunk *new_chunk =
                 grub_realloc (chunk_list->chunk, new_max * sizeof (*chunk_list->chunk));
               if (!new_chunk)
                 return -1;
