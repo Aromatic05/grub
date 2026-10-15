@@ -15,17 +15,23 @@
 #include <grub/misc.h>
 #include <grub/partition.h>
 #include <grub/types.h>
+#ifdef GRUB_MACHINE_EFI
+#include <grub/efi/efi.h>
+#endif
 #include "ventoy_def.h"
 
 #if defined (GRUB_MACHINE_EFI) && defined (__x86_64__)
 #define VTOY_BOOT_CONSUMER "ventoy_x64.efi"
 #define VTOY_BOOT_FIRSTTRY "FirstTry=@EFI@BOOT@BOOTX64.EFI"
+#define VTOY_BOOT_ISO_ARCH "x64"
 #elif defined (GRUB_MACHINE_EFI) && defined (__aarch64__)
 #define VTOY_BOOT_CONSUMER "ventoy_aa64.efi"
 #define VTOY_BOOT_FIRSTTRY "FirstTry=@EFI@BOOT@BOOTAA64.EFI"
+#define VTOY_BOOT_ISO_ARCH "aa64"
 #elif defined (GRUB_MACHINE_EFI) && defined (__i386__)
 #define VTOY_BOOT_CONSUMER "ventoy_ia32.efi"
 #define VTOY_BOOT_FIRSTTRY "FirstTry=@EFI@BOOT@BOOTIA32.EFI"
+#define VTOY_BOOT_ISO_ARCH "ia32"
 #endif
 
 struct ventoy_boot_search
@@ -53,7 +59,7 @@ ventoy_boot_runtime_valid (const char *dir, int windows)
 {
 #ifdef VTOY_BOOT_CONSUMER
   const char *linux_names[] = { VTOY_COMM_CPIO, VTOY_ARCH_CPIO,
-                                VTOY_BOOT_CONSUMER, "iso9660_x64.efi" };
+                                VTOY_BOOT_CONSUMER };
   const char *windows_names[] = { VTOY_BOOT_CONSUMER, "udf_x64.efi",
                                   "iso9660_x64.efi", "vtoyjump64.exe" };
   const char **names = windows ? windows_names : linux_names;
@@ -68,15 +74,21 @@ ventoy_boot_runtime_valid (const char *dir, int windows)
 
   for (i = 0; i < count; i++)
     {
-      /* Only the x64 ISO driver is needed on x64; other architectures
-         supply their own driver names through the consumer. */
-      if (!windows && i == 3 && grub_strcmp (VTOY_BOOT_CONSUMER,
-                                            "ventoy_x64.efi") != 0)
-        continue;
       path = grub_xasprintf ("%s/%s", dir, names[i]);
       if (!path)
         return 0;
       int found = ventoy_boot_file_exists (path);
+      grub_free (path);
+      if (!found)
+        return 0;
+    }
+  if (!windows)
+    {
+      int found;
+      path = grub_xasprintf ("%s/iso9660_%s.efi", dir, VTOY_BOOT_ISO_ARCH);
+      if (!path)
+        return 0;
+      found = ventoy_boot_file_exists (path);
       grub_free (path);
       if (!found)
         return 0;
@@ -551,6 +563,53 @@ out:
 
 /* Both OS paths publish the original Ventoy chain through the same EFI
    consumer. Only the chain producer and consumer arguments differ. */
+#ifdef VTOY_BOOT_CONSUMER
+/* The newer EFI consumer accepts its ISO filesystem driver from runtime
+   memory. Reuse vt_load_file_to_mem so Runtime need not be on the ISO disk
+   or on a filesystem readable by firmware. */
+static grub_err_t
+ventoy_boot_prepare_isoefi_driver (const char *runtime, int udf)
+{
+  char *path = grub_xasprintf ("%s/%s_%s.efi", runtime,
+                              udf ? "udf" : "iso9660", VTOY_BOOT_ISO_ARCH);
+  char *args[] = { (char *) "nodecompress", path,
+                   (char *) "vtoy_isoefi_mem" };
+  grub_err_t err;
+
+  if (!path)
+    return grub_errno;
+  err = ventoy_boot_run ("vt_load_file_to_mem", 3, args);
+  grub_free (path);
+  if (err)
+    return err;
+  if (!grub_env_get ("vtoy_isoefi_mem_addr") ||
+      !grub_env_get ("vtoy_isoefi_mem_size"))
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "Ventoy ISO EFI driver missing");
+  err = grub_env_export ("vtoy_isoefi_mem_addr");
+  if (!err)
+    err = grub_env_export ("vtoy_isoefi_mem_size");
+  return err;
+}
+
+static void
+ventoy_boot_release_isoefi_driver (void)
+{
+  const char *address = grub_env_get ("vtoy_isoefi_mem_addr");
+  const char *size = grub_env_get ("vtoy_isoefi_mem_size");
+
+  if (address && size)
+    {
+      grub_efi_physical_address_t buffer = grub_strtoull (address, NULL, 16);
+      grub_efi_uintn_t pages =
+        GRUB_EFI_BYTES_TO_PAGES (grub_strtoull (size, NULL, 10));
+      if (buffer && pages)
+        grub_efi_free_pages (buffer, pages);
+    }
+  grub_env_unset ("vtoy_isoefi_mem_addr");
+  grub_env_unset ("vtoy_isoefi_mem_size");
+}
+#endif
+
 static grub_err_t
 ventoy_boot_launch_efi (const char *runtime, int windows, int udf)
 {
@@ -563,8 +622,12 @@ ventoy_boot_launch_efi (const char *runtime, int windows, int udf)
   const char *size = grub_env_get ("vtoy_chain_mem_size");
   const char *param = grub_env_get ("env_param");
   const char *mode = grub_env_get ("LoadIsoEfiDriver");
+  int needs_isoefi = !windows || (mode && grub_strcmp (mode, "on") == 0);
   grub_err_t err;
 
+  /* A previous invocation must never leak its EFI driver pointer here. */
+  grub_env_unset ("vtoy_isoefi_mem_addr");
+  grub_env_unset ("vtoy_isoefi_mem_size");
   if (!address || !*address || !size || !*size || !param || !*param)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "Ventoy chain data missing");
 
@@ -591,6 +654,12 @@ ventoy_boot_launch_efi (const char *runtime, int windows, int udf)
   err = ventoy_boot_run ("vt_acpi_param", 2, acpi_args);
   if (err)
     goto out;
+  if (needs_isoefi)
+    {
+      err = ventoy_boot_prepare_isoefi_driver (runtime, windows && udf);
+      if (err)
+        goto out;
+    }
   err = ventoy_boot_ready ("chainloader");
   if (err)
     goto out;
@@ -604,6 +673,7 @@ ventoy_boot_launch_efi (const char *runtime, int windows, int udf)
     err = grub_error (GRUB_ERR_BAD_OS,
                       "Ventoy EFI consumer returned to GRUB");
 out:
+  ventoy_boot_release_isoefi_driver ();
   grub_free (args[0]);
   grub_free (args[1]);
   grub_free (isoefi_arg);
