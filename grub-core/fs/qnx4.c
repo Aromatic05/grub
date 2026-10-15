@@ -234,7 +234,8 @@ grub_qnx4_read_file(grub_fshelp_node_t node,
                                 pos, len, buf,
                                 grub_qnx4_get_block,
                                 grub_le_to_cpu32(node->inode.raw.di_size),
-                                QNX4_BLOCK_SIZE_BITS, 0);
+                                QNX4_BLOCK_SIZE_BITS - GRUB_DISK_SECTOR_BITS,
+                                0);
 }
 
 /* Read the inode INO for the file described by DATA into INODE.  */
