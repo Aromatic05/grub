@@ -3086,6 +3086,10 @@ int ventoy_get_disk_guid(const char *filename, grub_uint8_t *guid, grub_uint8_t 
     char *device_name;
     char *pos;
     char *pos2;
+    int result = 0;
+
+    grub_memset(guid, 0, 16);
+    grub_memset(signature, 0, 4);
     
     device_name = grub_file_get_device_name(filename);
     if (!device_name)
@@ -3113,17 +3117,25 @@ int ventoy_get_disk_guid(const char *filename, grub_uint8_t *guid, grub_uint8_t 
     disk = grub_disk_open(pos);
     if (disk)
     {
-        grub_disk_read(disk, 0, 0x180, 16, guid);
-        grub_disk_read(disk, 0, 0x1b8, 4, signature);
+        if (grub_disk_read(disk, 0, 0x180, 16, guid) != GRUB_ERR_NONE)
+        {
+            grub_memset(guid, 0, 16);
+            result = 1;
+        }
+        if (grub_disk_read(disk, 0, 0x1b8, 4, signature) != GRUB_ERR_NONE)
+        {
+            grub_memset(signature, 0, 4);
+            result = 1;
+        }
         grub_disk_close(disk);
     }
     else
     {
-        return 1;
+        result = 1;
     }
 
     grub_free(device_name);
-    return 0;
+    return result;
 }
 
 grub_uint32_t ventoy_get_iso_boot_catlog(grub_file_t file)
@@ -3252,7 +3264,11 @@ void ventoy_fill_os_param(grub_file_t file, ventoy_os_param *param)
 
     grub_snprintf(param->vtoy_img_path, sizeof(param->vtoy_img_path), "%s", pos);
     
-    ventoy_get_disk_guid(file->name, param->vtoy_disk_guid, param->vtoy_disk_signature);
+    if (ventoy_get_disk_guid(file->name, param->vtoy_disk_guid, param->vtoy_disk_signature))
+    {
+        /* Consumers can fall back to unique size when IDs cannot be read. */
+        grub_errno = GRUB_ERR_NONE;
+    }
 
     param->vtoy_img_size = file->size;
 

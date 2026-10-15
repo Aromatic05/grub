@@ -761,8 +761,13 @@ ventoy_boot_command (grub_command_t cmd __attribute__ ((unused)),
     }
   if (check_only)
     {
-      grub_printf ("Ventoy: %s ISO readable; runtime %s\n",
-                   windows ? "Windows" : "Linux", runtime);
+      char *extent_args[] = { (char *) image };
+      err = ventoy_boot_source_disk (device);
+      if (!err)
+        err = ventoy_boot_run ("vt_img_sector", 1, extent_args);
+      if (!err)
+        grub_printf ("Ventoy: %s ISO readable; extents valid; runtime %s\n",
+                     windows ? "Windows" : "Linux", runtime);
       goto out;
     }
 
