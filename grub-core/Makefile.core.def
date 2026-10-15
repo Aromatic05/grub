@@ -2948,6 +2948,11 @@ module = {
 };
 
 module = {
+  name = sortlib;
+  common = lib/sortlib.c;
+};
+
+module = {
   name = time;
   common = commands/time.c;
 };
