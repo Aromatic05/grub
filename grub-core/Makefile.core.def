@@ -916,6 +916,12 @@ module = {
 };
 
 module = {
+  name = shim_lock;
+  efi = commands/efi/shim_lock.c;
+  enable = efi;
+};
+
+module = {
   name = efitextmode;
   efi = commands/efi/efitextmode.c;
   enable = efi;
