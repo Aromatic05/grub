@@ -51,7 +51,8 @@ typedef enum
     GRUB_USB_SPEED_NONE,
     GRUB_USB_SPEED_LOW,
     GRUB_USB_SPEED_FULL,
-    GRUB_USB_SPEED_HIGH
+    GRUB_USB_SPEED_HIGH,
+    GRUB_USB_SPEED_SUPER
   } grub_usb_speed_t;
 
 typedef int (*grub_usb_iterate_hook_t) (grub_usb_device_t dev, void *data);
@@ -66,6 +67,13 @@ grub_usb_err_t grub_usb_device_initialize (grub_usb_device_t dev);
 grub_usb_err_t grub_usb_get_descriptor (grub_usb_device_t dev,
 					grub_uint8_t type, grub_uint8_t index,
 					grub_size_t size, char *data);
+
+/* Endpoint descriptors are not necessarily adjacent in a configuration:
+   USB 3.x inserts SuperSpeed Endpoint Companion descriptors between them. */
+struct grub_usb_desc_endp *
+EXPORT_FUNC (grub_usb_get_endpoint) (grub_usb_device_t dev,
+                                    unsigned int config, unsigned int interface,
+                                    unsigned int endpoint);
 
 grub_usb_err_t grub_usb_clear_halt (grub_usb_device_t dev, int endpoint);
 
@@ -137,6 +145,10 @@ struct grub_usb_controller_dev
 
   /* The next host controller.  */
   struct grub_usb_controller_dev *next;
+
+  /* Optional controller-specific device lifecycle hooks.  */
+  grub_usb_err_t (*attach_dev) (grub_usb_controller_t ctrl, grub_usb_device_t dev);
+  grub_usb_err_t (*detach_dev) (grub_usb_controller_t ctrl, grub_usb_device_t dev);
 };
 
 struct grub_usb_controller
@@ -227,6 +239,11 @@ struct grub_usb_device
   grub_uint32_t statuschange;
 
   struct grub_usb_desc_endp *hub_endpoint;
+
+  /* xHCI topology and controller-private state.  */
+  int root_port;
+  grub_uint32_t route;
+  void *xhci_priv;
 
   /* EHCI Split Transfer information */
   int split_hubport;

@@ -149,12 +149,6 @@ grub_usbms_attach (grub_usb_device_t usbdev, int configno, int interfno)
 
   grub_boot_time ("Attaching USB mass storage");
 
-  if (first_available_slot == ARRAY_SIZE (grub_usbms_devices))
-    return 0;
-
-  curnum = first_available_slot;
-  first_available_slot++;
-
   interf = usbdev->config[configno].interf[interfno].descif;
 
   if ((interf->subclass != GRUB_USBMS_SUBCLASS_BULK
@@ -168,11 +162,17 @@ grub_usbms_attach (grub_usb_device_t usbdev, int configno, int interfno)
           && interf->protocol != GRUB_USBMS_PROTOCOL_CB))
     return 0;
 
+  if (first_available_slot == ARRAY_SIZE (grub_usbms_devices))
+    return 0;
+
+  curnum = first_available_slot++;
+
   grub_usbms_devices[curnum] = grub_zalloc (sizeof (struct grub_usbms_dev));
   if (! grub_usbms_devices[curnum])
     return 0;
 
   grub_usbms_devices[curnum]->dev = usbdev;
+  grub_usbms_devices[curnum]->config = configno;
   grub_usbms_devices[curnum]->interface = interfno;
   grub_usbms_devices[curnum]->subclass = interf->subclass;
   grub_usbms_devices[curnum]->protocol = interf->protocol;
@@ -184,7 +184,9 @@ grub_usbms_attach (grub_usb_device_t usbdev, int configno, int interfno)
   for (j = 0; j < interf->endpointcnt; j++)
     {
       struct grub_usb_desc_endp *endp;
-      endp = &usbdev->config[0].interf[interfno].descendp[j];
+      endp = grub_usb_get_endpoint (usbdev, configno, interfno, j);
+      if (!endp)
+        break;
 
       if ((endp->endp_addr & 128) && (endp->attrib & 3) == 2)
 	/* Bulk IN endpoint.  */
@@ -208,13 +210,12 @@ grub_usbms_attach (grub_usb_device_t usbdev, int configno, int interfno)
 
   grub_dprintf ("usbms", "alive\n");
 
-  /* XXX: Activate the first configuration.  */
-  grub_usb_set_configuration (usbdev, 1);
-
   /* Query the amount of LUNs.  */
   if (grub_usbms_devices[curnum]->protocol == GRUB_USBMS_PROTOCOL_BULK)
     { /* Only Bulk only devices support Get Max LUN command */
+      grub_dprintf ("usbms", "query Get Max LUN, interface %d\n", interfno);
       err = grub_usb_control_msg (usbdev, 0xA1, 254, 0, interfno, 1, (char *) &luns);
+      grub_dprintf ("usbms", "Get Max LUN status %d\n", err);
 
       if (err)
         {
@@ -639,9 +640,29 @@ static struct grub_usb_attach_desc attach_hook =
   .hook = grub_usbms_attach
 };
 
+static int
+grub_usbms_attach_existing (grub_usb_device_t usbdev, void *data)
+{
+  int i;
+  (void) data;
+
+  if (usbdev->descdev.configcnt == 0)
+    return 0;
+
+  for (i = 0; i < usbdev->config[0].descconf->numif; i++)
+    if (!usbdev->config[0].interf[i].attached
+        && usbdev->config[0].interf[i].descif->class
+           == GRUB_USB_CLASS_MASS_STORAGE
+        && grub_usbms_attach (usbdev, 0, i))
+      usbdev->config[0].interf[i].attached = 1;
+
+  return 0;
+}
+
 GRUB_MOD_INIT(usbms)
 {
   grub_usb_register_attach_hook_class (&attach_hook);
+  grub_usb_iterate (grub_usbms_attach_existing, 0);
   grub_scsi_dev_register (&grub_usbms_dev);
 }
 
@@ -649,11 +670,14 @@ GRUB_MOD_FINI(usbms)
 {
   unsigned i;
   for (i = 0; i < ARRAY_SIZE (grub_usbms_devices); i++)
+    if (grub_usbms_devices[i])
     {
       grub_usbms_devices[i]->dev->config[grub_usbms_devices[i]->config]
 	.interf[grub_usbms_devices[i]->interface].detach_hook = 0;
       grub_usbms_devices[i]->dev->config[grub_usbms_devices[i]->config]
 	.interf[grub_usbms_devices[i]->interface].attached = 0;
+      grub_free (grub_usbms_devices[i]);
+      grub_usbms_devices[i] = 0;
     }
   grub_usb_unregister_attach_hook_class (&attach_hook);
   grub_scsi_dev_unregister (&grub_usbms_dev);

@@ -72,7 +72,9 @@ grub_usbserial_attach (grub_usb_device_t usbdev, int configno, int interfno,
   for (j = 0; j < interf->endpointcnt; j++)
     {
       struct grub_usb_desc_endp *endp;
-      endp = &usbdev->config[0].interf[interfno].descendp[j];
+      endp = grub_usb_get_endpoint (usbdev, 0, interfno, j);
+      if (!endp)
+        continue;
 
       if ((endp->endp_addr & 128) && (endp->attrib & 3) == 2
 	  && (in_endp == GRUB_USB_SERIAL_ENDPOINT_LAST_MATCHING

@@ -49,7 +49,8 @@ static grub_usb_controller_dev_t grub_usb_list;
 static grub_usb_device_t
 grub_usb_hub_add_dev (grub_usb_controller_t controller,
                       grub_usb_speed_t speed,
-                      int split_hubport, int split_hubaddr)
+                      int split_hubport, int split_hubaddr,
+                      int root_port, grub_uint32_t route)
 {
   grub_usb_device_t dev;
   int i;
@@ -65,10 +66,22 @@ grub_usb_hub_add_dev (grub_usb_controller_t controller,
   dev->speed = speed;
   dev->split_hubport = split_hubport;
   dev->split_hubaddr = split_hubaddr;
+  dev->root_port = root_port;
+  dev->route = route;
+
+  if (controller->dev->attach_dev
+      && controller->dev->attach_dev (&dev->controller, dev))
+    {
+      grub_free (dev);
+      return NULL;
+    }
 
   err = grub_usb_device_initialize (dev);
   if (err)
     {
+      /* The initializer already freed its partially read configurations. */
+      if (controller->dev->detach_dev)
+        controller->dev->detach_dev (&dev->controller, dev);
       grub_free (dev);
       return NULL;
     }
@@ -84,6 +97,8 @@ grub_usb_hub_add_dev (grub_usb_controller_t controller,
       grub_error (GRUB_ERR_IO, "can't assign address to USB device");
       for (i = 0; i < GRUB_USB_MAX_CONF; i++)
         grub_free (dev->config[i].descconf);
+      if (controller->dev->detach_dev)
+        controller->dev->detach_dev (&dev->controller, dev);
       grub_free (dev);
       return NULL;
     }
@@ -98,6 +113,8 @@ grub_usb_hub_add_dev (grub_usb_controller_t controller,
     {
       for (i = 0; i < GRUB_USB_MAX_CONF; i++)
         grub_free (dev->config[i].descconf);
+      if (controller->dev->detach_dev)
+        controller->dev->detach_dev (&dev->controller, dev);
       grub_free (dev);
       return NULL;
     }
@@ -176,7 +193,9 @@ grub_usb_add_hub (grub_usb_device_t dev)
        i++)
     {
       struct grub_usb_desc_endp *endp = NULL;
-      endp = &dev->config[0].interf[0].descendp[i];
+      endp = grub_usb_get_endpoint (dev, 0, 0, i);
+      if (!endp)
+        continue;
 
       if ((endp->endp_addr & 128) && grub_usb_get_ep_type(endp)
 	  == GRUB_USB_EP_INTERRUPT)
@@ -224,7 +243,7 @@ attach_root_port (struct grub_usb_hub *hub, int portno,
      and full/low speed device connected to OHCI/UHCI needs not
      transaction translation - e.g. hubport and hubaddr should be
      always none (zero) for any device connected to any root hub. */
-  dev = grub_usb_hub_add_dev (hub->controller, speed, 0, 0);
+  dev = grub_usb_hub_add_dev (hub->controller, speed, 0, 0, portno, 0);
   hub->controller->dev->pending_reset = 0;
   npending--;
   if (! dev)
@@ -394,6 +413,7 @@ detach_device (grub_usb_device_t dev)
 {
   unsigned i;
   int k;
+  grub_usb_err_t err;
   if (!dev)
     return;
   if (dev->descdev.class == GRUB_USB_CLASS_HUB)
@@ -404,6 +424,7 @@ detach_device (grub_usb_device_t dev)
       for (i = 0; i < dev->nports; i++)
 	detach_device (dev->children[i]);
       grub_free (dev->children);
+      grub_free (dev->ports);
     }
   for (i = 0; i < ARRAY_SIZE (dev->config); i++)
     if (dev->config[i].descconf)
@@ -413,6 +434,12 @@ detach_device (grub_usb_device_t dev)
 	  if (inter && inter->detach_hook)
 	    inter->detach_hook (dev, i, k);
 	}
+  if (dev->controller.dev->detach_dev)
+    {
+      err = dev->controller.dev->detach_dev (&dev->controller, dev);
+      if (err)
+        grub_dprintf ("usb", "controller failed to detach USB device %p\n", dev);
+    }
   grub_usb_devs[dev->addr] = 0;
 }
 
@@ -602,7 +629,9 @@ poll_nonroot_hub (grub_usb_device_t dev)
 	      int split_hubaddr = 0;
 
 	      /* Determine the device speed.  */
-	      if (status & GRUB_USB_HUB_STATUS_PORT_LOWSPEED)
+              if (dev->speed == GRUB_USB_SPEED_SUPER)
+                speed = GRUB_USB_SPEED_SUPER;
+              else if (status & GRUB_USB_HUB_STATUS_PORT_LOWSPEED)
 		speed = GRUB_USB_SPEED_LOW;
 	      else
 		{
@@ -644,8 +673,10 @@ poll_nonroot_hub (grub_usb_device_t dev)
 		  }
 
 	      /* Add the device and assign a device address to it.  */
-	      next_dev = grub_usb_hub_add_dev (&dev->controller, speed,
-					       split_hubport, split_hubaddr);
+              next_dev = grub_usb_hub_add_dev (&dev->controller, speed,
+                                               split_hubport, split_hubaddr,
+                                               dev->root_port,
+                                               (dev->route << 4) | (i & 0xf));
 	      if (dev->controller.dev->pending_reset)
 		{
 		  dev->controller.dev->pending_reset = 0;

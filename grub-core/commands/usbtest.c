@@ -185,7 +185,9 @@ usb_iterate (grub_usb_device_t dev, void *data __attribute__ ((unused)))
       for (j = 0; j < interf->endpointcnt; j++)
 	{
 	  struct grub_usb_desc_endp *endp;
-	  endp = &dev->config[0].interf[i].descendp[j];
+	  endp = grub_usb_get_endpoint (dev, 0, i, j);
+	  if (!endp)
+	    continue;
 
 	  grub_printf ("Endpoint #%d: %s, max packed size: %d, transfer type: %s, latency: %d\n",
 		       endp->endp_addr & 15,
