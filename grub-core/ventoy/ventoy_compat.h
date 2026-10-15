@@ -18,10 +18,6 @@
 #define GRUB_FILE_TYPE_NO_VLNK 0
 #endif
 
-#ifndef ventoy_filt_register
-#define ventoy_filt_register grub_file_filter_register
-#endif
-
 /* Compatibility aliases for current grub_port implementation names. */
 #ifndef VTOY_OFFSET_OF
 #define VTOY_OFFSET_OF(type, member) OFFSET_OF(type, member)

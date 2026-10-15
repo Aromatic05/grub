@@ -44,6 +44,8 @@ typedef struct ventoy_file_vlnk
 
 static int g_ventoy_root_hook_enable = 0;
 static int g_ventoy_root_hook_reg = 0;
+static grub_env_read_hook_t g_ventoy_root_prev_read;
+static grub_env_write_hook_t g_ventoy_root_prev_write;
 static grub_env_read_hook_t g_ventoy_menu_lang_read_hook;
 static int g_ventoy_iso_nojoliet = 0;
 static grub_vlnk g_vtoy_vlnk;
@@ -542,11 +544,57 @@ ventoy_compat_env_hook_root (int hook)
 {
   g_ventoy_root_hook_enable = hook;
 
-  if (!g_ventoy_root_hook_reg)
+  if (hook && !g_ventoy_root_hook_reg)
     {
+      struct grub_env_var *var;
+      FOR_SORTED_ENV (var)
+        if (grub_strcmp (var->name, "root") == 0)
+          {
+            g_ventoy_root_prev_read = var->read_hook;
+            g_ventoy_root_prev_write = var->write_hook;
+            break;
+          }
       grub_register_variable_hook ("root", 0, ventoy_compat_root_write);
       g_ventoy_root_hook_reg = 1;
     }
+}
+
+void
+ventoy_compat_fini (void)
+{
+  grub_vlnk *vlnk;
+  ventoy_file_vlnk *file_vlnk;
+  struct grub_env_var *var;
+
+  if (g_ventoy_root_hook_reg)
+    {
+      FOR_SORTED_ENV (var)
+        if (grub_strcmp (var->name, "root") == 0)
+          {
+            if (!var->read_hook
+                && var->write_hook == ventoy_compat_root_write)
+              grub_register_variable_hook ("root", g_ventoy_root_prev_read,
+                                           g_ventoy_root_prev_write);
+            break;
+          }
+    }
+  g_ventoy_root_hook_enable = 0;
+  g_ventoy_root_hook_reg = 0;
+  g_ventoy_root_prev_read = NULL;
+  g_ventoy_root_prev_write = NULL;
+  g_ventoy_menu_lang_read_hook = NULL;
+
+  while ((vlnk = g_vlnk_list) != NULL)
+    {
+      g_vlnk_list = vlnk->next;
+      grub_free (vlnk);
+    }
+  while ((file_vlnk = g_file_vlnk_list) != NULL)
+    {
+      g_file_vlnk_list = file_vlnk->next;
+      grub_free (file_vlnk);
+    }
+  grub_memset (&g_vtoy_vlnk, 0, sizeof (g_vtoy_vlnk));
 }
 
 grub_err_t

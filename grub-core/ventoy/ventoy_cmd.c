@@ -6911,7 +6911,8 @@ int ventoy_env_init(void)
         g_conf_replace_new_buf[i] = grub_malloc(vtoy_max_replace_file_size);         
     }
 
-    ventoy_filt_register(0, ventoy_wrapper_open);
+    /* GRUB_FILE_FILTER_VERIFY (slot zero) belongs to the core verifier. */
+    grub_file_filter_register(GRUB_FILE_FILTER_EXTENSION, ventoy_wrapper_open);
 
     g_grub_param = (ventoy_grub_param *)grub_zalloc(sizeof(ventoy_grub_param));
     if (g_grub_param)
@@ -6950,6 +6951,32 @@ int ventoy_env_init(void)
 }
 
 
+
+void ventoy_env_fini(void)
+{
+    int i;
+
+    grub_file_filter_unregister(GRUB_FILE_FILTER_EXTENSION);
+    grub_env_unset("env_param");
+    grub_env_unset("ventoy_env_param");
+    grub_env_unset("vtoy_chain_file_size");
+    grub_env_unset("vtoy_chain_file_read");
+    grub_env_unset("VTOY_VMENU_FUNC_ADDR");
+
+    grub_free(g_grub_param);
+    g_grub_param = NULL;
+    grub_free(g_part_list_buf);
+    g_part_list_buf = NULL;
+    grub_free(g_tree_script_buf);
+    g_tree_script_buf = NULL;
+    grub_free(g_list_script_buf);
+    g_list_script_buf = NULL;
+    for (i = 0; i < VTOY_MAX_CONF_REPLACE; i++)
+    {
+        grub_free(g_conf_replace_new_buf[i]);
+        g_conf_replace_new_buf[i] = NULL;
+    }
+}
 
 static cmd_para ventoy_cmds[] = 
 {

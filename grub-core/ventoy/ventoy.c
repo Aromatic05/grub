@@ -374,6 +374,43 @@ static int ventoy_hwinfo_init(void)
     return 0;
 }
 
+/* Restore pre-existing GRUB variable callbacks when the module unloads. */
+struct ventoy_saved_var_hooks
+{
+    grub_env_read_hook_t read;
+    grub_env_write_hook_t write;
+};
+
+static void ventoy_save_var_hooks(const char *name,
+                                  struct ventoy_saved_var_hooks *saved)
+{
+    struct grub_env_var *var;
+    saved->read = NULL;
+    saved->write = NULL;
+    FOR_SORTED_ENV(var)
+        if (grub_strcmp(var->name, name) == 0)
+        {
+            saved->read = var->read_hook;
+            saved->write = var->write_hook;
+            break;
+        }
+}
+
+static void ventoy_restore_var_hooks(const char *name,
+                                     const struct ventoy_saved_var_hooks *saved,
+                                     grub_env_read_hook_t read,
+                                     grub_env_write_hook_t write)
+{
+    struct grub_env_var *var;
+    FOR_SORTED_ENV(var)
+        if (grub_strcmp(var->name, name) == 0)
+        {
+            if (var->read_hook == read && var->write_hook == write)
+                grub_register_variable_hook(name, saved->read, saved->write);
+            break;
+        }
+}
+
 static global_var_cfg g_global_vars[] = 
 {
     { "gfxmode",            "1024x768",   NULL },
@@ -382,6 +419,9 @@ static global_var_cfg g_global_vars[] =
     { ventoy_color_key,     "#0000ff",    NULL },
     { NULL,                 NULL,         NULL }
 };
+
+static struct ventoy_saved_var_hooks
+    g_global_saved_hooks[ARRAY_SIZE(g_global_vars) - 1];
 
 static const char * ventoy_global_var_read_hook(struct grub_env_var *var, const char *val)
 {
@@ -421,12 +461,26 @@ int ventoy_global_var_init(void)
 
     for (i = 0; g_global_vars[i].name; i++)
     {
+        ventoy_save_var_hooks(g_global_vars[i].name, &g_global_saved_hooks[i]);
         g_global_vars[i].value = grub_strdup(g_global_vars[i].defval);
         ventoy_env_export(g_global_vars[i].name, g_global_vars[i].defval);        
         grub_register_variable_hook(g_global_vars[i].name, ventoy_global_var_read_hook, ventoy_global_var_write_hook);
     }
 
     return 0;
+}
+
+static void ventoy_global_var_fini(void)
+{
+    int i;
+    for (i = 0; g_global_vars[i].name; i++)
+    {
+        ventoy_restore_var_hooks(g_global_vars[i].name, &g_global_saved_hooks[i],
+                                  ventoy_global_var_read_hook,
+                                  ventoy_global_var_write_hook);
+        grub_free(g_global_vars[i].value);
+        g_global_vars[i].value = NULL;
+    }
 }
 
 static ctrl_var_cfg g_ctrl_vars[] = 
@@ -437,6 +491,9 @@ static ctrl_var_cfg g_ctrl_vars[] =
     { "VTOY_SECONDARY_BOOT_MENU", 1 },
     { NULL, 0 }
 };
+
+static struct ventoy_saved_var_hooks
+    g_ctrl_saved_hooks[ARRAY_SIZE(g_ctrl_vars) - 1];
 
 static const char * ventoy_ctrl_var_read_hook(struct grub_env_var *var, const char *val)
 {
@@ -483,11 +540,21 @@ int ventoy_ctrl_var_init(void)
 
     for (i = 0; g_ctrl_vars[i].name; i++)
     {
+        ventoy_save_var_hooks(g_ctrl_vars[i].name, &g_ctrl_saved_hooks[i]);
         ventoy_env_export(g_ctrl_vars[i].name, g_ctrl_vars[i].value ? "1" : "0");
         grub_register_variable_hook(g_ctrl_vars[i].name, ventoy_ctrl_var_read_hook, ventoy_ctrl_var_write_hook);
     }
 
     return 0;
+}
+
+static void ventoy_ctrl_var_fini(void)
+{
+    int i;
+    for (i = 0; g_ctrl_vars[i].name; i++)
+        ventoy_restore_var_hooks(g_ctrl_vars[i].name, &g_ctrl_saved_hooks[i],
+                                  ventoy_ctrl_var_read_hook,
+                                  ventoy_ctrl_var_write_hook);
 }
 
 static grub_command_t ventoy_boot_cmd;
@@ -507,4 +574,8 @@ GRUB_MOD_FINI(ventoy)
 {
     grub_unregister_command (ventoy_boot_cmd);
     ventoy_unregister_all_cmd();
+    ventoy_env_fini();
+    ventoy_compat_fini();
+    ventoy_global_var_fini();
+    ventoy_ctrl_var_fini();
 }

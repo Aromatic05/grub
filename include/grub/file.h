@@ -195,6 +195,8 @@ extern grub_disk_read_hook_t EXPORT_VAR(grub_file_progress_hook);
     GRUB_FILE_FILTER_XZIO,
     GRUB_FILE_FILTER_LZOPIO,
     GRUB_FILE_FILTER_ZSTDIO,
+    /* Optional non-compression wrappers run after the verifier. */
+    GRUB_FILE_FILTER_EXTENSION,
     GRUB_FILE_FILTER_MAX,
     GRUB_FILE_FILTER_COMPRESSION_FIRST = GRUB_FILE_FILTER_GZIO,
     GRUB_FILE_FILTER_COMPRESSION_LAST = GRUB_FILE_FILTER_ZSTDIO,
