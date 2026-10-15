@@ -1834,6 +1834,11 @@ module = {
 };
 
 module = {
+  name = lynxfs;
+  common = fs/lynxfs.c;
+};
+
+module = {
   name = fat;
   common = fs/fat.c;
 };
@@ -1921,6 +1926,16 @@ module = {
 module = {
   name = ntfscomp;
   common = fs/ntfscomp.c;
+};
+
+module = {
+  name = qnx4;
+  common = fs/qnx4.c;
+};
+
+module = {
+  name = qnx6;
+  common = fs/qnx6.c;
 };
 
 module = {
