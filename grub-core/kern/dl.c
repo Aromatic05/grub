@@ -926,6 +926,16 @@ grub_dl_unload (grub_dl_t mod)
       grub_free (dep);
     }
 
+#ifdef GRUB_MACHINE_EFI
+  /* Module sections were made read-only or executable after relocation.
+     Return their pages to writable, non-executable heap memory before
+     freeing them, so a subsequent module load can reuse the allocation. */
+  if (mod->base && mod->sz)
+    grub_update_mem_attrs ((grub_addr_t) mod->base, mod->sz,
+                           GRUB_MEM_ATTR_R | GRUB_MEM_ATTR_W,
+                           GRUB_MEM_ATTR_X);
+#endif
+
 #ifdef GRUB_MACHINE_EMU
   grub_dl_osdep_dl_free (mod->base);
 #else
