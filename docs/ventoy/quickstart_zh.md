@@ -22,7 +22,7 @@ GRUB 的命令行、`grub.cfg` 或任何普通菜单都可以调用它；无需�
 
 ```grub
 ventoy --check (hd0,gpt2)/ISO/winpe.iso
-ventoy --runtime=(hd0,gpt1)/ventoy (hd1,gpt2)/ISO/winpe.iso
+ventoy --runtime=(hd0,gpt1)/ventoy (hd0,gpt2)/ISO/winpe.iso
 
 # 也可以设置默认的运行资源目录
 set ventoy_runtime=(hd0,gpt1)/ventoy
@@ -68,12 +68,17 @@ VENTOY_TEST_KEEP=1 VENTOY_SCREENSHOT=1 VENTOY_CAPTURE_AFTER=155 \
   tests/ventoy_consumer_qemu.sh --direct-boot
 ```
 
+默认部署与回归验证优先采用同一物理磁盘的双分区布局：
+分区 1 存放 Runtime，分区 2 存放 ISO。运行资源与镜像的路径仍分别解析，
+不会在代码中固定磁盘号或分区号。
+
 Windows 客体必须使用合适的 IDE/SATA 设备及可写 QCOW2 覆盖层；
 最初错误地使用 VirtIO 时，虽然 WinPE 桌面可见，但 Windows 内找不到原始
 ISO，`vtoyjump` 挂载失败。上述脚本使用原始 RAW 作为未修改的 backing，
 QEMU 对覆盖层的写入不会影响原始测试盘。
 
-**验收界限**：`--check` 只验证镜像和资源；`--direct-boot` 自动验证
+**验收界限**：`--check` 验证镜像、Runtime、物理磁盘及扇区映射，
+但不代表 Guest 启动成功；`--direct-boot` 自动验证
 GRUB/Chain/EFI 阶段，Windows 桌面及 ISO 挂载仍需要查看实际客体画面和
 `ventoy.log`，QEMU 超时不等于系统启动成功。其他 Windows 发行版 ISO、
 BIOS Windows 单命令、VHD/WIM 独立文件等尚未逐项通过端到端验收。

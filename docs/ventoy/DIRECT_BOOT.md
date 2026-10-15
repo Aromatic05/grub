@@ -48,14 +48,22 @@ other GRUB-visible devices. It can also be explicitly directed to a
 single consistent runtime version:
 
 ```grub
-ventoy --runtime=(hd0,gpt1)/ventoy (hd1,gpt2)/ISO/winpe.iso
+ventoy --runtime=(hd0,gpt1)/ventoy (hd0,gpt2)/ISO/winpe.iso
 # Or configure a default:
 set ventoy_runtime=(hd0,gpt1)/ventoy
-ventoy (hd1,gpt2)/ISO/winpe.iso
+ventoy (hd0,gpt2)/ISO/winpe.iso
 
-# Check image type, readable extents and runtime presence, without booting:
-ventoy --check (hd1,gpt2)/ISO/winpe.iso
+# Check ISO type, physical disk/extent map and runtime files, without booting:
+ventoy --check --runtime=(hd0,gpt1)/ventoy (hd0,gpt2)/ISO/winpe.iso
 ```
+
+The expected deployment is one physical disk with the runtime on partition 1
+and the ISO on partition 2 (as above). Their locations are resolved
+independently, so this default layout is not hardcoded into the command.
+The Chain's disk identity, partition ID and physical extents come from the
+ISO path. The
+`--check` mode verifies the physical disk header and ISO extent map but
+does not verify firmware or guest OS disk discovery.
 
 Linux x64 runtime requires the matching original `ventoy.cpio`,
 `ventoy_x86.cpio`, `ventoy_x64.efi`, and `iso9660_x64.efi` (plus
@@ -66,6 +74,14 @@ Windows x64 runtime requires matching `ventoy_x64.efi`, `udf_x64.efi`,
 Consumer/Jump binaries. Absence or failed reading of the Jump executable
 during a required WIM patch is an explicit error rather than an accepted
 incomplete chain.
+
+When EFI boot requires `isoefi=on`, the GRUB command loads its
+architecture-specific ISO9660/UDF EFI driver from the chosen runtime into
+EFI loader memory for newer Consumers. The validated Windows/WinPE
+`isoefi=` handoff remains unchanged; do not force Linux-only
+`FirstTry` or `isoefi=on` for Windows. The compiled `vtoyjump*.exe`
+files are reused unchanged. New Consumer source modifications require a
+matching compiled EFI binary before new behavior can be considered tested.
 
 ## Verified scenarios and limits
 
