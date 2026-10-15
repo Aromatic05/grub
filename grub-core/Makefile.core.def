@@ -1246,6 +1246,11 @@ module = {
 };
 
 module = {
+  name = fixed_vdi;
+  common = io/fixed_vdi_compat.c;
+};
+
+module = {
   name = map;
   efi = map/efi/map.c;
   common = map/lib/guid.c;
