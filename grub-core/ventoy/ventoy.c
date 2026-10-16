@@ -28,6 +28,7 @@
 #include <grub/term.h>
 #include <grub/partition.h>
 #include <grub/file.h>
+#include <grub/fshelp.h>
 #include <grub/normal.h>
 #include <grub/extcmd.h>
 #include <grub/datetime.h>
@@ -559,11 +560,18 @@ static void ventoy_ctrl_var_fini(void)
 
 static grub_command_t ventoy_boot_cmd;
 
+static int
+ventoy_fshelp_casefold (void)
+{
+    return g_ventoy_case_insensitive;
+}
+
 GRUB_MOD_INIT(ventoy)
 {
     ventoy_hwinfo_init();
     ventoy_env_init();
     ventoy_arch_mode_init();
+    grub_fshelp_register_casefold_hook(ventoy_fshelp_casefold);
     ventoy_register_all_cmd();
     ventoy_boot_cmd = grub_register_command ("ventoy", ventoy_boot_command,
                                            "[--check] [--runtime=DIR] IMAGE.iso",
@@ -572,6 +580,7 @@ GRUB_MOD_INIT(ventoy)
 
 GRUB_MOD_FINI(ventoy)
 {
+    grub_fshelp_unregister_casefold_hook(ventoy_fshelp_casefold);
     grub_unregister_command (ventoy_boot_cmd);
     ventoy_unregister_all_cmd();
     ventoy_linux_fini();

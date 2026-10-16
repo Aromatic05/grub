@@ -44,6 +44,15 @@ typedef int (*grub_fshelp_iterate_dir_hook_t) (const char *filename,
 					       grub_fshelp_node_t node,
 					       void *data);
 
+/* Optional policy for callers that need case-folding on filesystems which
+   normally compare names exactly. The registering module owns the callback
+   and must unregister it before unloading. */
+typedef int (*grub_fshelp_casefold_hook_t) (void);
+void EXPORT_FUNC(grub_fshelp_register_casefold_hook)
+  (grub_fshelp_casefold_hook_t hook);
+void EXPORT_FUNC(grub_fshelp_unregister_casefold_hook)
+  (grub_fshelp_casefold_hook_t hook);
+
 /* Lookup the node PATH.  The node ROOTNODE describes the root of the
    directory tree.  The node found is returned in FOUNDNODE, which is
    either a ROOTNODE or a new malloc'ed node.  ITERATE_DIR is used to

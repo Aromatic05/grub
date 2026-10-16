@@ -117,12 +117,32 @@ struct grub_fshelp_find_file_iter_ctx
   enum grub_fshelp_filetype *foundtype;
 };
 
+static grub_fshelp_casefold_hook_t grub_fshelp_casefold_hook;
+
+void
+grub_fshelp_register_casefold_hook (grub_fshelp_casefold_hook_t hook)
+{
+  grub_fshelp_casefold_hook = hook;
+}
+
+void
+grub_fshelp_unregister_casefold_hook (grub_fshelp_casefold_hook_t hook)
+{
+  if (grub_fshelp_casefold_hook == hook)
+    grub_fshelp_casefold_hook = 0;
+}
+
 /* Helper for grub_fshelp_find_file.  */
 static int
 find_file_iter (const char *filename, enum grub_fshelp_filetype filetype,
 		grub_fshelp_node_t node, void *data)
 {
   struct grub_fshelp_find_file_iter_ctx *ctx = data;
+
+  if (filetype != GRUB_FSHELP_UNKNOWN && grub_fshelp_casefold_hook
+      && grub_fshelp_casefold_hook ())
+    filetype = (enum grub_fshelp_filetype)
+      (filetype | GRUB_FSHELP_CASE_INSENSITIVE);
 
   if (filetype == GRUB_FSHELP_UNKNOWN ||
       ((filetype & GRUB_FSHELP_CASE_INSENSITIVE)
