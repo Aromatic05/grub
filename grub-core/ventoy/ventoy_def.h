@@ -1265,6 +1265,8 @@ int ventoy_gzip_compress(void *mem_in, int mem_in_len, void *mem_out, int mem_ou
 int ventoy_load_part_table(const char *diskname);
 int ventoy_env_init(void);
 void ventoy_env_fini(void);
+int ventoy_set_sb_policy(void);
+const char *ventoy_sb_policy_name(void);
 void ventoy_linux_fini(void);
 void ventoy_compat_fini(void);
 int ventoy_register_all_cmd(void);

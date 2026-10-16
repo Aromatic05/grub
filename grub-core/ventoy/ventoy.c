@@ -45,12 +45,99 @@
 #endif
 #include <grub/ventoy.h>
 #include "ventoy_def.h"
+#include "ventoy_compat.h"
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
 int g_ventoy_debug = 0;
 static int g_efi_os = 0xFF;
 grub_uint32_t g_ventoy_plat_data;
+
+/* The optional Ventoy Shim protocol is a Ventoy-local EFI integration, not
+   a modification of GRUB's ordinary Secure Boot image verification. */
+#ifdef GRUB_MACHINE_EFI
+typedef struct ventoy_shim_policy
+{
+    void (__grub_efi_api *ByPassSB)(void);
+    void (__grub_efi_api *CheckSB)(void);
+    void (__grub_efi_api *Launched)(void);
+} ventoy_shim_policy;
+
+static ventoy_shim_policy *g_ventoy_shim;
+#endif
+static int g_ventoy_system_sb;
+static int g_ventoy_sb_policy;
+static int g_ventoy_sb_policy_applied;
+
+const char *
+ventoy_sb_policy_name(void)
+{
+    if (g_ventoy_sb_policy == 0)
+        return "ByPass";
+    if (g_ventoy_sb_policy == 1)
+        return "Check";
+    return "XXX";
+}
+
+int
+ventoy_set_sb_policy(void)
+{
+    const char *policy;
+
+    if (!g_ventoy_system_sb || g_ventoy_sb_policy_applied)
+        return 0;
+
+    g_ventoy_sb_policy_applied = 1;
+    policy = grub_env_get("VTOY_SECURE_BOOT_POLICY");
+    if (policy)
+        g_ventoy_sb_policy = (grub_uint8_t) (policy[0] - '0');
+
+#ifdef GRUB_MACHINE_EFI
+    if (g_ventoy_shim)
+    {
+        if (g_ventoy_sb_policy == 0 && g_ventoy_shim->ByPassSB)
+            g_ventoy_shim->ByPassSB();
+        else if (g_ventoy_sb_policy == 1 && g_ventoy_shim->CheckSB)
+            g_ventoy_shim->CheckSB();
+    }
+#endif
+    return 0;
+}
+
+#ifdef GRUB_MACHINE_EFI
+static void
+ventoy_secure_boot_init(void)
+{
+    static const grub_guid_t shim_guid =
+        { 0x90a29d14, 0x3968, 0x48fe,
+          { 0x85, 0x81, 0x6b, 0x7f, 0x7d, 0xc4, 0x70, 0x55 } };
+    grub_guid_t global = GRUB_EFI_GLOBAL_VARIABLE_GUID;
+    grub_uint8_t *setup_mode = NULL;
+    grub_size_t size = 0;
+
+    g_ventoy_shim = NULL;
+    g_ventoy_system_sb = ventoy_compat_efi_secureboot_enabled();
+    if (!g_ventoy_system_sb)
+        return;
+
+    if (grub_efi_get_variable("SetupMode", &global, &size,
+                              (void **) &setup_mode) == GRUB_EFI_SUCCESS
+        && size == 1 && setup_mode && *setup_mode == 1)
+        g_ventoy_system_sb = 0;
+    grub_free(setup_mode);
+
+    /* Upstream's Shim protocol is published only on the x86_64 EFI path. */
+    if (g_ventoy_system_sb && g_ventoy_plat_data == VTOY_PLAT_X86_64_UEFI)
+    {
+        g_ventoy_shim = grub_efi_locate_protocol((grub_guid_t *) &shim_guid, NULL);
+        if (g_ventoy_shim && g_ventoy_shim->Launched
+            && g_ventoy_shim->ByPassSB && g_ventoy_shim->CheckSB)
+            g_ventoy_shim->Launched();
+        else
+            g_ventoy_shim = NULL;
+    }
+}
+#endif
 
 void ventoy_debug(const char *fmt, ...)
 {
@@ -591,6 +678,9 @@ GRUB_MOD_INIT(ventoy)
     ventoy_hwinfo_init();
     ventoy_env_init();
     ventoy_arch_mode_init();
+#ifdef GRUB_MACHINE_EFI
+    ventoy_secure_boot_init();
+#endif
     grub_fshelp_register_casefold_hook(ventoy_fshelp_casefold);
     grub_hashsum_register_result_hook(ventoy_hashsum_result);
     ventoy_register_all_cmd();
@@ -601,6 +691,12 @@ GRUB_MOD_INIT(ventoy)
 
 GRUB_MOD_FINI(ventoy)
 {
+#ifdef GRUB_MACHINE_EFI
+    g_ventoy_shim = NULL;
+#endif
+    g_ventoy_system_sb = 0;
+    g_ventoy_sb_policy = 0;
+    g_ventoy_sb_policy_applied = 0;
     grub_hashsum_unregister_result_hook(ventoy_hashsum_result);
     grub_fshelp_unregister_casefold_hook(ventoy_fshelp_casefold);
     grub_unregister_command (ventoy_boot_cmd);

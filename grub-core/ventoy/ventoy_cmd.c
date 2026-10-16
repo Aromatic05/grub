@@ -4808,6 +4808,40 @@ static grub_err_t ventoy_cmd_check_secureboot_var(grub_extcmd_context_t ctxt, in
 }
 #endif
 
+static grub_err_t
+ventoy_cmd_update_sb_policy(grub_extcmd_context_t ctxt, int argc, char **args)
+{
+    (void)ctxt;
+    (void)argc;
+    (void)args;
+    return ventoy_set_sb_policy();
+}
+
+static grub_err_t
+ventoy_cmd_sb_info(grub_extcmd_context_t ctxt, int argc, char **args)
+{
+    (void)ctxt;
+    (void)argc;
+    (void)args;
+#ifdef GRUB_MACHINE_EFI
+    grub_guid_t security =
+        { 0xa46423e3, 0x4617, 0x49f1,
+          { 0xb9, 0xff, 0xd1, 0xbf, 0xa9, 0x11, 0x58, 0x39 } };
+    grub_guid_t security2 =
+        { 0x94ab2f58, 0x1438, 0x4ef1,
+          { 0x91, 0x52, 0x18, 0x94, 0x1a, 0x3a, 0x0e, 0x68 } };
+    grub_printf("UEFI Security           %s\n",
+                grub_efi_locate_protocol(&security, NULL) ? "Yes" : "No");
+    grub_printf("UEFI Security2          %s\n",
+                grub_efi_locate_protocol(&security2, NULL) ? "Yes" : "No");
+    grub_printf("Ventoy Secure Policy    %s\n", ventoy_sb_policy_name());
+#else
+    grub_printf("Non EFI mode!\n");
+#endif
+    grub_refresh();
+    return GRUB_ERR_NONE;
+}
+
 static grub_err_t ventoy_cmd_img_check_range(grub_extcmd_context_t ctxt, int argc, char **args)
 {
     int i;
@@ -7172,6 +7206,8 @@ static cmd_para ventoy_cmds[] =
     { "vt_need_secondary_menu", ventoy_cmd_need_secondary_menu, 0, NULL, "", "", NULL },
     { "vt_show_secondary_menu", ventoy_cmd_show_secondary_menu, 0, NULL, "", "", NULL },
     { "vt_fs_ignore_case", ventoy_cmd_fs_ignore_case, 0, NULL, "", "", NULL },
+    { "vt_sbinfo", ventoy_cmd_sb_info, 0, NULL, "", "", NULL },
+    { "vt_update_sb_policy", ventoy_cmd_update_sb_policy, 0, NULL, "", "", NULL },
     { "vt_systemd_menu", ventoy_cmd_linux_systemd_menu, 0, NULL, "", "", NULL },
     { "vt_limine_menu", ventoy_cmd_linux_limine_menu, 0, NULL, "", "", NULL },
     { "vt_secondary_recover_mode", ventoy_cmd_secondary_recover_mode, 0, NULL, "", "", NULL },
