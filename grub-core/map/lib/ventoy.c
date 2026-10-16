@@ -116,6 +116,7 @@ ventoy_get_disk_guid (const char *filename, grub_uint8_t *guid,
     *pos2 = 0;
 
   disk = grub_disk_open(pos);
+  grub_free(device_name);
   if (disk)
   {
     grub_disk_read(disk, 0, 0x180, 16, guid);
@@ -126,7 +127,6 @@ ventoy_get_disk_guid (const char *filename, grub_uint8_t *guid,
   {
     return 1;
   }
-  grub_free(device_name);
   return 0;
 }
 
@@ -210,11 +210,14 @@ grub_ventoy_fill_osparam (grub_file_t file, ventoy_os_param *param)
   grub_disk_t disk;
   const grub_packed_guid_t vtguid = VENTOY_GUID;
 
+  /* This is a complete protocol record, including reserved fields and
+     checksum. The callers use stack storage, not a zeroed allocation. */
+  grub_memset (param, 0, sizeof (*param));
   disk = file->device->disk;
   grub_memcpy(&param->guid, &vtguid, sizeof(grub_packed_guid_t));
 
   param->vtoy_disk_size = disk->total_sectors * (1 << disk->log_sector_size);
-  param->vtoy_disk_part_id = disk->partition->number + 1;
+  param->vtoy_disk_part_id = disk->partition ? disk->partition->number + 1 : 0;
   param->vtoy_disk_part_type = ventoy_get_fs_type(file->fs->name);
 
   pos = grub_strstr (file->name, "/");
@@ -258,7 +261,11 @@ grub_ventoy_set_acpi_osparam (const char *filename)
 
   file = grub_file_open (filename, GRUB_FILE_TYPE_GET_SIZE);
   if (!file || !file->device || !file->device->disk)
-    return;
+    {
+      if (file)
+        grub_file_close (file);
+      return;
+    }
   grub_ventoy_fill_osparam (file, &param);
 
   if (file->device->disk->partition)
@@ -364,7 +371,7 @@ grub_ventoy_set_osparam (const char *filename)
   ventoy_os_param param;
   grub_file_t file = 0;
   file = grub_file_open (filename, GRUB_FILE_TYPE_GET_SIZE);
-  if (!file)
+  if (!file || !file->device || !file->device->disk)
     goto fail;
   grub_ventoy_fill_osparam (file, &param);
 #ifdef GRUB_MACHINE_EFI
