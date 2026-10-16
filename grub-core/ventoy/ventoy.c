@@ -574,6 +574,7 @@ GRUB_MOD_FINI(ventoy)
 {
     grub_unregister_command (ventoy_boot_cmd);
     ventoy_unregister_all_cmd();
+    ventoy_linux_fini();
     ventoy_env_fini();
     ventoy_compat_fini();
     ventoy_global_var_fini();

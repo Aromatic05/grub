@@ -1081,6 +1081,7 @@ static grub_err_t ventoy_cmd_load_wimboot(grub_extcmd_context_t ctxt, int argc, 
     g_wimiso_size = 0;
     grub_check_free(g_wimiso_path);
     grub_check_free(g_wimiso_chunk_list.chunk);
+    grub_memset(&g_wimiso_chunk_list, 0, sizeof(g_wimiso_chunk_list));
 
     file = grub_file_open(args[0], VENTOY_FILE_TYPE);
     if (!file)
@@ -1092,6 +1093,7 @@ static grub_err_t ventoy_cmd_load_wimboot(grub_extcmd_context_t ctxt, int argc, 
     g_wimiso_chunk_list.chunk = grub_malloc(sizeof(ventoy_img_chunk) * DEFAULT_CHUNK_NUM);
     if (NULL == g_wimiso_chunk_list.chunk)
     {
+        grub_file_close(file);
         return grub_error(GRUB_ERR_OUT_OF_MEMORY, "Can't allocate image chunk memoty\n");
     }
     
@@ -2645,14 +2647,10 @@ static int ventoy_set_default_menu(void)
     return 0;
 }
 
-static grub_err_t ventoy_cmd_clear_img(grub_extcmd_context_t ctxt, int argc, char **args)
+static void ventoy_clear_img_list(void)
 {
     img_info *next = NULL;
     img_info *cur = g_ventoy_img_list;
-
-    (void)ctxt;
-    (void)argc;
-    (void)args;
 
     while (cur)
     {
@@ -2663,7 +2661,15 @@ static grub_err_t ventoy_cmd_clear_img(grub_extcmd_context_t ctxt, int argc, cha
     
     g_ventoy_img_list = NULL;
     g_ventoy_img_count = 0;
-    
+}
+
+static grub_err_t ventoy_cmd_clear_img(grub_extcmd_context_t ctxt, int argc, char **args)
+{
+    (void)ctxt;
+    (void)argc;
+    (void)args;
+
+    ventoy_clear_img_list();
     VENTOY_CMD_RETURN(GRUB_ERR_NONE);
 }
 
@@ -3475,6 +3481,7 @@ static grub_err_t ventoy_cmd_img_sector(grub_extcmd_context_t ctxt, int argc, ch
 {
     int rc;
     int fs_type;
+    grub_err_t err;
     grub_file_t file;
     grub_disk_addr_t start;
     char errmsg[128];
@@ -3492,20 +3499,18 @@ static grub_err_t ventoy_cmd_img_sector(grub_extcmd_context_t ctxt, int argc, ch
     grub_memset(g_conf_replace_node, 0, sizeof(g_conf_replace_node ));
     grub_memset(g_conf_replace_offset, 0, sizeof(g_conf_replace_offset ));
     
-    if (g_img_chunk_list.chunk)
-    {
-        grub_free(g_img_chunk_list.chunk);
-    }
+    grub_free(g_img_chunk_list.chunk);
+    grub_memset(&g_img_chunk_list, 0, sizeof(g_img_chunk_list));
 
     fs_type = ventoy_get_fs_type(file->fs->name);
     if (fs_type >= ventoy_fs_max)
     {
+        err = grub_error(GRUB_ERR_BAD_ARGUMENT, "Unsupported filesystem %s\n", file->fs->name);
         grub_file_close(file);
-        return grub_error(GRUB_ERR_BAD_ARGUMENT, "Unsupported filesystem %s\n", file->fs->name); 
+        return err;
     }
     
     /* get image chunk data */
-    grub_memset(&g_img_chunk_list, 0, sizeof(g_img_chunk_list));
     g_img_chunk_list.chunk = grub_malloc(sizeof(ventoy_img_chunk) * DEFAULT_CHUNK_NUM);
     if (NULL == g_img_chunk_list.chunk)
     {
@@ -5133,6 +5138,7 @@ int ventoy_load_part_table(const char *diskname)
     grub_disk_t disk;
     grub_device_t dev;
     
+    grub_free(g_ventoy_part_info);
     g_ventoy_part_info = grub_zalloc(sizeof(ventoy_gpt_info));
     if (!g_ventoy_part_info)
     {
@@ -6959,6 +6965,7 @@ int ventoy_env_init(void)
 void ventoy_env_fini(void)
 {
     int i;
+    ventoy_vlnk_part *part;
 
     grub_file_filter_unregister(GRUB_FILE_FILTER_EXTENSION);
     grub_env_unset("env_param");
@@ -6966,6 +6973,31 @@ void ventoy_env_fini(void)
     grub_env_unset("vtoy_chain_file_size");
     grub_env_unset("vtoy_chain_file_read");
     grub_env_unset("VTOY_VMENU_FUNC_ADDR");
+
+    /* Runtime buffers have unique Ventoy ownership. Previously they
+       were freed only when their corresponding command ran again. */
+    ventoy_clear_img_list();
+    grub_free(g_img_chunk_list.chunk);
+    grub_memset(&g_img_chunk_list, 0, sizeof(g_img_chunk_list));
+    grub_free(g_wimiso_chunk_list.chunk);
+    grub_memset(&g_wimiso_chunk_list, 0, sizeof(g_wimiso_chunk_list));
+    grub_free(g_wimiso_path);
+    g_wimiso_path = NULL;
+    g_wimiso_size = 0;
+    g_wimboot_enable = 0;
+    grub_free(g_ventoy_part_info);
+    g_ventoy_part_info = NULL;
+    grub_free(g_video_mode_list);
+    g_video_mode_list = NULL;
+    g_video_mode_max = 0;
+    g_video_mode_num = 0;
+    while ((part = g_vlnk_part_list) != NULL)
+    {
+        g_vlnk_part_list = part->next;
+        if (part->dev)
+            grub_device_close(part->dev);
+        grub_free(part);
+    }
 
     grub_free(g_grub_param);
     g_grub_param = NULL;

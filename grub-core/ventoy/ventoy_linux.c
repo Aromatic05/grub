@@ -92,14 +92,10 @@ static initrd_info * ventoy_find_initrd_by_name(initrd_info *list, const char *n
     return NULL;
 }
 
-grub_err_t ventoy_cmd_clear_initrd_list(grub_extcmd_context_t ctxt, int argc, char **args)
+static void ventoy_clear_initrd_list(void)
 {
     initrd_info *node = g_initrd_img_list;
     initrd_info *next;
-    
-    (void)ctxt;
-    (void)argc;
-    (void)args;
 
     while (node)
     {
@@ -112,7 +108,26 @@ grub_err_t ventoy_cmd_clear_initrd_list(grub_extcmd_context_t ctxt, int argc, ch
     g_initrd_img_tail = NULL;
     g_initrd_img_count = 0;
     g_valid_initrd_count = 0;
+}
 
+void ventoy_linux_fini(void)
+{
+    ventoy_clear_initrd_list();
+    grub_free(g_ventoy_cpio_buf);
+    g_ventoy_cpio_buf = NULL;
+    g_ventoy_cpio_size = 0;
+    /* Both are views into the CPIO allocation, not separate owners. */
+    g_ventoy_initrd_head = NULL;
+    g_ventoy_runtime_buf = NULL;
+}
+
+grub_err_t ventoy_cmd_clear_initrd_list(grub_extcmd_context_t ctxt, int argc, char **args)
+{
+    (void)ctxt;
+    (void)argc;
+    (void)args;
+
+    ventoy_clear_initrd_list();
     VENTOY_CMD_RETURN(GRUB_ERR_NONE);
 }
 
