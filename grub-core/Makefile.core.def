@@ -1343,6 +1343,7 @@ module = {
   common = ventoy/ventoy_vhd.c;
   common = ventoy/ventoy_miniz.c;
   common = ventoy/ventoy_linux.c;
+  common = ventoy/ventoy_linux_opts.c;
   common = ventoy/ventoy_unix.c;
   common = ventoy/ventoy_windows.c;
   common = ventoy/ventoy_wimpatch.c;

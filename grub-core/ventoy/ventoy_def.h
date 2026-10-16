@@ -1268,6 +1268,8 @@ void ventoy_env_fini(void);
 int ventoy_set_sb_policy(void);
 const char *ventoy_sb_policy_name(void);
 void ventoy_linux_fini(void);
+void ventoy_linux_opts_init(void);
+void ventoy_linux_opts_fini(void);
 void ventoy_compat_fini(void);
 int ventoy_register_all_cmd(void);
 int ventoy_unregister_all_cmd(void);

@@ -217,7 +217,7 @@ grub_linux_load64 (grub_elf_t elf, const char *filename,
 }
 
 static grub_err_t
-grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
+grub_cmd_linux_unmodified (grub_command_t cmd __attribute__ ((unused)),
 		int argc, char *argv[])
 {
   grub_elf_t elf = 0;
@@ -413,6 +413,22 @@ grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
   grub_dl_ref (my_mod);
 
   return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_cmd_linux (grub_command_t cmd, int argc, char *argv[])
+{
+  int effective_argc;
+  char **effective_argv;
+  grub_err_t err;
+
+  err = grub_linux_prepare_args (GRUB_LINUX_ARG_KERNEL, argc, argv,
+                                 &effective_argc, &effective_argv);
+  if (err)
+    return err;
+  err = grub_cmd_linux_unmodified (cmd, effective_argc, effective_argv);
+  grub_linux_release_args (argv, effective_argc, effective_argv);
+  return err;
 }
 
 static grub_err_t

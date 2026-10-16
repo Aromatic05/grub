@@ -554,20 +554,30 @@ fallback:
 
   grub_dprintf ("linux", "kernel @ %p\n", kernel_addr);
 
-  cmdline_size = grub_loader_cmdline_size (argc, argv) + sizeof (LINUX_IMAGE);
-  linux_args = grub_malloc (cmdline_size);
-  if (!linux_args)
-    {
-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+  {
+    int effective_argc;
+    char **effective_argv;
+    err = grub_linux_prepare_args (GRUB_LINUX_ARG_KERNEL, argc, argv,
+                                   &effective_argc, &effective_argv);
+    if (err)
       goto fail;
-    }
-  grub_memcpy (linux_args, LINUX_IMAGE, sizeof (LINUX_IMAGE));
-  err = grub_create_loader_cmdline (argc, argv,
-				    linux_args + sizeof (LINUX_IMAGE) - 1,
-				    cmdline_size,
-				    GRUB_VERIFY_KERNEL_CMDLINE);
-  if (err)
-    goto fail;
+    cmdline_size = grub_loader_cmdline_size (effective_argc, effective_argv)
+                   + sizeof (LINUX_IMAGE);
+    linux_args = grub_malloc (cmdline_size);
+    if (!linux_args)
+      err = grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+    else
+      {
+        grub_memcpy (linux_args, LINUX_IMAGE, sizeof (LINUX_IMAGE));
+        err = grub_create_loader_cmdline (effective_argc, effective_argv,
+                                          linux_args + sizeof (LINUX_IMAGE) - 1,
+                                          cmdline_size,
+                                          GRUB_VERIFY_KERNEL_CMDLINE);
+      }
+    grub_linux_release_args (argv, effective_argc, effective_argv);
+    if (err)
+      goto fail;
+  }
 
   if (grub_errno == GRUB_ERR_NONE)
     {

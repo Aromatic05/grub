@@ -1025,12 +1025,18 @@ grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
   grub_memcpy (linux_cmdline, LINUX_IMAGE, sizeof (LINUX_IMAGE));
   {
     grub_err_t err;
-    err = grub_create_loader_cmdline (argc, argv,
-				      linux_cmdline
-				      + sizeof (LINUX_IMAGE) - 1,
-				      maximal_cmdline_size
-				      - (sizeof (LINUX_IMAGE) - 1),
-				      GRUB_VERIFY_KERNEL_CMDLINE);
+    int effective_argc;
+    char **effective_argv;
+    err = grub_linux_prepare_args (GRUB_LINUX_ARG_KERNEL, argc, argv,
+                                   &effective_argc, &effective_argv);
+    if (err == GRUB_ERR_NONE)
+      err = grub_create_loader_cmdline (effective_argc, effective_argv,
+                                        linux_cmdline
+                                        + sizeof (LINUX_IMAGE) - 1,
+                                        maximal_cmdline_size
+                                        - (sizeof (LINUX_IMAGE) - 1),
+                                        GRUB_VERIFY_KERNEL_CMDLINE);
+    grub_linux_release_args (argv, effective_argc, effective_argv);
     if (err)
       goto fail;
   }

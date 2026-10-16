@@ -683,6 +683,7 @@ GRUB_MOD_INIT(ventoy)
 #endif
     grub_fshelp_register_casefold_hook(ventoy_fshelp_casefold);
     grub_hashsum_register_result_hook(ventoy_hashsum_result);
+    ventoy_linux_opts_init();
     ventoy_register_all_cmd();
     ventoy_boot_cmd = grub_register_command ("ventoy", ventoy_boot_command,
                                            "[--check] [--runtime=DIR] IMAGE.iso",
@@ -691,6 +692,7 @@ GRUB_MOD_INIT(ventoy)
 
 GRUB_MOD_FINI(ventoy)
 {
+    ventoy_linux_opts_fini();
 #ifdef GRUB_MACHINE_EFI
     g_ventoy_shim = NULL;
 #endif

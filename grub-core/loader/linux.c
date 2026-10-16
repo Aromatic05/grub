@@ -6,6 +6,45 @@
 #include <grub/mm.h>
 #include <grub/safemath.h>
 
+static grub_linux_args_hook_t linux_args_hook;
+static grub_linux_args_free_hook_t linux_args_free_hook;
+
+void
+grub_linux_register_args_hook (grub_linux_args_hook_t hook,
+                               grub_linux_args_free_hook_t release)
+{
+  linux_args_hook = hook;
+  linux_args_free_hook = release;
+}
+
+void
+grub_linux_unregister_args_hook (grub_linux_args_hook_t hook)
+{
+  if (linux_args_hook == hook)
+    {
+      linux_args_hook = 0;
+      linux_args_free_hook = 0;
+    }
+}
+
+grub_err_t
+grub_linux_prepare_args (enum grub_linux_arg_stage stage, int argc,
+                         char *argv[], int *out_argc, char ***out_argv)
+{
+  *out_argc = argc;
+  *out_argv = argv;
+  if (linux_args_hook)
+    return linux_args_hook (stage, argc, argv, out_argc, out_argv);
+  return GRUB_ERR_NONE;
+}
+
+void
+grub_linux_release_args (char *original_argv[], int argc, char **argv)
+{
+  if (argv != original_argv && linux_args_free_hook)
+    linux_args_free_hook (argc, argv);
+}
+
 struct newc_head
 {
   char magic[6];
@@ -162,9 +201,9 @@ insert_dir (const char *name, struct dir **root,
   return GRUB_ERR_NONE;
 }
 
-grub_err_t
-grub_initrd_init (int argc, char *argv[],
-		  struct grub_linux_initrd_context *initrd_ctx)
+static grub_err_t
+grub_initrd_init_internal (int argc, char *argv[],
+                           struct grub_linux_initrd_context *initrd_ctx)
 {
   int i;
   int newc = 0;
@@ -259,6 +298,22 @@ grub_initrd_init (int argc, char *argv[],
   free_dir (root);
   grub_initrd_close (initrd_ctx);
   return grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
+}
+
+grub_err_t
+grub_initrd_init (int argc, char *argv[],
+                  struct grub_linux_initrd_context *initrd_ctx)
+{
+  int effective_argc;
+  char **effective_argv;
+  grub_err_t err;
+
+  err = grub_linux_prepare_args (GRUB_LINUX_ARG_INITRD, argc, argv,
+                                 &effective_argc, &effective_argv);
+  if (err == GRUB_ERR_NONE)
+    err = grub_initrd_init_internal (effective_argc, effective_argv, initrd_ctx);
+  grub_linux_release_args (argv, effective_argc, effective_argv);
+  return err;
 }
 
 grub_size_t
