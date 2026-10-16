@@ -1,0 +1,17 @@
+include:
+  - local: '.gitlab-ci/yml/global.yml'
+  - local: '.gitlab-ci/yml/matrix.yml'
+
+stages:
+  - bootstrap
+  - build
+
+bootstrap:
+  stage: bootstrap
+  extends: .bootstrap
+
+build:
+  stage: build
+  extends:
+    - .build-windows
+    - .target-platform-windows-matrix

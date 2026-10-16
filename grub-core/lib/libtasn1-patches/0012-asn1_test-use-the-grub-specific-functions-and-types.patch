@@ -1,4 +1,4 @@
-From 392da24a8a4b2ab94a93e9e0f74db027a3a9374d Mon Sep 17 00:00:00 2001
+From 7da83378e13e3980dca374a8fd5626cb8e1e3743 Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Fri, 16 Aug 2024 15:46:59 +0800
 Subject: [PATCH 12/13] asn1_test: use the grub-specific functions and types
@@ -27,10 +27,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  6 files changed, 25 insertions(+), 25 deletions(-)
 
 diff --git a/grub-core/tests/asn1/tests/Test_overflow.c b/grub-core/tests/asn1/tests/Test_overflow.c
-index ffac8507a..65843abf6 100644
+index 74efea1..6080155 100644
 --- a/grub-core/tests/asn1/tests/Test_overflow.c
 +++ b/grub-core/tests/asn1/tests/Test_overflow.c
-@@ -43,9 +43,9 @@ test_overflow (void)
+@@ -45,9 +45,9 @@ test_overflow (void)
  
    /* Test that values larger than int but smaller than long are
       rejected.  This limitation was introduced with libtasn1 2.12. */
@@ -43,10 +43,10 @@ index ffac8507a..65843abf6 100644
        int der_len;
        long l;
 diff --git a/grub-core/tests/asn1/tests/Test_simple.c b/grub-core/tests/asn1/tests/Test_simple.c
-index dc70db191..19613cae8 100644
+index 6075108..c0e5c50 100644
 --- a/grub-core/tests/asn1/tests/Test_simple.c
 +++ b/grub-core/tests/asn1/tests/Test_simple.c
-@@ -81,7 +81,7 @@ test_simple (void)
+@@ -83,7 +83,7 @@ test_simple (void)
    int der_len = sizeof (der);
    int str_size = sizeof (str);
    int ret_len, bit_len;
@@ -55,7 +55,7 @@ index dc70db191..19613cae8 100644
  
    {
      unsigned int etype = 38;
-@@ -127,7 +127,7 @@ test_simple (void)
+@@ -129,7 +129,7 @@ test_simple (void)
        }
  #endif
  
@@ -64,7 +64,7 @@ index dc70db191..19613cae8 100644
  	{
  	  grub_printf ("asn1_bit_der iter %lu\n", (unsigned long) i);
  	  return 1;
-@@ -155,12 +155,12 @@ test_simple (void)
+@@ -157,12 +157,12 @@ test_simple (void)
  
    /* 03 04 06 6e 5d c0  DER encoding */
  
@@ -79,7 +79,7 @@ index dc70db191..19613cae8 100644
      {
        grub_printf ("asn1_get_bit_der example\n");
        return 1;
-@@ -168,7 +168,7 @@ test_simple (void)
+@@ -170,7 +170,7 @@ test_simple (void)
  
    der_len = sizeof (der);
    asn1_bit_der (str, bit_len, der, &der_len);
@@ -88,7 +88,7 @@ index dc70db191..19613cae8 100644
      {
        grub_printf ("asn1_bit_der example roundtrip\n");
        return 1;
-@@ -176,12 +176,12 @@ test_simple (void)
+@@ -178,12 +178,12 @@ test_simple (void)
  
    /* 03 04 06 6e 5d e0 padded with "100000" */
  
@@ -103,7 +103,7 @@ index dc70db191..19613cae8 100644
      {
        grub_printf ("asn1_get_bit_der example padded\n");
        return 1;
-@@ -189,7 +189,7 @@ test_simple (void)
+@@ -191,7 +191,7 @@ test_simple (void)
  
    der_len = sizeof (der);
    asn1_bit_der (str, bit_len, der, &der_len);
@@ -112,7 +112,7 @@ index dc70db191..19613cae8 100644
      {
        grub_printf ("asn1_bit_der example roundtrip\n");
        return 1;
-@@ -197,13 +197,13 @@ test_simple (void)
+@@ -199,13 +199,13 @@ test_simple (void)
  
    /* 03 81 04 06 6e 5d c0 long form of length octets */
  
@@ -128,7 +128,7 @@ index dc70db191..19613cae8 100644
      {
        grub_printf ("asn1_get_bit_der example long form\n");
        return 1;
-@@ -211,7 +211,7 @@ test_simple (void)
+@@ -213,7 +213,7 @@ test_simple (void)
  
    der_len = sizeof (der);
    asn1_bit_der (str, bit_len, der, &der_len);
@@ -138,10 +138,10 @@ index dc70db191..19613cae8 100644
        grub_printf ("asn1_bit_der example roundtrip\n");
        return 1;
 diff --git a/grub-core/tests/asn1/tests/Test_strings.c b/grub-core/tests/asn1/tests/Test_strings.c
-index 65c30937f..c7c1afa1b 100644
+index aaf0435..832cba2 100644
 --- a/grub-core/tests/asn1/tests/Test_strings.c
 +++ b/grub-core/tests/asn1/tests/Test_strings.c
-@@ -94,7 +94,7 @@ test_strings (void)
+@@ -96,7 +96,7 @@ test_strings (void)
  	}
        der_len = tl_len + tv[i].str_len;
  
@@ -150,7 +150,7 @@ index 65c30937f..c7c1afa1b 100644
  	{
  	  grub_printf ("DER encoding differs in %u! (size: %u, expected: %u)\n", i, der_len, tv[i].der_len);
  	  return 1;
-@@ -110,7 +110,7 @@ test_strings (void)
+@@ -112,7 +112,7 @@ test_strings (void)
  	  return 1;
  	}
  
@@ -159,7 +159,7 @@ index 65c30937f..c7c1afa1b 100644
  	{
  	  grub_printf ("DER decoded data differ in %u! (size: %u, expected: %u)\n", i, der_len, tv[i].str_len);
  	  return 1;
-@@ -130,12 +130,12 @@ test_strings (void)
+@@ -132,12 +132,12 @@ test_strings (void)
  	  return 1;
  	}
  
@@ -175,10 +175,10 @@ index 65c30937f..c7c1afa1b 100644
  
  
 diff --git a/grub-core/tests/asn1/tests/object-id-decoding.c b/grub-core/tests/asn1/tests/object-id-decoding.c
-index c087b46e3..91af8cde5 100644
+index 5da5800..095a85b 100644
 --- a/grub-core/tests/asn1/tests/object-id-decoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-decoding.c
-@@ -74,7 +74,7 @@ test_object_id_decoding (void)
+@@ -76,7 +76,7 @@ test_object_id_decoding (void)
  {
    char str[128];
    int ret, ret_len;
@@ -187,7 +187,7 @@ index c087b46e3..91af8cde5 100644
  
    for (i = 0; i < sizeof (tv) / sizeof (tv[0]); i++)
      {
-@@ -100,7 +100,7 @@ test_object_id_decoding (void)
+@@ -102,7 +102,7 @@ test_object_id_decoding (void)
  	  return 1;
  	}
  
@@ -197,10 +197,10 @@ index c087b46e3..91af8cde5 100644
  	  grub_printf ("%d: strcmp iter %lu: got invalid OID: %s, expected: %s\n",
  		       __LINE__, (unsigned long) i, str, tv[i].oid);
 diff --git a/grub-core/tests/asn1/tests/object-id-encoding.c b/grub-core/tests/asn1/tests/object-id-encoding.c
-index e3da092cc..f8f98ff17 100644
+index a12f1d2..4a5e669 100644
 --- a/grub-core/tests/asn1/tests/object-id-encoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-encoding.c
-@@ -104,7 +104,7 @@ test_object_id_encoding (void)
+@@ -106,7 +106,7 @@ test_object_id_encoding (void)
  	  return 1;
  	}
  
@@ -210,10 +210,10 @@ index e3da092cc..f8f98ff17 100644
  	  grub_printf ("%d: iter %lu, re-encoding of OID %s resulted to different string (%d vs %d bytes)\n",
  		   __LINE__, (unsigned long) i, tv[i].oid, der_len, tv[i].der_len);
 diff --git a/grub-core/tests/asn1/tests/octet-string.c b/grub-core/tests/asn1/tests/octet-string.c
-index d3a35dff8..dcf0fb808 100644
+index ce15d7a..64c963b 100644
 --- a/grub-core/tests/asn1/tests/octet-string.c
 +++ b/grub-core/tests/asn1/tests/octet-string.c
-@@ -116,7 +116,7 @@ test_octet_string (void)
+@@ -118,7 +118,7 @@ test_octet_string (void)
    int str_size = sizeof (str);
    unsigned char *tmp = NULL;
    int ret, ret_len, j;
@@ -222,7 +222,7 @@ index d3a35dff8..dcf0fb808 100644
  
    for (i = 0; i < sizeof (tv) / sizeof (tv[0]); i++)
      {
-@@ -146,7 +146,7 @@ test_octet_string (void)
+@@ -148,7 +148,7 @@ test_octet_string (void)
  	    }
  
  	  if (str_size != tv[i].len
@@ -231,7 +231,7 @@ index d3a35dff8..dcf0fb808 100644
  	    {
  	      grub_printf ("%d: memcmp: %s: got invalid decoding\n",
  			   __LINE__, tv[i].name);
-@@ -167,7 +167,7 @@ test_octet_string (void)
+@@ -169,7 +169,7 @@ test_octet_string (void)
  	  asn1_octet_der (str, str_size, der, &der_len);
  
  	  if (der_len != tv[i].der_len - 1
@@ -240,7 +240,7 @@ index d3a35dff8..dcf0fb808 100644
  	    {
  	      grub_printf ("encoding: %s: got invalid encoding\n", tv[i].name);
  	      return 1;
-@@ -196,7 +196,7 @@ test_octet_string (void)
+@@ -198,7 +198,7 @@ test_octet_string (void)
  	  return 1;
  	}
  
@@ -249,7 +249,7 @@ index d3a35dff8..dcf0fb808 100644
  	{
  	  grub_printf ("%d: memcmp: %s: got invalid decoding\n", __LINE__, tv[i].name);
  	  grub_printf ("\nGot:\t\t");
-@@ -209,7 +209,7 @@ test_octet_string (void)
+@@ -211,7 +211,7 @@ test_octet_string (void)
  	  grub_printf ("\n");
  	  return 1;
  	}

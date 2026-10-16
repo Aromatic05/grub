@@ -10,6 +10,7 @@ transform_data = {
   installdir = noinst;
   name = genmod.sh;
   common = genmod.sh.in;
+  i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
 };
 
 transform_data = {
@@ -41,6 +42,19 @@ transform_data = {
   installdir = platform;
   name = bootinfo.txt;
   common = boot/powerpc/bootinfo.txt.in;
+  enable = powerpc_ieee1275;
+};
+
+transform_data = {
+  installdir = noinst;
+  name = tests/mldsa/generate_testdata.sh;
+  common = tests/mldsa/generate_testdata.sh.in;
+};
+
+data = {
+  common = sbat.csv;
+  installdir = platform;
+  enable = efi;
   enable = powerpc_ieee1275;
 };
 
@@ -82,27 +96,27 @@ kernel = {
   riscv64_efi_stripflags   = '--strip-unneeded -K start -R .note -R .comment -R .note.gnu.gold-version -R .eh_frame';
 
   i386_pc_ldflags          = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags          = '-Wl,-Ttext,0x9000';
+  i386_pc_ldflags          = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x9000';
   i386_qemu_ldflags        = '$(TARGET_IMG_LDFLAGS)';
-  i386_qemu_ldflags        = '$(TARGET_IMG_BASE_LDOPT),0x9000';
+  i386_qemu_ldflags        = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x9000';
   i386_coreboot_ldflags    = '$(TARGET_IMG_LDFLAGS)';
-  i386_coreboot_ldflags    = '$(TARGET_IMG_BASE_LDOPT),0x9000';
+  i386_coreboot_ldflags    = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x9000';
   i386_multiboot_ldflags   = '$(TARGET_IMG_LDFLAGS)';
-  i386_multiboot_ldflags   = '-Wl,-Ttext,0x9000';
+  i386_multiboot_ldflags   = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x9000';
   i386_ieee1275_ldflags    = '$(TARGET_IMG_LDFLAGS)';
-  i386_ieee1275_ldflags    = '$(TARGET_IMG_BASE_LDOPT),0x10000';
+  i386_ieee1275_ldflags    = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x10000';
   i386_xen_ldflags         = '$(TARGET_IMG_LDFLAGS)';
-  i386_xen_ldflags         = '$(TARGET_IMG_BASE_LDOPT),0';
+  i386_xen_ldflags         = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0';
   x86_64_xen_ldflags       = '$(TARGET_IMG_LDFLAGS)';
   x86_64_xen_ldflags       = '$(TARGET_IMG_BASE_LDOPT),0';
   i386_xen_pvh_ldflags     = '$(TARGET_IMG_LDFLAGS)';
-  i386_xen_pvh_ldflags     = '$(TARGET_IMG_BASE_LDOPT),0x100000';
+  i386_xen_pvh_ldflags     = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x100000';
 
-  mips_loongson_ldflags    = '-Wl,-Ttext,0x80200000';
-  powerpc_ieee1275_ldflags = '-Wl,-Ttext,0x200000';
-  sparc64_ieee1275_ldflags = '-Wl,-Ttext,0x4400';
-  mips_arc_ldflags    = '-Wl,-Ttext,$(TARGET_LINK_ADDR)';
-  mips_qemu_mips_ldflags    = '-Wl,-Ttext,0x80200000';
+  mips_loongson_ldflags    = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x80200000';
+  powerpc_ieee1275_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x200000';
+  sparc64_ieee1275_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x4400';
+  mips_arc_ldflags         = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)$(TARGET_LINK_ADDR)';
+  mips_qemu_mips_ldflags   = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x80200000';
 
   mips_arc_cppflags = '-DGRUB_DECOMPRESSOR_LINK_ADDR=$(TARGET_DECOMPRESSOR_LINK_ADDR)';
   i386_qemu_cppflags     = '-DGRUB_BOOT_MACHINE_LINK_ADDR=$(GRUB_BOOT_MACHINE_LINK_ADDR)';
@@ -456,10 +470,10 @@ image = {
   sparc64_ieee1275 = boot/sparc64/ieee1275/boot.S;
 
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x7C00';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x7C00';
 
   i386_qemu_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_qemu_ldflags = '$(TARGET_IMG_BASE_LDOPT),$(GRUB_BOOT_MACHINE_LINK_ADDR)';
+  i386_qemu_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)$(GRUB_BOOT_MACHINE_LINK_ADDR)';
   i386_qemu_ccasflags = '-DGRUB_BOOT_MACHINE_LINK_ADDR=$(GRUB_BOOT_MACHINE_LINK_ADDR)';
 
   /* The entry point for a.out binaries on sparc64 starts
@@ -484,7 +498,7 @@ image = {
   cppflags = '-DHYBRID_BOOT=1';
   
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x7C00';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x7C00';
 
   objcopyflags = '-O binary';
   enable = i386_pc;
@@ -495,7 +509,7 @@ image = {
 
   i386_pc = boot/i386/pc/cdboot.S;
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x7C00';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x7C00';
 
   sparc64_ieee1275 = boot/sparc64/ieee1275/boot.S;
 
@@ -515,7 +529,7 @@ image = {
   i386_pc = boot/i386/pc/pxeboot.S;
 
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x7C00';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x7C00';
 
   objcopyflags = '-O binary';
   enable = i386_pc;
@@ -526,7 +540,7 @@ image = {
   i386_pc = boot/i386/pc/diskboot.S;
 
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x8000';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x8000';
 
   sparc64_ieee1275 = boot/sparc64/ieee1275/diskboot.S;
   sparc64_ieee1275_ldflags = '-Wl,-Ttext=0x4200';
@@ -542,7 +556,7 @@ image = {
   i386_pc = boot/i386/pc/lnxboot.S;
 
   i386_pc_ldflags = '$(TARGET_IMG_LDFLAGS)';
-  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT),0x6000';
+  i386_pc_ldflags = '$(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x6000';
 
   objcopyflags = '-O binary';
   enable = i386_pc;
@@ -584,7 +598,7 @@ image = {
   i386_pc_nodist = rs_decoder.h;
 
   objcopyflags = '-O binary';
-  ldflags = '$(TARGET_IMG_LDFLAGS) -Wl,-Ttext,0x8200';
+  ldflags = '$(TARGET_IMG_LDFLAGS) $(TARGET_IMG_BASE_LDOPT)$(TARGET_IMG_BASE_LDOPT_ARG_SEP)0x8200';
   enable = i386_pc;
 };
 
@@ -929,6 +943,12 @@ module = {
 };
 
 module = {
+  name = efibootnext;
+  efi = commands/efi/efibootnext.c;
+  enable = efi;
+};
+
+module = {
   name = efitextmode;
   efi = commands/efi/efitextmode.c;
   enable = efi;
@@ -937,6 +957,18 @@ module = {
 module = {
   name = alias;
   common = commands/alias.c;
+};
+
+module = {
+  name = lsefivar;
+  efi = commands/efi/lsefivar.c;
+  enable = efi;
+};
+
+module = {
+  name = connectefi;
+  efi = commands/efi/connectefi.c;
+  enable = efi;
 };
 
 module = {
@@ -1125,14 +1157,16 @@ module = {
   common = commands/appendedsig/appendedsig.c;
   common = commands/appendedsig/x509.c;
   common = commands/appendedsig/pkcs7.c;
-  common = commands/appendedsig/asn1util.c;
+  common = commands/appendedsig/util.c;
+  common = commands/appendedsig/asn1_util.c;
   common = commands/appendedsig/gnutls_asn1_tab.c;
   common = commands/appendedsig/pkix_asn1_tab.c;
+  common = commands/appendedsig/pk.c;
   enable = emu;
   enable = powerpc_ieee1275;
   cflags = '$(CFLAGS_GCRY) -Wno-redundant-decls';
   cppflags = '$(CPPFLAGS_GCRY) -I$(srcdir)/lib/libtasn1-grub';
-  depends = crypto, gcry_rsa, gcry_sha256, gcry_sha512, mpi, asn1;
+  depends = crypto, gcry_pubkey_dilithium, gcry_rsa, gcry_sha256, gcry_sha512, mpi, asn1;
 };
 
 module = {
@@ -1366,6 +1400,11 @@ module = {
 };
 
 module = {
+  name = mfa;
+  common = commands/mfa.c;
+};
+
+module = {
   name = minicmd;
   common = commands/minicmd.c;
 };
@@ -1378,6 +1417,11 @@ module = {
 module = {
   name = password;
   common = commands/password.c;
+};
+
+module = {
+  name = password_argon2;
+  common = commands/password_argon2.c;
 };
 
 module = {
@@ -1703,6 +1747,12 @@ module = {
 module = {
   name = ahci;
   common = disk/ahci.c;
+  enable = pci;
+};
+
+module = {
+  name = nvme;
+  common = disk/nvme.c;
   enable = pci;
 };
 
@@ -2041,6 +2091,18 @@ module = {
 };
 
 module = {
+  name = virtionet;
+  common = net/drivers/virtio/virtionet.c;
+  enable = i386_coreboot;
+  enable = i386_qemu;
+  enable = i386_multiboot;
+  enable = i386_ieee1275;
+  enable = i386_pc;
+  enable = i386_efi;
+  enable = x86_64_efi;
+};
+
+module = {
   name = gettext;
   common = gettext/gettext.c;
 };
@@ -2265,7 +2327,9 @@ module = {
 module = {
   name = xen_boot;
   arm64 = loader/arm64/xen_boot.c;
+  x86_64_efi = loader/arm64/xen_boot.c;
   enable = arm64;
+  enable = x86_64_efi;
 };
 
 module = {
@@ -2526,6 +2590,8 @@ module = {
   common = term/serial.c;
   x86 = term/ns8250.c;
   x86 = term/ns8250-spcr.c;
+  arm = term/pl011.c;
+  arm64 = term/pl011.c;
   ieee1275 = term/ieee1275/serial.c;
   mips_arc = term/arc/serial.c;
   efi = term/efi/serial.c;
@@ -2587,6 +2653,11 @@ module = {
 };
 
 module = {
+  name = memmove_bench;
+  common = commands/memmove_bench.c;
+};
+
+module = {
   name = functional_test;
   common = tests/lib/functional_test.c;
   common = tests/lib/test.c;
@@ -2623,6 +2694,17 @@ module = {
   name = rsa_sexp_test;
   common = tests/rsa_sexp_test.c;
 
+  cflags = '$(CFLAGS_GCRY) -Wno-redundant-decls';
+  cppflags = '$(CPPFLAGS_GCRY)';
+};
+
+module = {
+  name = mldsa_test;
+  common = tests/mldsa/mldsa_test.c;
+  common = tests/mldsa/testdata/messages.h;
+  common = tests/mldsa/testdata/contexts.h;
+  common = tests/mldsa/testdata/pubkeys.h;
+  common = tests/mldsa/testdata/signatures.h;
   cflags = '$(CFLAGS_GCRY) -Wno-redundant-decls';
   cppflags = '$(CPPFLAGS_GCRY)';
 };
@@ -2747,13 +2829,6 @@ module = {
   name = efi_gop;
   efi = video/efi_gop.c;
   enable = efi;
-};
-
-module = {
-  name = efi_uga;
-  efi = video/efi_uga.c;
-  enable = i386_efi;
-  enable = x86_64_efi;
 };
 
 module = {
@@ -3021,6 +3096,7 @@ module = {
   common = lib/libgcrypt-grub/mpi/mpih-mul1.c;
   common = lib/libgcrypt-grub/mpi/mpih-mul2.c;
   common = lib/libgcrypt-grub/mpi/mpih-mul3.c;
+  common = lib/libgcrypt-grub/mpi/mpih-pow.c;
   common = lib/libgcrypt-grub/mpi/mpih-add1.c;
   common = lib/libgcrypt-grub/mpi/mpih-sub1.c;
   common = lib/libgcrypt-grub/mpi/mpih-div.c;
@@ -3040,10 +3116,13 @@ module = {
 module = {
   name = pubkey;
   common = lib/libgcrypt-grub/cipher/pubkey-util.c;
+  common = lib/libgcrypt-grub/cipher/dilithium.c;
   common = lib/libgcrypt-grub/cipher/rsa-common.c;
   common = lib/libgcrypt-grub/cipher/dsa-common.c;
   common = lib/libgcrypt-grub/src/sexp.c;
   common = lib/b64dec.c;
+  extra_dist = lib/libgcrypt-grub/cipher/dilithium-common.c;
+  extra_dist = lib/libgcrypt-grub/cipher/dilithium-dep.c;
 
   cflags = '$(CFLAGS_GCRY) -Wno-redundant-decls';
   cppflags = '$(CPPFLAGS_GCRY)';
@@ -3077,11 +3156,21 @@ module = {
 };
 
 module = {
+  name = tpm_record_pcrs;
+  common = commands/tpm_record_pcrs.c;
+  cppflags = '-I$(srcdir)/lib/tss2';
+  enable = efi;
+  enable = powerpc_ieee1275;
+  depends = tss2;
+};
+
+module = {
   name = tss2;
   common = lib/tss2/buffer.c;
   common = lib/tss2/tss2_mu.c;
   common = lib/tss2/tpm2_cmd.c;
   common = lib/tss2/tss2.c;
+  common = lib/tss2/tss2_util.c;
   efi = lib/efi/tcg2.c;
   emu = lib/tss2/tcg2_emu.c;
   powerpc_ieee1275 = lib/ieee1275/tcg2.c;
@@ -3102,6 +3191,14 @@ module = {
   enable = emu;
   enable = powerpc_ieee1275;
   cppflags = '-I$(srcdir)/lib/tss2 -I$(srcdir)/lib/libtasn1-grub';
+  depends = tss2;
+};
+
+module = {
+  name = tpcm;
+  common = commands/tpcm.c;
+  efi = commands/efi/tpcm.c;
+  enable = x86_64_efi;
 };
 
 module = {
@@ -3277,6 +3374,8 @@ module = {
   common = tests/asn1/tests/Test_overflow.c;
   common = tests/asn1/tests/Test_simple.c;
   common = tests/asn1/tests/Test_strings.c;
+  common = tests/asn1/tests/coding-long-oid.c;
+  common = tests/asn1/tests/Test_errors.c;
   common = tests/asn1/asn1_test.c;
   cflags = '-Wno-uninitialized';
   cppflags = '-I$(srcdir)/lib/libtasn1-grub -I$(srcdir)/tests/asn1/';

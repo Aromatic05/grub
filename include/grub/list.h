@@ -23,6 +23,7 @@
 #include <grub/symbol.h>
 #include <grub/err.h>
 #include <grub/compiler.h>
+#include <grub/types.h>
 
 struct grub_list
 {
@@ -33,6 +34,7 @@ typedef struct grub_list *grub_list_t;
 
 void EXPORT_FUNC(grub_list_push) (grub_list_t *head, grub_list_t item);
 void EXPORT_FUNC(grub_list_remove) (grub_list_t item);
+grub_size_t EXPORT_FUNC(grub_list_length) (grub_list_t head);
 
 #define FOR_LIST_ELEMENTS(var, list) for ((var) = (list); (var); (var) = (var)->next)
 #define FOR_LIST_ELEMENTS_NEXT(var, list) for ((var) = (var)->next; (var); (var) = (var)->next)

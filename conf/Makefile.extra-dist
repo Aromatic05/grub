@@ -16,7 +16,8 @@ EXTRA_DIST += docs/autoiso.cfg
 EXTRA_DIST += docs/grub.cfg
 EXTRA_DIST += docs/osdetect.cfg
 
-EXTRA_DIST += conf/i386-cygwin-img-ld.sc
+EXTRA_DIST += conf/i386-cygwin-img.lds
+EXTRA_DIST += conf/i386-pc-kernel.lds
 
 EXTRA_DIST += grub-core/Makefile.core.def
 EXTRA_DIST += grub-core/Makefile.gcry.def
@@ -29,6 +30,7 @@ EXTRA_DIST += grub-core/genemuinit.sh
 EXTRA_DIST += grub-core/genemuinitheader.sh
 
 EXTRA_DIST += grub-core/lib/gnulib-patches/fix-width.patch
+EXTRA_DIST += grub-core/lib/gnulib-patches/fix-dropped-const.patch
 EXTRA_DIST += grub-core/lib/gnulib-patches/fix-regcomp-resource-leak.patch
 EXTRA_DIST += grub-core/lib/gnulib-patches/fix-regexec-resource-leak.patch
 EXTRA_DIST += grub-core/lib/gnulib-patches/fix-gcc-15-compile.patch
@@ -42,7 +44,6 @@ EXTRA_DIST += grub-core/lib/libgcrypt-patches/04_aria.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/05_disable_rsa_shake.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/06_blake.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/07_disable_64div.patch
-EXTRA_DIST += grub-core/lib/libgcrypt-patches/08_sexp_leak.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/09-blake2b-hash-buffers.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/10-kdf-use-GPG-errs.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/11-kdf-remove-unsupported-kdfs.patch
@@ -51,6 +52,11 @@ EXTRA_DIST += grub-core/lib/libgcrypt-patches/13_add_hwfeatures.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/14_fix_build_shaext.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/15_build_sha256_x86_64_efi_opt_code.patch
 EXTRA_DIST += grub-core/lib/libgcrypt-patches/16_build_sha512_x86_64_efi_opt_code.patch
+EXTRA_DIST += grub-core/lib/libgcrypt-patches/17_md.patch
+EXTRA_DIST += grub-core/lib/libgcrypt-patches/18_dilithium.patch
+EXTRA_DIST += grub-core/lib/libgcrypt-patches/19_mpi.patch
+EXTRA_DIST += grub-core/lib/libgcrypt-patches/20_sex.patch
+EXTRA_DIST += grub-core/lib/libgcrypt-patches/21_add_mldsa_raw_verify.patch
 
 EXTRA_DIST += grub-core/lib/libtasn1-patches/0001-libtasn1-disable-code-not-needed-in-grub.patch
 EXTRA_DIST += grub-core/lib/libtasn1-patches/0002-libtasn1-replace-strcat-with-strcpy-in-_asn1_str_cat.patch
@@ -65,12 +71,13 @@ EXTRA_DIST += grub-core/lib/libtasn1-patches/0010-asn1_test-remove-verbose-and-t
 EXTRA_DIST += grub-core/lib/libtasn1-patches/0011-asn1_test-print-the-error-messages-with-grub_printf.patch
 EXTRA_DIST += grub-core/lib/libtasn1-patches/0012-asn1_test-use-the-grub-specific-functions-and-types.patch
 EXTRA_DIST += grub-core/lib/libtasn1-patches/0013-asn1_test-enable-the-testcase-only-when-GRUB_LONG_MA.patch
+EXTRA_DIST += grub-core/lib/libtasn1-patches/0014-asn1_test-adapt-the-coding-long-oid-and-Test_errors-.patch
 
 EXTRA_DIST += grub-core/lib/libgcrypt
 EXTRA_DIST += grub-core/lib/libgcrypt-grub/mpi/generic
 EXTRA_DIST += grub-core/lib/libtasn1
 EXTRA_DIST += $(shell find $(top_srcdir)/include -name '*.h')
-EXTRA_DIST += $(shell find $(top_srcdir)/grub-core/lib -name '*.h')
+EXTRA_DIST += $(shell find $(top_srcdir)/grub-core/lib ! -path '*/gnulib/*' -name '*.h')
 EXTRA_DIST += grub-core/efiemu/runtime/config.h
 EXTRA_DIST += grub-core/tests/crypto_cipher_mode_vectors.h
 EXTRA_DIST += grub-core/tests/asn1/asn1_test.h
@@ -79,6 +86,11 @@ EXTRA_DIST += $(shell find $(top_srcdir)/grub-core/commands/tpm2_key_protector -
 EXTRA_DIST += grub-core/commands/tpm2_key_protector/tpm2key.asn
 
 EXTRA_DIST += grub-core/commands/appendedsig/appendedsig.h
+EXTRA_DIST += grub-core/commands/appendedsig/asn1_util.h
+EXTRA_DIST += grub-core/commands/appendedsig/util.h
+EXTRA_DIST += grub-core/commands/appendedsig/x509.h
+EXTRA_DIST += grub-core/commands/appendedsig/pkcs7.h
+EXTRA_DIST += grub-core/commands/appendedsig/pk.h
 
 EXTRA_DIST += grub-core/lib/LzmaDec.c
 
@@ -159,6 +171,7 @@ EXTRA_DIST += po/gettext-patches/0001-Support-POTFILES-shell.patch
 EXTRA_DIST += po/gettext-patches/0002-Handle-gettext_printf-shell-function.patch
 EXTRA_DIST += po/gettext-patches/0003-Make-msgfmt-output-in-little-endian.patch
 EXTRA_DIST += po/gettext-patches/0004-Use-SHELL-rather-than-bin-sh.patch
+EXTRA_DIST += po/gettext-patches/0005-fix-parallel-build.patch
 
 EXTRA_DIST += po/POTFILES-shell.in
 EXTRA_DIST += po/README
@@ -175,6 +188,12 @@ EXTRA_DIST += tests/dfly-mbr-mbexample.dfly.img.gz
 EXTRA_DIST += tests/iso9660_ce_loop2.iso.gz
 EXTRA_DIST += tests/iso9660_ce_loop.iso.gz
 EXTRA_DIST += tests/iso9660_early_ce.iso.gz
+EXTRA_DIST += tests/dhcp_server.py
+EXTRA_DIST += tests/dns_server.py
+EXTRA_DIST += tests/frag_tftp_server.py
+EXTRA_DIST += tests/http_server.py
+EXTRA_DIST += tests/tftp_error_server.py
+EXTRA_DIST += tests/tftp_server.py
 
 EXTRA_DIST += coreboot.cfg
 

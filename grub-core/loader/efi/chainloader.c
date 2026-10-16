@@ -102,18 +102,48 @@ grub_chainloader_debug_load_options (const char *scope,
 		buf);
 }
 
+grub_guid_t loaded_image_device_path_guid =
+    GRUB_EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL_GUID;
+
+struct grub_chainloader_context
+{
+  grub_efi_handle_t image_handle;
+  /*
+   * When non-NULL we overrode the loaded image's device path (because its
+   * loader left it NULL) and own this allocation. The originals are kept so
+   * they can be put back before the image is unloaded -- the image's loader
+   * owns those fields and frees them with the EFI pool allocator.
+   */
+  grub_efi_device_path_t *file_path;
+  grub_efi_device_path_t *saved_file_path;
+  grub_efi_device_path_t *saved_device_path;
+};
+
 static grub_err_t
 grub_chainloader_unload (void *context)
 {
-  grub_efi_handle_t image_handle = (grub_efi_handle_t) context;
+  struct grub_chainloader_context *ctx = context;
+  grub_efi_boot_services_t *b = grub_efi_system_table->boot_services;
   grub_efi_loaded_image_t *loaded_image;
-  grub_efi_boot_services_t *b;
 
-  grub_dprintf ("chain", "chainloader unload image_handle=%p\n", image_handle);
-  b = grub_efi_system_table->boot_services;
-  loaded_image = grub_efi_get_loaded_image (image_handle);
+  grub_dprintf ("chain", "chainloader unload image_handle=%p\n", ctx->image_handle);
+  loaded_image = grub_efi_get_loaded_image (ctx->image_handle);
   if (loaded_image != NULL)
-    grub_free (loaded_image->load_options);
+    {
+      grub_free (loaded_image->load_options);
+
+      if (ctx->file_path != NULL)
+	{
+	  /* Restore what the image's loader expects to free/uninstall. */
+	  loaded_image->file_path = ctx->saved_file_path;
+	  b->reinstall_protocol_interface (ctx->image_handle,
+					   &loaded_image_device_path_guid,
+					   ctx->file_path,
+					   ctx->saved_device_path);
+	}
+    }
+
+  grub_efi_unload_image (ctx->image_handle);
 
   if (chainloader_file_path)
     {
@@ -126,9 +156,8 @@ grub_chainloader_unload (void *context)
       chainloader_address = 0;
       chainloader_pages = 0;
     }
-
-  grub_efi_unload_image (image_handle);
-
+  grub_free (ctx->file_path);
+  grub_free (ctx);
   grub_dl_unref (my_mod);
   return GRUB_ERR_NONE;
 }
@@ -136,7 +165,8 @@ grub_chainloader_unload (void *context)
 static grub_err_t
 grub_chainloader_boot (void *context)
 {
-  grub_efi_handle_t image_handle = (grub_efi_handle_t) context;
+  struct grub_chainloader_context *ctx = context;
+  grub_efi_handle_t image_handle = ctx->image_handle;
   grub_efi_boot_services_t *b;
   grub_efi_status_t status;
   grub_efi_uintn_t exit_data_size;
@@ -964,6 +994,7 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
 	}
       break;
     }
+  struct grub_chainloader_context *ctx = NULL;
 
   if (argc == 0)
     {
@@ -1197,6 +1228,48 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
       grub_chainloader_debug_load_options ("chainloader", loaded_image);
     }
 
+  /*
+   * Set up the loader context. The verifier may have loaded this image with no
+   * device path (see grub-core/kern/efi/sb.c): both loaded_image->file_path and
+   * the LOADED_IMAGE_DEVICE_PATH protocol are left NULL. Images that walk their
+   * own device path then loop forever on it (notably Windows' bootmgfw.efi).
+   * Point both at the path we built, and remember the originals so
+   * grub_chainloader_unload() can put them back.
+   */
+  ctx = grub_zalloc (sizeof (*ctx));
+  if (ctx == NULL)
+    goto fail;
+  ctx->image_handle = image_handle;
+
+  if (file_path != NULL && loaded_image->file_path == NULL)
+    {
+      grub_efi_device_path_t *fp = file_path;
+
+      ctx->file_path = file_path;
+      /* loaded_image->file_path is the file path relative to device_handle. */
+      while (fp != NULL
+	     && (fp->type != GRUB_EFI_MEDIA_DEVICE_PATH_TYPE
+		 || fp->subtype != GRUB_EFI_FILE_PATH_DEVICE_PATH_SUBTYPE))
+	fp = GRUB_EFI_NEXT_DEVICE_PATH (fp);
+      loaded_image->file_path = fp;
+
+      /* The LOADED_IMAGE_DEVICE_PATH protocol carries the full device path. */
+      status = b->handle_protocol (image_handle, &loaded_image_device_path_guid,
+				   (void **) &ctx->saved_device_path);
+      if (status != GRUB_EFI_SUCCESS)
+        {
+          grub_error (GRUB_ERR_BAD_FIRMWARE,
+                "missing protocol for loaded image device path");
+          loaded_image->file_path = NULL;
+          goto fail;
+        }
+      b->reinstall_protocol_interface (image_handle,
+				       &loaded_image_device_path_guid,
+				       ctx->saved_device_path, file_path);
+
+      file_path = NULL;  /* owned by ctx now; freed on unload */
+    }
+
   grub_file_close (file);
   if (fallback_dev_opened && dev)
     grub_device_close (dev);
@@ -1212,11 +1285,11 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
   pages = 0;
   file_path = NULL;
 
-  grub_loader_set_ex (grub_chainloader_boot, grub_chainloader_unload, image_handle, 0);
+  grub_loader_set_ex (grub_chainloader_boot, grub_chainloader_unload, ctx, 0);
   grub_dprintf ("chain", "chainloader setup complete image_handle=%p\n",
 		image_handle);
   if (boot_now)
-    return grub_chainloader_boot (image_handle);
+    return grub_chainloader_boot (ctx);
   return 0;
 
  alt_setup:
@@ -1260,6 +1333,7 @@ grub_cmd_chainloader (grub_command_t cmd __attribute__ ((unused)),
 
   grub_free (cmdline);
   grub_free (file_path);
+  grub_free (ctx);
 
   if (address)
     b->free_pages (address, pages);

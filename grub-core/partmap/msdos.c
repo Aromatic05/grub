@@ -197,8 +197,11 @@ grub_partition_msdos_iterate (grub_disk_t disk,
 		return grub_errno;
 	    }
 	  else if (p.number < 3)
-	    /* If this partition is a logical one, shouldn't increase the
-	       partition number.  */
+	    /* Reserve a partition number for every one of the four primary
+	       slots, whether it is empty, extended or otherwise, so that
+	       logical partitions are always numbered starting from 5.  On the
+	       extended-partition (EBR) passes p.number is already >= 3, so this
+	       cap stops the chained link/empty entries from being counted.  */
 	    p.number++;
 	}
 

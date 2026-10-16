@@ -101,12 +101,12 @@ GRUB is maintained using the @uref{https://git-scm.com/book/en/v2,
 GIT revision control system}.  To fetch:
 
 @example
-git clone git://git.sv.gnu.org/grub.git
+git clone https://gitlab.freedesktop.org/gnu-grub/grub.git
 @end example
 
 Web access is available under
 @example
-http://git.savannah.gnu.org/cgit/grub.git/
+https://gitlab.freedesktop.org/gnu-grub/grub/
 @end example
 
 The branches available are:
@@ -338,18 +338,16 @@ matter to you.
 Contributing changes to GRUB 2 is welcomed activity. However we have a
 bit of control what kind of changes will be accepted to GRUB 2.
 Therefore it is important to discuss your changes on grub-devel mailing list
-(see MailingLists). On this page there are some basic details on the
-development process and activities.
+(see MailingLists) or create a
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/-/work_items, work item}.
 
 First of all you should come up with the idea yourself what you want to
 contribute. If you do not have that beforehand you are advised to study this
 manual and try GRUB 2 out to see what you think is missing from there.
 
-Here are additional pointers:
-@itemize
-@item @uref{https://savannah.gnu.org/task/?group=grub, GRUB's Task Tracker}
-@item @uref{https://savannah.gnu.org/bugs/?group=grub, GRUB's Bug Tracker}
-@end itemize
+Issues (bugs) and tasks, which together are called 'Work items', are listed in
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/-/work_items, GRUB's Work item}
+page.
 
 If you intended to make changes to GRUB Legacy (<=0.97) those are not accepted
 anymore.
@@ -368,8 +366,8 @@ anymore.
 
 For developers it is recommended always to use the newest development version of GRUB 2. If development takes a long period of time, please remember to keep in sync with newest developments regularly so it is much easier to integrate your change in the future. GRUB 2 is being developed in a GIT repository.
 
-Please check Savannah's GRUB project page for details how to get newest git:
-@uref{https://savannah.gnu.org/git/?group=grub, GRUB 2 git Repository}
+Please check Freedesktop's GRUB project page for details how to get newest git:
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/, GRUB 2 git Repository}
 
 @item Compile it and try it out.
 
@@ -462,28 +460,8 @@ and the FSF clerks have dealt with your copyright assignment.
 @section When you are approved for write access to project's files
 
 As you might know, GRUB is hosted on
-@uref{https://savannah.gnu.org/projects/grub, Savannah}, thus the membership
-is managed by Savannah. This means that, if you want to be a member of this
-project:
-
-@enumerate
-@item You need to create your own account on Savannah.
-@item You can submit ``Request for Inclusion'' from ``My Groups'' on Savannah.
-@end enumerate
-
-Then, one of the admins can approve your request, and you will be a member.
-If you don't want to use the Savannah interface to submit a request, you can
-simply notify the admins by email or something else, alternatively. But you
-still need to create an account beforehand.
-
-NOTE: we sometimes receive a ``Request for Inclusion'' from an unknown person.
-In this case, the request would be just discarded, since it is too dangerous
-to allow a stranger to be a member, which automatically gives him a commit
-right to the repository, both for a legal reason and for a technical reason. 
-
-If your intention is to just get started, please do not submit a inclusion
-request. Instead, please subscribe to the mailing list, and communicate first
-(e.g. sending a patch, asking a question, commenting on another message...).
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/, Freedesktop}, thus the membership
+is managed by Freedesktop.
 
 @node Tests
 @chapter Tests
@@ -501,7 +479,7 @@ GRUB is basically a tiny operating system with read support for many file
 systems and which has been ported to a variety of architectures. As such, its
 test suite has quite a few dependencies required to fully run the suite.
 These dependencies are currently documented in the
-@uref{https://git.savannah.gnu.org/cgit/grub.git/tree/INSTALL, INSTALL}
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/-/raw/master/INSTALL, INSTALL}
 file in the source repository. Once installed, the test suite can be started
 by running the @command{make check} command from the GRUB build directory.
 To properly run all the tests, the test suite must be run as the privileged
@@ -724,17 +702,35 @@ To upgrade to a new version of the libtasn1 library, download the release
 tarball and copy the files into the target directory:
 
 @example
-curl -L -O https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.19.0.tar.gz
-tar xvzf libtasn1-4.19.0.tar.gz
+curl -L -O https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.21.0.tar.gz
+tar xvzf libtasn1-4.21.0.tar.gz
 rm -rf grub-core/lib/libtasn1
 mkdir -p grub-core/lib/libtasn1/lib
 mkdir -p grub-core/lib/libtasn1/tests
-cp libtasn1-4.19.0/@{README.md,COPYING@} grub-core/lib/libtasn1
-cp libtasn1-4.19.0/lib/@{coding.c,decoding.c,element.c,element.h,errors.c,gstr.c,gstr.h,int.h,parser_aux.c,parser_aux.h,structure.c,structure.h@} grub-core/lib/libtasn1/lib
-cp libtasn1-4.19.0/lib/includes/libtasn1.h grub-core/lib/libtasn1
-cp libtasn1-4.19.0/tests/@{CVE-2018-1000654-1_asn1_tab.h,CVE-2018-1000654-2_asn1_tab.h,CVE-2018-1000654.c,object-id-decoding.c,object-id-encoding.c,octet-string.c,reproducers.c,Test_overflow.c,Test_simple.c,Test_strings.c@} grub-core/lib/libtasn1/tests
-rm -rf libtasn1-4.19.0*
+cp libtasn1-4.21.0/@{README.md,COPYING,COPYING.LESSERv2@} grub-core/lib/libtasn1
+cp libtasn1-4.21.0/lib/@{coding.c,decoding.c,element.c,element.h,errors.c,gstr.c,gstr.h,int.h,parser_aux.c,parser_aux.h,structure.c,structure.h@} grub-core/lib/libtasn1/lib
+cp libtasn1-4.21.0/lib/includes/libtasn1.h grub-core/lib/libtasn1
+cp libtasn1-4.21.0/tests/@{CVE-2018-1000654-1_asn1_tab.h,CVE-2018-1000654-2_asn1_tab.h,CVE-2018-1000654.c,object-id-decoding.c,object-id-encoding.c,octet-string.c,reproducers.c,Test_overflow.c,Test_simple.c,Test_strings.c@} grub-core/lib/libtasn1/tests
+cp libtasn1-4.21.0/tests/@{coding-long-oid.c,Test_errors.c@} grub-core/lib/libtasn1/tests
 @end example
+
+@file{coding-long-oid.c} loads its ASN.1 definitions from the @file{pkix.asn}
+schema at run time. GRUB runs the tests inside a module with no filesystem, so
+the schema is pre-compiled into a @file{_asn1_tab.h} table with the
+@command{asn1Parser} tool built from the same tarball, and committed alongside
+the tests:
+
+@example
+(cd libtasn1-4.21.0 && ./configure && make)
+libtasn1-4.21.0/src/asn1Parser libtasn1-4.21.0/tests/pkix.asn -o grub-core/lib/libtasn1/tests/pkix_asn1_tab.h
+rm -rf libtasn1-4.21.0*
+@end example
+
+The @command{asn1Parser} step derives the table array name from the module name
+in the schema (@code{pkix_asn1_tab}). Only the libtasn1 tests that exercise the
+decoder are imported: GRUB builds libtasn1 without the DER encoder (see the
+@file{libtasn1-patches/}), so the upstream tests that write ASN.1 (for example
+@file{setof.c} and @file{Test_encoding.c}) cannot run here.
 
 After upgrading the library, it may be necessary to apply the patches in
 @file{grub-core/lib/libtasn1-patches/} to adjust the code to be compatible with
@@ -952,7 +948,7 @@ overwritten at the breakpoint and will put them back when the breakpoint
 is hit. If GRUB is being run for the first time in QEMU, the firmware will
 be loading the GRUB image into memory where every byte is already set to 0.
 This means that if a breakpoint is set before GRUB is loaded, GDB will save
-the 0-byte(s) where the the special instruction will go. Then when the firmware
+the 0-byte(s) where the special instruction will go. Then when the firmware
 loads the GRUB image and because it is unaware of the debugger, it will
 write the GRUB image to memory, overwriting anything that was there previously ---
 notably in this case the instruction that implements the software breakpoint.

@@ -34,6 +34,7 @@
 
 #include <tss2_buffer.h>
 #include <tss2_mu.h>
+#include <tss2_util.h>
 #include <tcg2.h>
 #include <tpm2_args.h>
 #include <tpm2.h>
@@ -407,8 +408,6 @@ protect_tpm2_get_policy_digest (protect_args_t *args, TPM2B_DIGEST_t *digest)
       },
     }
   };
-  TPML_PCR_SELECTION_t pcr_sel_out = {0};
-  TPML_DIGEST_t pcr_values = {0};
   TPM2B_DIGEST_t pcr_digest = {0};
   grub_size_t pcr_digest_len;
   TPM2B_MAX_BUFFER_t pcr_concat = {0};
@@ -419,46 +418,24 @@ protect_tpm2_get_policy_digest (protect_args_t *args, TPM2B_DIGEST_t *digest)
   TPMT_SYM_DEF_t symmetric = {0};
   TPMI_SH_AUTH_SESSION_t session = 0;
   TPM2B_DIGEST_t policy_digest = {0};
+  grub_uint32_t pcr_bitmask = 0;
+  TPM2B_DIGEST_t pcr_vals[TPM_MAX_PCRS];
   grub_uint8_t i;
+  grub_uint8_t sel_byte;
+  grub_uint8_t sel_bit;
   grub_err_t err;
 
-  /* PCR Read */
+  /* Build PCR selection bitmask */
   for (i = 0; i < args->tpm2_pcr_count; i++)
-    TPMS_PCR_SELECTION_SelectPCR (&pcr_sel.pcrSelections[0], args->tpm2_pcrs[i]);
-
-  rc = grub_tpm2_pcr_read (NULL, &pcr_sel, NULL, &pcr_sel_out, &pcr_values, NULL);
-  if (rc != TPM_RC_SUCCESS)
     {
-      fprintf (stderr, "Failed to read PCRs (TPM2_PCR_Read: 0x%x).\n", rc);
-      return GRUB_ERR_BAD_DEVICE;
-    }
-
-  if ((pcr_sel_out.count != pcr_sel.count) ||
-       (pcr_sel.pcrSelections[0].sizeOfSelect !=
-	pcr_sel_out.pcrSelections[0].sizeOfSelect))
-    {
-      fprintf (stderr, N_("Could not read all the specified PCRs.\n"));
-      return GRUB_ERR_BAD_DEVICE;
+      TPMS_PCR_SELECTION_SelectPCR (&pcr_sel.pcrSelections[0], args->tpm2_pcrs[i]);
+      pcr_bitmask |= 1u << args->tpm2_pcrs[i];
     }
 
   /* Compute PCR Digest */
-  switch (args->tpm2_bank)
-    {
-    case TPM_ALG_SHA1:
-      pcr_digest_len = TPM_SHA1_DIGEST_SIZE;
-      break;
-    case TPM_ALG_SHA256:
-      pcr_digest_len = TPM_SHA256_DIGEST_SIZE;
-      break;
-    case TPM_ALG_SHA384:
-      pcr_digest_len = TPM_SHA384_DIGEST_SIZE;
-      break;
-    case TPM_ALG_SHA512:
-      pcr_digest_len = TPM_SHA512_DIGEST_SIZE;
-      break;
-    default:
-      return GRUB_ERR_BAD_ARGUMENT;
-    }
+  err = grub_tss2_hash_id_to_digest_size (args->tpm2_bank, &pcr_digest_len);
+  if (err != GRUB_ERR_NONE)
+    return err;
 
   pcr_concat_len = pcr_digest_len * args->tpm2_pcr_count;
   if (pcr_concat_len > TPM_MAX_DIGEST_BUFFER)
@@ -467,18 +444,24 @@ protect_tpm2_get_policy_digest (protect_args_t *args, TPM2B_DIGEST_t *digest)
       return GRUB_ERR_OUT_OF_RANGE;
     }
 
-  pcr_cursor = pcr_concat.buffer;
-  for (i = 0; i < args->tpm2_pcr_count; i++)
+  /* Read all selected PCRs. */
+  err = grub_tss2_read_pcrs (pcr_bitmask, args->tpm2_bank, pcr_vals);
+  if (err != GRUB_ERR_NONE)
     {
-      if (pcr_values.digests[i].size != pcr_digest_len)
-	{
-	  fprintf (stderr,
-		   N_("Bad PCR value size: expected %llu bytes but got %u bytes.\n"),
-		   (long long unsigned int)pcr_digest_len, pcr_values.digests[i].size);
-	  return GRUB_ERR_BAD_ARGUMENT;
-	}
+      fprintf (stderr, N_("Failed to read PCRs.\n"));
+      return err;
+    }
 
-      grub_memcpy (pcr_cursor, pcr_values.digests[i].buffer, pcr_digest_len);
+  pcr_cursor = pcr_concat.buffer;
+  for (i = 0; i < TPM_MAX_PCRS; i++)
+    {
+      sel_byte = i / 8;
+      sel_bit = 1u << (i % 8);
+
+      if (!(pcr_sel.pcrSelections[0].pcrSelect[sel_byte] & sel_bit))
+	continue;
+
+      grub_memcpy (pcr_cursor, pcr_vals[i].buffer, pcr_digest_len);
       pcr_cursor += pcr_digest_len;
     }
   pcr_concat.size = pcr_concat_len;
@@ -998,7 +981,7 @@ protect_tpm2_add (protect_args_t *args)
 {
   grub_err_t err;
   grub_uint8_t *key = NULL;
-  grub_size_t key_size;
+  grub_size_t key_size = 0;
   TPM_HANDLE_t srk;
   TPM2B_DIGEST_t policy_digest;
   void *out_buf = NULL;
@@ -1447,7 +1430,7 @@ protect_argp_parser (int key, char *arg, struct argp_state *state)
 	  return EINVAL;
 	}
 
-      err = grub_tpm2_protector_parse_bank (arg, &args->tpm2_bank);
+      err = grub_tss2_hash_name_to_id (arg, &args->tpm2_bank);
       if (err != GRUB_ERR_NONE)
 	{
 	  if (grub_errno != GRUB_ERR_NONE)

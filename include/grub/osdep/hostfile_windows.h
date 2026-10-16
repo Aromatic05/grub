@@ -77,6 +77,16 @@ enum grub_util_fd_open_flags_t
 
 #endif
 
+#ifdef __CYGWIN__
+#include <unistd.h>
+
+static inline ssize_t
+grub_util_readlink (const char *name, char *buf, size_t bufsize)
+{
+  return readlink(name, buf, bufsize);
+}
+#endif
+
 LPTSTR
 grub_util_utf8_to_tchar (const char *in);
 char *

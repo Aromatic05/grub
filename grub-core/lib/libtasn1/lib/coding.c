@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2002-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,11 +14,11 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
+#include <config.h>
 
 /*****************************************************/
 /* File: coding.c                                    */
@@ -26,14 +26,12 @@
 /*   an ASN1 type.                                   */
 /*****************************************************/
 
-#include <int.h>
+#include "int.h"
 #include "parser_aux.h"
-#include <gstr.h>
+#include "gstr.h"
 #include "element.h"
 #include "minmax.h"
-#include <structure.h>
-
-#define MAX_TAG_LEN 16
+#include "structure.h"
 
 /******************************************************/
 /* Function : _asn1_error_description_value_not_found */
@@ -253,7 +251,7 @@ asn1_encode_simple_der (unsigned int etype, const unsigned char *str,
 /*   der: string returned.                            */
 /*   der_len: number of meaningful bytes of DER       */
 /*            (der[0]..der[ans_len-1]). Initially it  */
-/*            if must store the lenght of DER.        */
+/*            if must store the length of DER.        */
 /* Return:                                            */
 /*   ASN1_MEM_ERROR when DER isn't big enough         */
 /*   ASN1_SUCCESS otherwise                           */
@@ -351,7 +349,7 @@ encode_val (uint64_t val, unsigned char *der, int max_len, int *der_len)
 /*            must store the length of DER.           */
 /* Return:                                            */
 /*   ASN1_MEM_ERROR when DER isn't big enough         */
-/*   ASN1_SUCCESS if succesful                        */
+/*   ASN1_SUCCESS if successful                       */
 /*   or an error value.                               */
 /******************************************************/
 static int
@@ -447,7 +445,7 @@ int
 asn1_object_id_der (const char *str, unsigned char *der, int *der_len,
 		    unsigned flags)
 {
-  unsigned char tag_der[MAX_TAG_LEN];
+  unsigned char tag_der[ASN1_MAX_TAG_SIZE];
   int tag_len = 0, r;
   int max_len = *der_len;
 
@@ -671,7 +669,7 @@ _asn1_insert_tag_der (asn1_node node, unsigned char *der, int *counter,
   unsigned char class, class_implicit =
     0, temp[MAX (SIZEOF_UNSIGNED_INT * 3 + 1, LTOSTR_MAX_SIZE)];
   unsigned long tag_implicit = 0;
-  unsigned char tag_der[MAX_TAG_LEN];
+  unsigned char tag_der[ASN1_MAX_TAG_SIZE];
 
   is_tag_implicit = 0;
 
@@ -1059,7 +1057,7 @@ error:
  *   inside *POINTER).
  * @ider: vector that will contain the DER encoding. DER must be a
  *   pointer to memory cells already allocated.
- * @len: number of bytes of *@ider: @ider[0]..@ider[len-1], Initialy
+ * @len: number of bytes of *@ider: @ider[0]..@ider[len-1], Initially
  *   holds the sizeof of der vector.
  * @ErrorDescription: return the error description or an empty
  *   string if success.

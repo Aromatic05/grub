@@ -151,6 +151,30 @@ xgetcwd (void)
   return path;
 }
 
+#ifdef USE_LIBZFS
+static libzfs_handle_t *__libzfs_handle;
+
+static void
+fini_libzfs (void)
+{
+  libzfs_fini (__libzfs_handle);
+}
+
+static libzfs_handle_t *
+grub_get_libzfs_handle (void)
+{
+  if (! __libzfs_handle)
+    {
+      __libzfs_handle = libzfs_init ();
+
+      if (__libzfs_handle)
+	atexit (fini_libzfs);
+    }
+
+  return __libzfs_handle;
+}
+#endif /* USE_LIBZFS */
+
 char **
 grub_util_find_root_devices_from_poolname (char *poolname)
 {
@@ -257,7 +281,10 @@ grub_util_find_root_devices_from_poolname (char *poolname)
       line = NULL;
       ret = getline (&line, &len, fp);
       if (ret == -1)
-	break;
+        {
+          free (line);
+          break;
+        }
 
       if (sscanf (line, " %s %256s %256s %256s %256s %256s",
 		  name, state, readlen, writelen, cksum, notes) >= 5)
@@ -311,7 +338,10 @@ grub_util_find_root_devices_from_poolname (char *poolname)
     }
 
  out:
-  close (fd);
+  if (fp)
+    fclose (fp);
+  else
+    close (fd);
   waitpid (pid, NULL, 0);
 #endif
   if (devices)
@@ -353,6 +383,7 @@ grub_find_device (const char *dir, dev_t dev)
   DIR *dp;
   struct saved_cwd saved_cwd;
   struct dirent *ent;
+  struct stat st_dir;
 
   if (! dir)
     dir = "/dev";
@@ -360,6 +391,12 @@ grub_find_device (const char *dir, dev_t dev)
   dp = opendir (dir);
   if (! dp)
     return 0;
+
+  if (stat (dir, &st_dir) < 0)
+    {
+      closedir (dp);
+      return 0;
+    }
 
   if (save_cwd (&saved_cwd) < 0)
     {
@@ -409,6 +446,13 @@ grub_find_device (const char *dir, dev_t dev)
 	{
 	  /* Find it recursively.  */
 	  char *res;
+
+	  /* Skip mount point */
+	  if (st.st_dev != st_dir.st_dev)
+	    {
+	      grub_util_info ("skip mount point %s/%s", dir, ent->d_name);
+	      continue;
+	    }
 
 	  res = grub_find_device (ent->d_name, dev);
 
@@ -658,7 +702,10 @@ grub_util_pull_lvm_by_command (const char *os_dev)
     }
 
 out:
-  close (fd);
+  if (vgs)
+    fclose (vgs);
+  else
+    close (fd);
   waitpid (pid, NULL, 0);
   free (buf);
   free (vgid);

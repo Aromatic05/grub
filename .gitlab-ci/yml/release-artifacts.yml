@@ -1,0 +1,36 @@
+include:
+  - local: '.gitlab-ci/yml/global.yml'
+  - local: '.gitlab-ci/yml/matrix.yml'
+
+stages:
+  - create
+  - sign
+  - upload
+  - release
+
+create-artifacts:
+  stage: create
+  script:
+    - $SCRIPT_DIR/create-artifacts.sh
+  artifacts:
+    paths:
+      - artifacts
+
+sign-artifacts:
+  stage: sign
+  script:
+    - $SCRIPT_DIR/sign-artifacts.sh
+  artifacts:
+    paths:
+      - artifacts
+
+upload-artifacts:
+  stage: upload
+  script:
+    - $SCRIPT_DIR/upload-artifacts.sh
+
+create-release:
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  stage: release
+  script:
+    - $SCRIPT_DIR/create-release.sh

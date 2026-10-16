@@ -122,6 +122,7 @@ parse_line (grub_file_t file, http_data_t data, char *ptr, grub_size_t len)
 	case 404:
 	  data->err = GRUB_ERR_FILE_NOT_FOUND;
 	  data->errmsg = grub_xasprintf (_("file `%s' not found"), data->filename);
+	  data->first_line_recv = 1;
 	  return GRUB_ERR_NONE;
 	default:
 	  data->err = GRUB_ERR_NET_UNKNOWN_ERROR;
@@ -129,6 +130,7 @@ parse_line (grub_file_t file, http_data_t data, char *ptr, grub_size_t len)
 	     valid answers like 403 will trigger this very generic message.  */
 	  data->errmsg = grub_xasprintf (_("unsupported HTTP error %d: %s"),
 					 code, ptr);
+	  data->first_line_recv = 1;
 	  return GRUB_ERR_NONE;
 	}
       data->first_line_recv = 1;
@@ -161,6 +163,33 @@ http_err (grub_net_tcp_socket_t sock __attribute__ ((unused)),
 
   if (data->sock)
     grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
+  data->sock = 0;
+  if (data->current_line)
+    grub_free (data->current_line);
+  data->current_line = 0;
+  file->device->net->eof = 1;
+  file->device->net->stall = 1;
+  if (file->size == GRUB_FILE_SIZE_UNKNOWN)
+    file->size = have_ahead (file);
+}
+
+/* Called when the server closes its send-side (FIN received).  Unlike
+   http_err we do not abort (no RST): the server half-closed cleanly, so
+   we send our own FIN via GRUB_NET_TCP_DISCARD for an orderly four-way
+   close.  That also detaches the socket's hooks, so no callback can fire
+   into the file once it is freed.  We then signal EOF, which lets
+   http_establish's poll loop exit immediately on a non-200 response
+   followed by an immediate close (e.g. 404, 500) instead of spinning for
+   the full 100 × 300 ms timeout.  */
+static void
+http_fin (grub_net_tcp_socket_t sock __attribute__ ((unused)),
+	  void *f)
+{
+  grub_file_t file = f;
+  http_data_t data = file->data;
+
+  if (data->sock)
+    grub_net_tcp_close (data->sock, GRUB_NET_TCP_DISCARD);
   data->sock = 0;
   if (data->current_line)
     grub_free (data->current_line);
@@ -291,7 +320,12 @@ http_receive (grub_net_tcp_socket_t sock __attribute__ ((unused)),
 	  nb2 = grub_netbuff_alloc (data->chunk_rem);
 	  if (!nb2)
 	    return grub_errno;
-	  grub_netbuff_put (nb2, data->chunk_rem);
+	  err = grub_netbuff_put (nb2, data->chunk_rem);
+	  if (err)
+	    {
+	      grub_netbuff_free (nb2);
+	      return grub_errno;
+	    }
 	  grub_memcpy (nb2->data, nb->data, data->chunk_rem);
 	  if (file->device->net->packs.count >= 20)
 	    {
@@ -404,7 +438,7 @@ http_establish (struct grub_file *file, grub_off_t offset, int initial)
 		data->filename, server, port ? port : HTTP_PORT);
   data->sock = grub_net_tcp_open (server,
 				  port ? port : HTTP_PORT, http_receive,
-				  http_err, NULL,
+				  http_err, http_fin,
 				  file);
   if (!data->sock)
     {
@@ -441,6 +475,18 @@ http_establish (struct grub_file *file, grub_off_t offset, int initial)
 	}
       return grub_error (GRUB_ERR_TIMEOUT, N_("time out opening `%s'"), data->filename);
     }
+
+  if (data->err)
+    {
+      char *str = data->errmsg;
+      if (data->sock)
+	grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
+      err = grub_error (data->err, "%s", str);
+      grub_free (str);
+      data->errmsg = 0;
+      return err;
+    }
+
   return GRUB_ERR_NONE;
 }
 

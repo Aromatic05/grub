@@ -301,7 +301,6 @@ grub_linux_setup_video (struct linux_kernel_params *params)
 	  params->screen_info.orig_video_isVGA = GRUB_VIDEO_LINUX_TYPE_VESA;
 	  break;
 
-	case GRUB_VIDEO_DRIVER_EFI_UGA:
 	case GRUB_VIDEO_DRIVER_EFI_GOP:
 	  params->screen_info.orig_video_isVGA = GRUB_VIDEO_LINUX_TYPE_EFIFB;
 	  break;

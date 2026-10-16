@@ -25,9 +25,13 @@
 #if !defined (GRUB_MACHINE_EMU) && (defined(__mips__) || defined (__i386__) || defined (__x86_64__))
 #include <grub/cpu/io.h>
 #endif
+#if defined(__arm__) || defined(__aarch64__)
+#include <grub/pl011.h>
+#endif
 #include <grub/extcmd.h>
 #include <grub/i18n.h>
 #include <grub/list.h>
+#include <grub/lockdown.h>
 #ifdef GRUB_MACHINE_MIPS_LOONGSON
 #include <grub/machine/kernel.h>
 #endif
@@ -140,6 +144,30 @@ static struct grub_term_output grub_serial_term_output =
 
 
 
+/*
+ * An address that no port is registered at cannot be honored while lockdown
+ * is enforced: the probe and programming sequences in the ns8250 and pl011
+ * back ends write to fixed offsets from it with no way to tell a UART from
+ * ordinary memory, so an address taken from an unauthenticated configuration
+ * is a write primitive against whatever it points at.
+ *
+ * A back end calls this once its own lookup has found no port already
+ * registered at the address, that is, at the point where it would otherwise
+ * touch the hardware. TRUSTED is true when the address came from a platform
+ * description -- grub_ns8250_init(), an ACPI SPCR table, PCI enumeration --
+ * rather than from the caller.
+ */
+bool
+grub_serial_reject_untrusted_address (bool trusted)
+{
+  if (trusted == true || grub_is_lockdown () != GRUB_LOCKDOWN_ENABLED)
+    return false;
+
+  grub_error (GRUB_ERR_ACCESS_DENIED,
+	      N_("serial port address is not permitted when lockdown is enforced"));
+  return true;
+}
+
 struct grub_serial_port *
 grub_serial_find (const char *name)
 {
@@ -154,12 +182,18 @@ grub_serial_find (const char *name)
     if (grub_strcmp (port->name, name) == 0)
       return port;
 
+  /*
+   * Everything below this point builds a port from an address the caller
+   * gave us, so the back ends are told the address is untrusted: under
+   * lockdown they hand back a port only if one is already registered at that
+   * address, which means the platform described that UART.
+   */
 #if (defined(__mips__) || defined (__i386__) || defined (__x86_64__)) && !defined(GRUB_MACHINE_EMU) && !defined(GRUB_MACHINE_ARC)
   if (grub_strncmp (name, "port", sizeof ("port") - 1) == 0
       && grub_isxdigit (name [sizeof ("port") - 1]))
     {
       port = grub_serial_ns8250_add_port (grub_strtoul (&name[sizeof ("port") - 1],
-							0, 16), NULL);
+							0, 16), NULL, false);
       if (port != NULL)
         return port;
     }
@@ -205,7 +239,7 @@ grub_serial_find (const char *name)
             grub_error (GRUB_ERR_BAD_ARGUMENT, N_("incorrect MMIO access size"));
           }
 
-      port = grub_serial_ns8250_add_mmio (addr, acc_size, NULL);
+      port = grub_serial_ns8250_add_mmio (addr, acc_size, NULL, false);
       if (port != NULL)
         return port;
     }
@@ -222,6 +256,44 @@ grub_serial_find (const char *name)
           return port;
     }
 #endif
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+  if (grub_strncmp (name, "mmio,", sizeof ("mmio,") - 1) == 0
+      && grub_isxdigit (name [sizeof ("mmio,") - 1]))
+    {
+      const char *p1, *p = &name[sizeof ("mmio,") - 1];
+      grub_addr_t addr = grub_strtoul (p, &p1, 16);
+      unsigned int acc_size = 4;
+
+      /*
+       * If we reach here, we know there's a digit after "mmio,", so
+       * all we need to check is the validity of the character following
+       * the number, which should be a termination, or a dot followed by
+       * an access size.
+       */
+      if (p1[0] != '\0' && p1[0] != '.')
+        {
+          grub_error (GRUB_ERR_BAD_ARGUMENT, N_("incorrect MMIO address syntax"));
+          return NULL;
+        }
+      if (p1[0] == '.')
+        switch(p1[1])
+          {
+          case 'w':
+            acc_size = 2;
+            break;
+          case 'l':
+            acc_size = 4;
+            break;
+          default:
+            grub_error (GRUB_ERR_BAD_ARGUMENT, N_("incorrect MMIO access size"));
+          }
+
+      port = grub_serial_pl011_add_mmio (addr, acc_size, NULL, false);
+      if (port != NULL)
+        return port;
+    }
 #endif
 
 #ifdef GRUB_MACHINE_IEEE1275
@@ -275,9 +347,18 @@ grub_cmd_serial (grub_extcmd_context_t ctxt, int argc, char **args)
 
   port = grub_serial_find (name);
   if (!port)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT,
-		       N_("serial port `%s' isn't found"),
-		       name);
+    {
+      /*
+       * A back end that refused the port has already said why; keep that
+       * rather than reporting a misleading "isn't found".
+       */
+      if (grub_errno == GRUB_ERR_ACCESS_DENIED)
+	return grub_errno;
+
+      return grub_error (GRUB_ERR_BAD_ARGUMENT,
+			 N_("serial port `%s' isn't found"),
+			 name);
+    }
 
   config = port->config;
 

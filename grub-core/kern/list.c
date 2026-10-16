@@ -53,3 +53,15 @@ grub_list_remove (grub_list_t item)
   item->next = 0;
   item->prev = 0;
 }
+
+grub_size_t
+grub_list_length (grub_list_t head)
+{
+  grub_list_t item;
+  grub_size_t length = 0;
+
+  FOR_LIST_ELEMENTS (item, head)
+    length++;
+
+  return length;
+}

@@ -79,11 +79,6 @@ AC_DEFUN([grub_PROG_OBJCOPY_ABSOLUTE],
 [AC_MSG_CHECKING([whether ${TARGET_OBJCOPY} works for absolute addresses])
 AC_CACHE_VAL(grub_cv_prog_objcopy_absolute,
 [cat > conftest.c <<\EOF
-asm (
-    ".globl start, _start, __start\n"
-    ".ifdef cmain; .set start = _start = __start = cmain\n.endif\n"
-    ".ifdef _cmain; .set start = _start = __start = _cmain\n.endif\n"
-);
 void cmain (void);
 void
 cmain (void)
@@ -98,7 +93,18 @@ else
 fi
 grub_cv_prog_objcopy_absolute=yes
 for link_addr in 0x2000 0x8000 0x7C00; do
-  if AC_TRY_COMMAND([${CC-cc} ${TARGET_CFLAGS} ${TARGET_LDFLAGS} -nostdlib ${TARGET_IMG_LDFLAGS_AC} ${TARGET_IMG_BASE_LDOPT},$link_addr conftest.o -o conftest.exec]); then :
+
+  target_img_base_ld="${TARGET_IMG_BASE_LDOPT}"
+  case "$target_img_base_ld" in
+    *_grub_text_base)
+      target_img_base_ld="${target_img_base_ld}=$link_addr"
+    ;;
+    *)
+      target_img_base_ld="${target_img_base_ld},$link_addr"
+    ;;
+  esac
+
+  if AC_TRY_COMMAND([${CC-cc} ${TARGET_CFLAGS} ${TARGET_LDFLAGS} -nostdlib ${TARGET_IMG_LDFLAGS_AC} ${target_img_base_ld} conftest.o -o conftest.exec]); then :
   else
     AC_MSG_ERROR([${CC-cc} cannot link at address $link_addr])
   fi

@@ -1,4 +1,4 @@
-From 24036474fab426917507fcadc85a83fa0b1cef3b Mon Sep 17 00:00:00 2001
+From 5602d7d3e0172937377acf9d71b1e4281639b25b Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Tue, 25 Jun 2024 16:30:40 +0800
 Subject: [PATCH 04/13] libtasn1: adjust the header paths in libtasn1.h
@@ -19,10 +19,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  1 file changed, 2 insertions(+), 3 deletions(-)
 
 diff --git a/grub-core/lib/libtasn1-grub/libtasn1.h b/grub-core/lib/libtasn1-grub/libtasn1.h
-index 058ab27b0..7d64b6ab7 100644
+index 2bfb5c7..a7e84d7 100644
 --- a/grub-core/lib/libtasn1-grub/libtasn1.h
 +++ b/grub-core/lib/libtasn1-grub/libtasn1.h
-@@ -54,9 +54,8 @@
+@@ -53,9 +53,8 @@
  #  define __LIBTASN1_PURE__
  # endif
  

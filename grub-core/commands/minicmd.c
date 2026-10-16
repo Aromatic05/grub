@@ -135,19 +135,30 @@ grub_mini_cmd_rmmod (struct grub_command *cmd __attribute__ ((unused)),
   grub_dl_t mod;
 
   if (argc == 0)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "no module specified");
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("no module specified"));
 
   mod = grub_dl_get (argv[0]);
   if (! mod)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "no such module");
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("no such module"));
 
   if (grub_dl_is_persistent (mod))
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "cannot unload persistent module");
+    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+		       N_("cannot unload persistent module"));
 
   if (grub_dl_ref_count (mod) > 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "cannot unload referenced module");
+    return grub_error (GRUB_ERR_STILL_REFERENCED,
+		       N_("cannot unload referenced module"));
 
-  grub_dl_unref (mod);
+  /*
+   * Autoloaded modules that don't self-ref (e.g. filesystems via fs.lst,
+   * or gzio) sit at ref_count 0 because grub_dl_load_file releases the
+   * load-time ref after the module's init returns.  Only drop a reference
+   * if one is held; grub_dl_unref on a zero count underflows and triggers
+   * grub_fatal.  ref_count == 1 corresponds to the matching reference
+   * grub_core_cmd_insmod took at "insmod"; that one is ours to release.
+   */
+  if (grub_dl_ref_count (mod) == 1)
+    grub_dl_unref (mod);
   grub_dl_unload (mod);
 
   return 0;

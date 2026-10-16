@@ -226,6 +226,7 @@ program = {
   common = grub-core/lib/tss2/buffer.c;
   common = grub-core/lib/tss2/tss2_mu.c;
   common = grub-core/lib/tss2/tpm2_cmd.c;
+  common = grub-core/lib/tss2/tss2_util.c;
   common = grub-core/commands/tpm2_key_protector/args.c;
   common = grub-core/commands/tpm2_key_protector/tpm2key_asn1_tab.c;
   common = util/grub-protect.c;
@@ -295,6 +296,24 @@ program = {
   ldadd = libgrubmods.a;
   ldadd = libgrubkern.a;
   ldadd = libgrubgcry.a;
+  ldadd = grub-core/lib/gnulib/libgnu.a;
+  ldadd = '$(LIBINTL) $(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+};
+
+program = {
+  name = grub-mkpasswd-argon2;
+  mansection = 1;
+
+  common = util/grub-mkpasswd-argon2.c;
+  common = grub-core/kern/emu/argp_common.c;
+  common = grub-core/osdep/random.c;
+  common = grub-core/osdep/init.c;
+
+  /* Link libgrubkern.a twice to resolve a circular dependency with libgrubgcry.a */
+  ldadd = libgrubmods.a;
+  ldadd = libgrubkern.a;
+  ldadd = libgrubgcry.a;
+  ldadd = libgrubkern.a;
   ldadd = grub-core/lib/gnulib/libgnu.a;
   ldadd = '$(LIBINTL) $(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
 };
@@ -567,6 +586,12 @@ script = {
 };
 
 script = {
+  name = '31_efi_bootnext';
+  common = util/grub.d/31_efi_bootnext.in;
+  installdir = grubconf;
+};
+
+script = {
   name = '40_custom';
   common = util/grub.d/40_custom.in;
   installdir = grubconf;
@@ -798,6 +823,84 @@ script = {
   common = tests/util/grub-fs-tester.in;
   installdir = noinst;
   dependencies = 'garbage-gen$(BUILD_EXEEXT)';
+};
+
+script = {
+  name = qemu-linkup;
+  common = tests/util/qemu-linkup.in;
+  installdir = noinst;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_http_transfer_test;
+  common = tests/net_http_transfer_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_tftp_transfer_test;
+  common = tests/net_tftp_transfer_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_dns_lookup_test;
+  common = tests/net_dns_lookup_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_http_chunk_test;
+  common = tests/net_http_chunk_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_http_error_test;
+  common = tests/net_http_error_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_dhcp_lease_test;
+  common = tests/net_dhcp_lease_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_bootp_reply_test;
+  common = tests/net_bootp_reply_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_bootp_fields_test;
+  common = tests/net_bootp_fields_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_config_roundtrip_test;
+  common = tests/net_config_roundtrip_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_tftp_error_test;
+  common = tests/net_tftp_error_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_ip_frag_test;
+  common = tests/net_ip_frag_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = net_dhcp_tftp_integration_test;
+  common = tests/net_dhcp_tftp_integration_test.in;
 };
 
 script = {
@@ -1121,6 +1224,12 @@ script = {
 
 script = {
   testcase = nonnative;
+  name = grub_cmd_save_env;
+  common = tests/grub_cmd_save_env.in;
+};
+
+script = {
+  testcase = nonnative;
   name = grub_cmd_set_date;
   common = tests/grub_cmd_set_date.in;
 };
@@ -1153,6 +1262,12 @@ script = {
   testcase = nonnative;
   name = partmap_test;
   common = tests/partmap_test.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = rmmod_test;
+  common = tests/rmmod_test.in;
 };
 
 script = {
@@ -1271,6 +1386,30 @@ script = {
 
 script = {
   testcase = nonnative;
+  name = grub_cmd_bootnext;
+  common = tests/grub_cmd_bootnext.in;
+};
+
+script = {
+  testcase = nonnative;
+  name = grub_cmd_bootnext_reboot;
+  common = tests/grub_cmd_bootnext_reboot.in;
+};
+
+script = {
+  testcase = native;
+  name = grub_mkconfig_bootnext_test;
+  common = tests/grub_mkconfig_bootnext_test.in;
+};
+
+script = {
+  testcase = native;
+  name = grub_mkconfig_bootnext_self_test;
+  common = tests/grub_mkconfig_bootnext_self_test.in;
+};
+
+script = {
+  testcase = nonnative;
   name = file_filter_test;
   common = tests/file_filter_test.in;
 };
@@ -1309,6 +1448,12 @@ script = {
   testcase = nonnative;
   name = tpm2_key_protector_test;
   common = tests/tpm2_key_protector_test.in;
+};
+
+script = {
+  testcase = native;
+  name = mfa_key_protector_test;
+  common = tests/mfa_key_protector_test.in;
 };
 
 program = {
@@ -1375,6 +1520,57 @@ program = {
 
 program = {
   testcase = native;
+  name = fdt_unit_test;
+  common = tests/fdt_unit_test.c;
+  common = tests/lib/unit_test.c;
+  common = grub-core/kern/list.c;
+  common = grub-core/kern/misc.c;
+  common = grub-core/tests/lib/test.c;
+  common = grub-core/lib/fdt.c;
+  ldadd = libgrubmods.a;
+  ldadd = libgrubkern.a;
+  ldadd = libgrubgcry.a;
+  ldadd = grub-core/lib/gnulib/libgnu.a;
+  ldadd = '$(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+};
+
+program = {
+  testcase = native;
+  name = loadenv_unit_test;
+  common = tests/loadenv_unit_test.c;
+  common = tests/lib/unit_test.c;
+  common = grub-core/kern/list.c;
+  common = grub-core/kern/misc.c;
+  common = grub-core/tests/lib/test.c;
+  common = grub-core/lib/envblk.c;
+  ldadd = libgrubmods.a;
+  ldadd = libgrubkern.a;
+  ldadd = libgrubgcry.a;
+  ldadd = grub-core/lib/gnulib/libgnu.a;
+  ldadd = '$(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+};
+
+program = {
+  testcase = native;
+  name = image_unit_test;
+  common = tests/image_unit_test.c;
+  common = tests/lib/unit_test.c;
+  common = grub-core/kern/list.c;
+  common = grub-core/kern/misc.c;
+  common = grub-core/tests/lib/test.c;
+  common = grub-core/video/bitmap.c;
+  common = grub-core/video/readers/png.c;
+  common = grub-core/video/readers/jpeg.c;
+  common = grub-core/video/readers/tga.c;
+  ldadd = libgrubmods.a;
+  ldadd = libgrubkern.a;
+  ldadd = libgrubgcry.a;
+  ldadd = grub-core/lib/gnulib/libgnu.a;
+  ldadd = '$(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+};
+
+program = {
+  testcase = native;
   name = cmp_test;
   common = tests/cmp_unit_test.c;
   common = tests/lib/unit_test.c;
@@ -1386,6 +1582,24 @@ program = {
   ldadd = libgrubgcry.a;
   ldadd = grub-core/lib/gnulib/libgnu.a;
   ldadd = '$(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+};
+
+program = {
+  testcase = native;
+  name = tpcm_unit_test;
+  common = tests/tpcm_unit_test.c;
+  common = tests/lib/unit_test.c;
+  common = grub-core/kern/list.c;
+  common = grub-core/kern/misc.c;
+  common = grub-core/tests/lib/test.c;
+  common = grub-core/commands/tpcm.c;
+  common = grub-core/commands/efi/tpcm.c;
+  ldadd = libgrubmods.a;
+  ldadd = libgrubkern.a;
+  ldadd = libgrubgcry.a;
+  ldadd = grub-core/lib/gnulib/libgnu.a;
+  ldadd = '$(LIBDEVMAPPER) $(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)';
+  ldflags = '-Wl,--wrap=grub_fatal';
 };
 
 program = {

@@ -35,6 +35,7 @@ Invariant Sections.
 * GRUB: (grub).                 The GRand Unified Bootloader
 * grub-install: (grub)Invoking grub-install.    Install GRUB on your drive
 * grub-mkconfig: (grub)Invoking grub-mkconfig.  Generate GRUB configuration
+* grub-mkpasswd-argon2: (grub)Invoking grub-mkpasswd-argon2.
 * grub-mkpasswd-pbkdf2: (grub)Invoking grub-mkpasswd-pbkdf2.
 * grub-mkrelpath: (grub)Invoking grub-mkrelpath.
 * grub-mkrescue: (grub)Invoking grub-mkrescue.  Make a GRUB rescue image
@@ -99,7 +100,7 @@ This edition documents version @value{VERSION}.
 * Modules::                     Available modules
 * Commands::                    Available builtin commands
 * Internationalisation::        Topics relating to language support
-* Security::                    Authentication, authorisation, and signatures
+* Security::                    Authentication, authorization, and signatures
 * Platform limitations::        Platform-specific limitations
 * Platform-specific operations:: Platform-specific operations
 * Supported kernels::           Supported kernels
@@ -1264,6 +1265,7 @@ need to write the whole thing by hand.
 
 @menu
 * Simple configuration::            Recommended for most users
+* Configuring access levels::       Password-protecting GRUB configuration
 * Root Identification Heuristics::  Summary on how the root file system is identified.
 * Shell-like scripting::            For power users and developers
 * Multi-boot manual config::        For non-standard multi-OS scenarios
@@ -1375,7 +1377,9 @@ used to support vendor-specific power buttons.  @xref{Vendor power-on keys}.
 
 @item GRUB_DISTRIBUTOR
 Set by distributors of GRUB to their identifying name.  This is used to
-generate more informative menu entry titles.
+generate more informative menu entry titles. On an EFI system it is the
+default value for the @samp{--bootloader-id} parameter to
+@command{grub-install}.
 
 @item GRUB_TERMINAL_INPUT
 Select the terminal input device.  You may select multiple devices here,
@@ -1572,6 +1576,19 @@ backward compatibility with previous behaviour, <UUID>@@/dev/* is also accepted
 for non-EFI chainloaders even if the device does not match, and comma and
 semicolon are also accepted as separator.
 
+@item GRUB_DISABLE_BOOTNEXT
+If set to @samp{true}, @command{grub-mkconfig} will not generate
+@command{bootnext} menu entries for other EFI boot manager entries detected
+via @command{efibootmgr}.  This disables the entire
+@file{31_efi_bootnext} script.
+
+@item GRUB_BOOTNEXT_OMIT_INACTIVE
+If set to @samp{true}, @command{grub-mkconfig} will skip EFI boot manager
+entries that are marked inactive (i.e. not flagged active with @samp{*} in
+@command{efibootmgr} output) when generating @command{bootnext} menu entries.
+By default inactive entries are included, since @samp{BootNext} can target
+them even when they are absent from @samp{BootOrder}.
+
 @item GRUB_DISABLE_SUBMENU
 Normally, @command{grub-mkconfig} will generate top level menu entry for
 the kernel with highest version number and put all other found kernels
@@ -1603,6 +1620,9 @@ out specified regions of RAM.
 This option may be set to a list of GRUB module names separated by spaces.
 Each module will be loaded as early as possible, at the start of
 @file{grub.cfg}.
+
+@item GRUB_USERS, GRUB_UNRESTRICTED_ACCESS_LEVEL, GRUB_SIMPLE_ACCESS_LEVEL, GRUB_ADVANCED_ACCESS_LEVEL, GRUB_RECOVERY_ACCESS_LEVEL
+See @pxref{Configuring access levels}.
 
 @end table
 
@@ -1645,7 +1665,7 @@ confusing @samp{GRUB_TIMEOUT_STYLE=countdown} or
 @item GRUB_FORCE_EFI_ALL_VIDEO
 When set to true, this will allow grub-mkconfig to generate a GRUB config
 that supports loading the all_video module on the EFI platform instead of
-just the efi_gop and efi_uga modules.
+just the efi_gop module.
 
 This option is unset by default.
 
@@ -1656,6 +1676,79 @@ edit the scripts in @file{/etc/grub.d} directly.
 @file{/etc/grub.d/40_custom} is particularly useful for adding entire custom
 menu entries; simply type the menu entries you want to add at the end of
 that file, making sure to leave at least the first two lines intact.
+
+@node Configuring access levels
+@section Configuring access levels
+@command{grub-mkconfig} can generate GRUB configuration files that are
+password-protected. This requires configuring a list of users who are
+expected to have special access to the system, which boot entries each user is
+permitted to access, and which boot entries can be booted without
+authentication. Because the exact list of boot entries cannot be known until
+@command{grub-mkconfig} runs, it isn't possible to hardcode a list of boot
+entries each user can access, so instead @command{grub-mkconfig} uses ``access
+levels'' to decide who can access what.
+
+When access levels are enabled, each user account has an access level
+associated with it. There are an unbounded number of access levels available;
+the most privileged access level is 0, and higher-numbered access levels are
+considered less privileged. Each boot entry also has an access level
+associated with it. If a user's access level is equal or lower to a boot
+entry's access level, the user is authorized to boot that entry. Only
+superusers (users with access level 0) are permitted to use advanced GRUB
+features such as editing boot entries and using the GRUB command line (see
+@pxref{Authentication and authorization} for details).
+
+The following options are used to configure access levels:
+
+@table @samp
+@item GRUB_USERS
+A list of user definitions, separated by spaces. Each user definition consists
+of a username, access level, password type, and password or password hash,
+separated by semicolons. An example user definition:
+@example
+root;0;pbkdf2;grub.pbkdf2.sha512.10000.BIGLONGSTRING
+@end example
+
+The username should not contain spaces, commas, semicolons, pipes, ampersands,
+or double quotes. The access level must be a decimal integer. The password
+type must be one of "plain", "pbkdf2", or "argon2". If the password type is
+"plain", the password field should be the plaintext password. If the password
+type is "pbkdf2", the password field should be a PBKDF2 hash generated by
+@command{grub-mkpasswd-pbkdf2}. If the password type is "argon2", the password
+field should be an Argon2 hash generated by @command{grub-mkpasswd-argon2}.
+
+Setting this option to a non-empty value will enable access levels. If this
+option is not empty, at least one listed user must have an access level of 0.
+This option is empty by default.
+
+@item GRUB_UNRESTRICTED_ACCESS_LEVEL
+The access level at which boot entries are considered unprivileged. Any boot
+entry with an access level equal to or higher than this will not require a
+password to boot. The default is @samp{1}.
+
+@item GRUB_SIMPLE_ACCESS_LEVEL
+The access level "simple" boot entries will be assigned. The scripts in
+@file{/etc/grub.d} that come with GRUB will use this access level for boot
+entries that boot the latest version of an operating system in a "normal"
+mode. The default is @samp{0}.
+
+@item GRUB_ADVANCED_ACCESS_LEVEL
+The access level "advanced" boot entries will be assigned. The scripts in
+@file{/etc/grub.d} that come with GRUB will use this access level for boot
+entries that boot a potentially earlier version of an operating system in a
+"normal" mode. The default is @samp{0}. Users may want to consider these boot
+modes more privileged because of the risk of known kernel vulnerabilities
+existing in older kernel versions.
+
+@item GRUB_RECOVERY_ACCESS_LEVEL
+The access level "recovery" boot entries will be assigned. The scripts in
+@file{/etc/grub.d} that come with GRUB will use this access level for boot
+entries that boot an operating system in a "recovery" mode. The default is
+@samp{0}. Many operating systems will provide passwordless root access to any
+physically present user when booted in this mode, so this should usually be
+restricted to superusers only.
+
+@end table
 
 @node Root Identification Heuristics
 @section Root Identification Heuristics
@@ -3178,7 +3271,7 @@ Move to the start of the line.
 
 @item C-e
 @itemx END
-Move the the end of the line.
+Move the end of the line.
 
 @item C-d
 @itemx DEL
@@ -4074,6 +4167,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * cmp_module::
 * cmp_test_module::
 * configfile_module::
+* connectefi_module::
 * cpio_module::
 * cpio_be_module::
 * cpuid_module::
@@ -4095,7 +4189,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * dsa_sexp_test_module::
 * echo_module::
 * efi_gop_module::
-* efi_uga_module::
+* efibootnext_module::
 * efiemu_module::
 * efifwsetup_module::
 * efinet_module::
@@ -4193,6 +4287,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * lsefi_module::
 * lsefimmap_module::
 * lsefisystab_module::
+* lsefivar_module::
 * lsmmap_module::
 * lspci_module::
 * lssal_module::
@@ -4251,6 +4346,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * part_sunpc_module::
 * parttool_module::
 * password_module::
+* password_argon2_module::
 * password_pbkdf2_module::
 * pata_module::
 * pbkdf2_module::
@@ -4312,6 +4408,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * tftp_module::
 * tga_module::
 * time_module::
+* tpcm_module::
 * tpm_module::
 * tr_module::
 * trig_module::
@@ -4343,6 +4440,7 @@ Modules can be loaded via the @command{insmod} (@pxref{insmod}) command.
 * videoinfo_module::
 * videotest_module::
 * videotest_checksum_module::
+* virtionet_module::
 * wrmsr_module::
 * xen_boot_module::
 * xfs_module::
@@ -4508,7 +4606,8 @@ functionality of GRUB.
 
 @node btrfs_module
 @section btrfs
-This module provides support for the B-Tree File System (BTRFS).
+This module provides support for the B-Tree File System (BTRFS), including the
+@command{btrfs-info}, @command{btrfs-list-subvols}, and @command{btrfs-get-default-subvol} commands.
 
 @node bufio_module
 @section bufio
@@ -4590,6 +4689,14 @@ This module provides support for the commands: @command{configfile},
 @command{source}, @command{extract_entries_source},
 @command{extract_entries_configfile}, @command{.} (dot command).
 @xref{configfile} / @pxref{source}.
+
+@node connectefi_module
+@section connectefi
+This module provides support for the @command{connectefi} command. This command
+can be used on EFI platforms to connect SCSI I/O and DISK I/O EFI handles,
+which may be required when chainloading from the disk after booting from the
+network, or from one disk to another for example.
+@pxref{chainloader} / @pxref{connectefi} for more information.
 
 @node cpio_module
 @section cpio
@@ -4692,10 +4799,10 @@ This module provides support for the @command{echo} to display a line of text.
 This module provides support for the UEFI video output protocol "Graphics
 Output Protocol" (GOP).
 
-@node efi_uga_module
-@section efi_uga
-This module provides support for the EFI video protocol "Universal Graphic
-Adapter" (UGA).
+@node efibootnext_module
+@section efibootnext
+This module provides support for the command @command{bootnext} to set the
+UEFI @samp{BootNext} variable.  @xref{bootnext} for more information.
 
 @node efiemu_module
 @section efiemu
@@ -5259,6 +5366,11 @@ can be used on EFI platforms to display the EFI memory map.
 This module provides support for the @command{lsefisystab} command. This
 command can be used on EFI platforms to display the EFI system tables.
 
+@node lsefivar_module
+@section lsefivar
+This module provides support for then @command{lsefivar} command. This command
+can be used on EFI platforms to display EFI firmware variables and their content.
+
 @node lsmmap_module
 @section lsmmap
 This module provides support for the @command{lsmmap} command. This
@@ -5478,6 +5590,12 @@ This includes the following commands:
 @command{net_dhcp} - @pxref{net_dhcp}
 
 @item
+@command{net_bootp6} - @pxref{net_bootp6}
+
+@item
+@command{net_dhcp6} - @pxref{net_dhcp6}
+
+@item
 @command{net_get_dhcp_option} - @pxref{net_get_dhcp_option}
 
 @item
@@ -5660,8 +5778,13 @@ for more information.
 @section password
 This module provides support for the @command{password} command. Please note
 that this uses the password in plain text, if security is a concern consider
-using @ref{password_pbkdf2_module} instead. @xref{password} for more
-information.
+using @ref{password_argon2_module} or @ref{password_pbkdf2_module} instead.
+@xref{password} for more information.
+
+@node password_argon2_module
+@section password_argon2
+This module provides support for the @command{password_argon2} command.
+@xref{password_argon2} for more information.
 
 @node password_pbkdf2_module
 @section password_pbkdf2
@@ -5993,6 +6116,31 @@ image files in GRUB.
 This module provides support for the @command{time} command to measure the
 time taken by a given command and output it to the terminal.
 
+@node tpcm_module
+@section tpcm
+This module provides support for measuring loaded files and command strings
+through the Trusted Platform Control Module (TPCM) protocol on x86_64 EFI
+platforms. The module uses the EFI TPCM protocol provided by firmware. If the
+firmware does not provide this protocol, or provides it but does not enable
+verification, the module does not block booting. If verification is enabled and
+firmware reports that a measurement must be blocked, GRUB treats the event as
+fatal and stops the current boot path.
+
+When firmware verification is enabled, the module assigns each submitted
+object a stage identifier from the vendor-defined range 2000 through 2999.
+Each file submitted to the verifier, each kernel or module command line, and
+each GRUB command that is actually executed consumes one stage identifier.
+Therefore, at most 1000 objects can be submitted during a boot session.
+
+Large or complex configurations, especially loops that repeatedly execute
+GRUB commands, can exhaust this range. Once the range is exhausted, further
+objects are not submitted to firmware and verification returns an error.
+Configurations using this module should remain within this limit.
+
+The EFI protocol used by this module is a firmware interface implemented by
+TPCM-capable platforms. The protocol GUID is defined in GRUB as
+@code{GRUB_EFI_TPCM_PROTOCOL_GUID}.
+
 @node tpm_module
 @section tpm
 This module provides support for interacting with a Trusted Platform Module
@@ -6158,6 +6306,27 @@ specified width and height.
 @section videotest_checksum
 This module is intended for performing a functional test of the video
 functions in GRUB by displaying a test image and capturing a checksum.
+
+@node virtionet_module
+@section virtionet
+This module provides a network driver for a virtio-net device in GRUB, such as
+the emulated NIC provided by QEMU.  It uses the virtio-PCI interface and
+supports PCI ID Vendor 0x1AF4 / Device 0x1000 (transitional virtio network
+device, modern mode only) and Vendor 0x1AF4 / Device 0x1041 (non-transitional
+virtio network device).  Only modern-mode operation (requiring
+@code{VIRTIO_F_VERSION_1}) is supported; legacy mode is not.
+
+To use this module, load it with @command{insmod} and then assign an IP address
+to the virtual NIC with @command{net_add_addr}.  @xref{net_add_addr}.
+
+An example QEMU network configuration using a TAP interface (root permissions
+are typically required) is:
+@samp{-netdev tap,id=hostnet0,ifname=tap0,script=/path/to/qemu-linkup,downscript=no
+-device virtio-net-pci,netdev=hostnet0}
+
+This module is useful when BIOS or UEFI network services are unavailable (for
+example, when BIOS PXE is not used) or when no native network driver exists for
+the target configuration.
 
 @node wrmsr_module
 @section wrmsr
@@ -6389,6 +6558,12 @@ image.
 If you specify the option @option{--force}, then load @var{file} forcibly,
 whether it has a correct signature or not. This is required when you want to
 load a defective boot loader, such as SCO UnixWare 7.1.
+
+On EFI platforms, when initially booting from the network, or booting from
+another disk, it may be required to connect the EFI devices using
+@command{connectefi} command (@pxref{connectefi}) prior to chainloading from 
+the disk, otherwise no disk may show up or the EFI partition on the disk may
+not be readable.
 @end deffn
 
 
@@ -6466,6 +6641,14 @@ same mode as used in GRUB) instead.  GRUB can automatically detect some uses
 of @samp{vga=} and translate them to appropriate settings of
 @samp{gfxpayload}.  The @command{linux16} command (@pxref{linux16}) avoids
 this restriction.
+
+For non-x86 platforms, when using a firmware-provided device tree, if this
+command is invoked without kernel command-line arguments after @var{file}, then
+GRUB will attempt to load arguments from the ``bootargs`` property of the
+``/chosen`` node of the provided device tree. Arguments provided to GRUB will
+always prevail on the one present in the device tree for legacy purposes. If
+no arguments are found at this path, then no arguments will be provided in the
+boot command.
 @end deffn
 
 
@@ -6570,6 +6753,38 @@ Note, valid @var{port} values, excluding IO port addresses, can be found
 by listing terminals with @command{terminal_output}, selecting all names
 prefixed by @samp{serial_} and removing that prefix.
 
+When lockdown is enforced (@pxref{Lockdown}) a @var{port} that gives a raw
+I/O or MMIO address is accepted only if a port is already registered at that
+address, which means the platform described that UART. An address nothing is
+registered at is rejected, because nothing in the UART programming sequence
+can tell a real UART from ordinary memory and the configuration supplying the
+address is not authenticated. Matching is on the address, so it does not
+matter how the address is spelled, and the registered port keeps the access
+size the platform gave it.
+
+The ports a platform describes are:
+
+@itemize @bullet
+@item
+the @samp{com@var{N}} legacy UARTs, named by @var{unit} or by their I/O
+address (x86 only)
+@item
+an ACPI SPCR UART, which @command{serial auto} -- or @command{serial} with no
+options at all -- parses the table for (x86 only). Note that
+@option{--port=auto} does @emph{not} select this: @option{--port} parses its
+argument as a number unless it begins with @samp{mmio,} or @samp{pci,}, so
+@samp{auto} there becomes port 0.
+@item
+a UEFI Serial I/O device, named @samp{efi@var{N}}. On platforms with no
+legacy UART and no SPCR support, such as arm64, this is the route to use.
+@item
+an enumerated PCI device, named @samp{pci,XX:XX.X} or by its I/O address
+@end itemize
+
+An SPCR UART is registered only when @command{serial auto} first parses the
+table, so under lockdown it must be reached through @command{serial auto}
+once before it can be named by its address.
+
 Examples:
 @example
 serial --port=0x3f8 --speed=9600
@@ -6670,6 +6885,10 @@ you forget a command, you can run the command @command{help}
 * blocklist::                   Print a block list
 * blscfg::                      Load Boot Loader Specification menu entries
 * boot::                        Start up your operating system
+* bootnext::                    Set EFI BootNext variable
+* btrfs-get-default-subvol::    Print default Btrfs subvolume
+* btrfs-info::                  Print Btrfs filesystem basic information
+* btrfs-list-subvols::          List Btrfs subvolumes
 * cat::                         Show the contents of a file
 * clear::                       Clear the screen
 * cmosclean::                   Clear bit in CMOS
@@ -6677,6 +6896,7 @@ you forget a command, you can run the command @command{help}
 * cmostest::                    Test bit in CMOS
 * cmp::                         Compare two files
 * configfile::                  Load a configuration file
+* connectefi::                  Connect devices on EFI platforms
 * cpuid::                       Check for CPU features
 * crc::                         Compute or check CRC32 checksums
 * cryptocheck::                 Check if a device is encrypted
@@ -6693,6 +6913,8 @@ you forget a command, you can run the command @command{help}
 * false::                       Do nothing, unsuccessfully
 * fdtdump::                     Retrieve device tree information
 * file::                        Test the provided file against a type
+* file_key_protector_init::     Initialize the file key protector
+* file_key_protector_clear::    Clear the file key protector
 * fwsetup::                     Reboot into the firmware setup menu
 * gdbinfo::                     Provide info for debugging with GDB
 * gettext::                     Translate a string
@@ -6715,6 +6937,9 @@ you forget a command, you can run the command @command{help}
 * lsmem::                       List free and allocated memory blocks
 * lsmemregions::                List memory regions
 * md5sum::                      Compute or check MD5 hash
+* memmove_bench::               Benchmark and test grub_memmove
+* mfa_key_protector_init::      Initialize the MFA key protector
+* mfa_key_protector_clear::     Clear the MFA key protector
 * module::                      Load module for multiboot kernel
 * multiboot::                   Load multiboot compliant kernel
 * nativedisk::                  Switch to native disk drivers
@@ -6722,10 +6947,13 @@ you forget a command, you can run the command @command{help}
 * normal_exit::                 Exit from normal mode
 * parttool::                    Modify partition table entries
 * password::                    Set a clear-text password
-* password_pbkdf2::             Set a hashed password
+* password_argon2::             Set a Argon2 hashed password
+* password_pbkdf2::             Set a PBKDF2 hashed password
 * plainmount::                  Open device encrypted in plain mode
 * play::                        Play a tune
 * probe::                       Retrieve device info
+* pw_key_protector_init::       Initialize the password key protector
+* pw_key_protector_clear::      Clear the password key protector
 * rdmsr::                       Read values from model-specific registers
 * read::                        Read user input
 * reboot::                      Reboot your computer
@@ -6746,6 +6974,7 @@ you forget a command, you can run the command @command{help}
 * tpm2_key_protector_init::     Initialize the TPM2 key protector
 * tpm2_key_protector_clear::    Clear the TPM2 key protector
 * tpm2_dump_pcr::               Dump TPM2 PCRs
+* tpm_record_pcrs::             Snapshot TPM PCRs
 * true::                        Do nothing, successfully
 * trust::                       Add public key to list of trusted keys
 * uki::                         Load Unified Kernel Image menu entries
@@ -7072,6 +7301,76 @@ a menu entry).
 @end deffn
 
 
+@node bootnext
+@subsection bootnext
+
+@deffn Command bootnext @var{[0x]XXXX}
+Set the UEFI @samp{BootNext} variable to @samp{Boot}@var{XXXX}, where
+@var{XXXX} is a hexadecimal boot entry number (with or without a @samp{0x}
+prefix).  The firmware will boot that entry exactly once on the next boot,
+without altering @samp{BootOrder}.  Use the @command{reboot} command
+afterwards to trigger the boot immediately.
+
+The target @samp{Boot}@var{XXXX} entry must already exist; pointing
+@samp{BootNext} at an undefined entry would silently do nothing on the
+next boot, so this is rejected and @samp{BootNext} is left unchanged.
+On success the entry's description (the label shown in the firmware boot
+menu) is printed when it can be decoded, for example:
+
+@example
+grub> @kbd{bootnext 0002}
+BootNext set to Boot0002: UEFI QEMU DVD-ROM QM00003
+@end example
+@end deffn
+
+
+@node btrfs-get-default-subvol
+@subsection btrfs-get-default-subvol
+
+@deffn Command btrfs-get-default-subvol [--output=@var{var}] [--path-only] [--id-only] @var{device}
+Print the default subvolume of @var{device}.
+
+By default, the command prints the default subvolume path.  Use
+@option{--id-only} to print only the subvolume ID.  If both
+@option{--path-only} and @option{--id-only} are given, both ID and path are
+printed.
+
+Use @option{--output} to store the result in GRUB environment variable
+@var{var} instead of printing it.
+@end deffn
+
+
+@node btrfs-info
+@subsection btrfs-info
+
+@deffn Command btrfs-info @var{device}
+Print basic Btrfs filesystem information for @var{device}.
+
+The command reports:
+@itemize @bullet
+@item filesystem label (or @samp{none} if unset),
+@item filesystem UUID,
+@item total device count in the filesystem,
+@item filesystem bytes used.
+@end itemize
+@end deffn
+
+
+@node btrfs-list-subvols
+@subsection btrfs-list-subvols
+
+@deffn Command btrfs-list-subvols [--output=@var{var}] [--path-only] [--id-only] [--read-only] @var{device}
+Enumerate subvolumes on @var{device}.
+
+By default, each entry includes both subvolume ID and path.
+@option{--path-only} prints only paths, and @option{--id-only} prints only IDs.
+@option{--read-only} filters output to read-only subvolumes only.
+
+Use @option{--output} to store all lines in GRUB environment variable @var{var}
+instead of printing them.
+@end deffn
+
+
 @node cat
 @subsection cat
 
@@ -7169,6 +7468,24 @@ variable changes made by the commands in @var{file} will not be preserved
 after @command{configfile} returns.
 @end deffn
 
+@node connectefi
+@subsection connectefi
+
+@deffn Command connectefi pciroot|disk|all
+When used with @samp{pciroot} parameter, all PCI devices are recursively
+connected, which may be a slow operation, depending on the hardware.
+
+When used with @samp{disk} parameter, only SCSI I/O and DISK I/O devices are
+connected; this is the recommended usage when chainloading to internal disk,
+unless some disks are not detected anyway, in such case @samp{all} may be used
+and a bug be reported to enhance the implementation.
+
+When used with @samp{all} parameter, all EFI devices are recursively connected,
+which may be an extremely slow operation, depending on the hardware.
+
+Note: This command is only available on EFI platforms.
+@end deffn
+
 
 @node cpuid
 @subsection cpuid
@@ -7236,8 +7553,8 @@ achieve the desired result.
 
 GRUB supports devices encrypted using LUKS, LUKS2 and geli. Note that necessary
 modules (@var{luks}, @var{luks2} and @var{geli}) have to be loaded manually
-before this command can be used. For LUKS2 only the PBKDF2 key derivation
-function is supported, as Argon2 is not yet supported.
+before this command can be used. For LUKS2, the PBKDF2 and Argon2 key derivation
+functions are supported.
 
 Successfully decrypted disks are named as (cryptoX) and have increasing numeration
 suffix for each new decrypted disk. If the encrypted disk hosts some higher level
@@ -7565,6 +7882,40 @@ hibernated image
 @end deffn
 
 
+@node file_key_protector_init
+@subsection file_key_protector_init
+
+@deffn Command file_key_protector_init [ @option{--key-file} | @option{-k} @var{file_path}][ @option{--keyfile-offset} | @option{-O} @var{offset}][ @option{--keyfile-size} | @option{-S} @var{size}]
+Initialize the file key protector.
+
+This command configures the file key protector, which allows GRUB to read a
+cryptographic key (or a part of a key) from a file on the disk. This is commonly
+used in conjunction with the MFA key protector @xref{MFA key protector} or for
+automatic disk unlocking via a key file.
+
+The @option{-k} option specifies the path to the key file (@var{file_path}).
+The @option{-O} option skips the first @var{offset} bytes of the file. The key data is
+read starting from this offset. The default is 0.
+The @option{-S} option reads exactly @var{size} bytes of data from the file to
+use as the key. If this option is not specified, the entire file is typically used.
+
+Example:
+@example
+file_key_protector_init -k (hd0,gpt1)/efi/grub/keyfile.bin -O 512 -S 64
+@end example
+
+In this example, the file key protector reads 64 bytes from @file{keyfile.bin},
+starting at offset 512.
+@end deffn
+
+@node file_key_protector_clear
+@subsection file_key_protector_clear
+
+@deffn Command file_key_protector_clear
+Clear the file key protector if previously initialized.
+@end deffn
+
+
 @node fwsetup
 @subsection fwsetup
 
@@ -7868,6 +8219,152 @@ Alias for @code{hashsum --hash md5 arg @dots{}}. See command @command{hashsum}
 (@pxref{hashsum}) for full description.
 @end deffn
 
+@node memmove_bench
+@subsection memmove_bench
+
+@deffn Command memmove_bench [@var{loops}]
+Benchmark and correctness-test @code{grub_memmove}.  The command must be
+loaded with @command{insmod} before use:
+
+@example
+insmod memmove_bench
+memmove_bench
+@end example
+
+The optional @var{loops} argument (a positive integer, default @samp{1})
+repeats the benchmark the specified number of times.  When @var{loops} is
+greater than one, each loop's results are printed in full, followed by a
+summary of the average throughput across all loops.
+
+Before running the benchmark the command performs a correctness check of
+@code{grub_memmove} across all copy paths.  If any check fails an error is
+reported and the benchmark is skipped.
+
+The benchmark covers ten scenarios:
+
+@table @asis
+@item Non-overlapping copies (four alignment combinations)
+Aligned source / aligned destination, unaligned source / unaligned
+destination, unaligned source / aligned destination, and aligned source /
+unaligned destination.
+
+@item Overlapping byte-offset copies (two directions)
+Forward overlap (@var{dst} = @var{buf}, @var{src} = @var{buf}+1) and
+backward overlap (@var{dst} = @var{buf}+1, @var{src} = @var{buf}), where the
+1-byte offset forces the byte-copy path.
+
+@item Overlapping word-offset copies (two directions)
+Forward and backward overlap with a word-sized offset between the pointers,
+so both pointers share the same alignment modulo the word size and the
+word-copy path is taken.
+
+@item Overlapping unaligned word-offset copies (two directions)
+Same as the word-offset scenarios above but with both pointers starting one
+byte past an aligned boundary, exercising the word-copy path after the
+initial single-byte alignment step.
+@end table
+
+Each scenario is measured across buffer sizes from 8@tie{}B to 1@tie{}MiB
+(8@tie{}B, 16@tie{}B, 24@tie{}B, 32@tie{}B, 64@tie{}B, 128@tie{}B,
+256@tie{}B, 512@tie{}B, 1@tie{}KiB, 2@tie{}KiB, 4@tie{}KiB, 8@tie{}KiB,
+16@tie{}KiB, 32@tie{}KiB, 64@tie{}KiB, 128@tie{}KiB, 256@tie{}KiB,
+512@tie{}KiB, 1@tie{}MiB).  Throughput is reported in MiB/s.  Sizes that
+complete in under 1@tie{}ms are marked as too fast to measure.
+
+Example output for a single loop:
+
+@example
+grub_memmove benchmark
+ [non-overlap: aligned src,   aligned dst]
+      8 B      11 ms     1387 MiB/s
+     16 B       7 ms     4359 MiB/s
+     24 B       9 ms     5086 MiB/s
+     32 B      11 ms     5548 MiB/s
+     64 B       6 ms    10172 MiB/s
+    128 B      11 ms    11097 MiB/s
+    256 B       8 ms    15258 MiB/s
+    512 B      14 ms    17438 MiB/s
+    1 KiB       8 ms    24414 MiB/s
+    2 KiB      15 ms    26041 MiB/s
+    4 KiB      12 ms    32552 MiB/s
+    8 KiB      24 ms    32552 MiB/s
+   16 KiB      25 ms    31250 MiB/s
+   32 KiB      54 ms    28935 MiB/s
+   64 KiB      22 ms    28409 MiB/s
+  128 KiB      40 ms    31250 MiB/s
+  256 KiB      39 ms    32051 MiB/s
+  512 KiB      78 ms    32051 MiB/s
+    1 MiB      39 ms    25641 MiB/s
+ [non-overlap: unaligned src, unaligned dst]
+@dots{}
+@end example
+
+With @var{loops} set to 20 the output ends with:
+
+@example
+--- averages over 20 loops ---
+ [non-overlap: aligned src,   aligned dst]
+      8 B    1654 MiB/s (avg)
+     16 B    4004 MiB/s (avg)
+     24 B    5467 MiB/s (avg)
+     32 B    6494 MiB/s (avg)
+     64 B    9590 MiB/s (avg)
+    128 B   13069 MiB/s (avg)
+    256 B   15032 MiB/s (avg)
+    512 B   18149 MiB/s (avg)
+    1 KiB   24568 MiB/s (avg)
+    2 KiB   26954 MiB/s (avg)
+    4 KiB   30445 MiB/s (avg)
+    8 KiB   31862 MiB/s (avg)
+   16 KiB   32722 MiB/s (avg)
+   32 KiB   30614 MiB/s (avg)
+   64 KiB   30205 MiB/s (avg)
+  128 KiB   32485 MiB/s (avg)
+  256 KiB   32945 MiB/s (avg)
+  512 KiB   32512 MiB/s (avg)
+    1 MiB   26569 MiB/s (avg)
+ [non-overlap: unaligned src, unaligned dst]
+@dots{}
+@end example
+@end deffn
+
+@node mfa_key_protector_init
+@subsection mfa_key_protector_init
+
+@deffn Command mfa_key_protector_init [ @option{--protector1} | @option{-1} @var{protector1}] [@option{--protector2} | @option{-2} @var{protector2}]
+Initialize the Multi-Factor Authentication (MFA) key protector.
+
+The MFA key protector provides two-factor authentication for unlocking encrypted
+partitions (e.g., LUKS). It does not store the disk key itself but relies on a
+split-key architecture. The final disk key is derived by combining partial keys
+retrieved from two other specified key protectors.
+
+The options @option{--protector1} (or @option{-1}) and @option{--protector2}
+(or @option{-2}) specify the names of the two underlying key protectors to use
+(for example, @samp{file} and @samp{password}).
+
+The order of the protectors is crucial. The MFA key protector reconstructs the
+final key by concatenating the key from the first protector (@var{protector1})
+with the key from the second protector (@var{protector2}).
+
+Example:
+@example
+file_key_protector_init -k (hd0,gpt1)/efi/grub/keyfile.bin
+mfa_key_protector_init -1 file -2 password
+cryptomount -u <UUID> -P mfa
+@end example
+
+In this example, the first part of the key is read from a file, and the second
+part is requested from the user via a password prompt.
+@end deffn
+
+@node mfa_key_protector_clear
+@subsection mfa_key_protector_clear
+
+@deffn Command mfa_key_protector_clear
+Clear the MFA key protector if previously initialized.
+@end deffn
+
 @node module
 @subsection module
 
@@ -7980,12 +8477,23 @@ Define a user named @var{user} with password @var{clear-password}.
 @end deffn
 
 
+@node password_argon2
+@subsection password_argon2
+
+@deffn Command password_argon2 user hashed-password
+Define a user named @var{user} with password hash @var{hashed-password}.
+Use @command{grub-mkpasswd-argon2} (@pxref{Invoking grub-mkpasswd-argon2})
+to generate password hashes.  @xref{Security}.
+@end deffn
+
+
 @node password_pbkdf2
 @subsection password_pbkdf2
 
 @deffn Command password_pbkdf2 user hashed-password
 Define a user named @var{user} with password hash @var{hashed-password}.
-Use @command{grub-mkpasswd-pbkdf2} (@pxref{Invoking grub-mkpasswd-pbkdf2})
+Use @command{grub-mkpasswd-argon2} (@pxref{Invoking grub-mkpasswd-argon2})
+or @command{grub-mkpasswd-pbkdf2} (@pxref{Invoking grub-mkpasswd-pbkdf2})
 to generate password hashes.  @xref{Security}.
 @end deffn
 
@@ -8088,6 +8596,28 @@ Retrieve device information. If option @option{--set} is given, assign result
 to variable @var{var}, otherwise print information on the screen.
 
 The option @option{--part-uuid} is currently only implemented for MSDOS and GPT formatted disks.
+@end deffn
+
+
+@node pw_key_protector_init
+@subsection pw_key_protector_init
+
+@deffn Command pw_key_protector_init [ @option{--password} | @option{-p} @var{password}]
+Initialize the password key protector. This allows providing a static
+password to the @command{cryptomount} command, enabling non-interactive
+unlocking. The option @option{--password} (or @option{-p}) sets the
+password in clear text.
+
+NOTE: In general, there is no need to invoke this command. By default, the
+password key protector is initialized implicitly and prompts the user for
+input interactively.
+@end deffn
+
+@node pw_key_protector_clear
+@subsection pw_key_protector_clear
+
+@deffn Command pw_key_protector_clear
+Clear the password key protector if previously initialized.
 @end deffn
 
 
@@ -8548,13 +9078,13 @@ the strings are not equal
 @item @var{prefix}@var{integer1} @code{-plt} @var{prefix}@var{integer2}
 @var{integer1} is less than @var{integer2} after stripping off common non-numeric @var{prefix}.
 @item @var{file1} @code{-nt} @var{file2}
-@var{file1} is newer than @var{file2} (modification time). Optionally numeric @var{bias} may be directly appended to @code{-nt} in which case it is added to the first file modification time.
+@var{file1} is newer than @var{file2} (modification time). Optionally numeric @var{bias} may be directly appended to @code{-nt} in which case it is added to the first file modification time. For @var{file} on TFTP or HTTP servers, this operation may not work as expected.
 @item @var{file1} @code{-ot} @var{file2}
-@var{file1} is older than @var{file2} (modification time). Optionally numeric @var{bias} may be directly appended to @code{-ot} in which case it is added to the first file modification time.
+@var{file1} is older than @var{file2} (modification time). Optionally numeric @var{bias} may be directly appended to @code{-ot} in which case it is added to the first file modification time. For @var{file} on TFTP or HTTP servers, this operation may not work as expected.
 @item @code{-d} @var{file}
-@var{file} exists and is a directory
+@var{file} exists and is a directory. For @var{file} on TFTP or HTTP servers, the test is unreliable because these protocols are designed for file transport, and GRUB’s netfs does not implement directory listing for them.
 @item @code{-e} @var{file}
-@var{file} exists
+@var{file} exists. For @var{file} on TFTP or HTTP servers, the result is the same as @code{-f} because these protocols are designed for file transport, and GRUB’s netfs lacks directory support to distinguish between files and directories.
 @item @code{-f} @var{file}
 @var{file} exists and is not a directory
 @item @code{-s} @var{file}
@@ -8660,6 +9190,67 @@ is not specified, @samp{sha256} is chosen by default.
 
 Since GRUB measures every command into PCR 8, invoking @command{tpm2_dump_pcr}
 also extends PCR 8, so PCR 8 will not be a stable value in GRUB shell.
+@end deffn
+
+@node tpm_record_pcrs
+@subsection tpm_record_pcrs
+
+@deffn Command tpm_record_pcrs [@option{--name}=@var{name} | @option{-N} @var{name}] [@option{--bank}=@var{bank} | @option{-b} @var{bank}] [@var{pcrlist}@dots{}]
+Read the current values of the specified TPM PCR registers and write them
+to an EFI variable (on UEFI systems) or a device tree property (on PowerPC IEEE1275 systems)
+so that the snapshot is accessible to the operating system after boot.
+
+Note: Only TPM 2.0 is supported; TPM 1.x devices are not supported due to the
+lack of TPM 1.x command support in GRUB.
+
+Each @var{pcrlist} argument is a comma-separated sequence of PCR indices or
+inclusive ranges (e.g.@: @samp{0,2,7} or @samp{0-7}). The keyword @samp{all}
+selects all 24 PCRs. Multiple @var{pcrlist} arguments are combined. If no
+argument is given, all 24 PCRs are recorded.
+
+The @option{--bank} option selects the hash algorithm used to read the PCRs.
+Supported values are @samp{sha1}, @samp{sha256}, @samp{sha384}, and
+@samp{sha512}. The default is @samp{sha256}.
+
+The @option{--name} option sets the target storage name that receives the snapshot.
+The name must not exceed 30 characters; longer names are rejected and the default
+name is used instead.
+
+On UEFI systems, this specifies the name of the EFI variable (default: @samp{GrubPcrSnapshot}).
+The variable is stored under a GRUB-specific GUID and is created with boot-service and
+runtime access but without the non-volatile attribute, so it exists only for the duration of
+the current boot.
+
+On PowerPC IEEE1275 systems, this specifies the name of the device tree property (default:
+@samp{grub,pcr-snapshot}). The property is written under the @file{/chosen} node of the
+OpenFirmware device tree.
+
+The output stored in the variable or property is plain text, one line per PCR:
+
+@example
+NN algo hexdigest
+@end example
+
+@noindent
+where @samp{NN} is the zero-padded PCR index and @samp{hexdigest} is the
+lower-case hexadecimal digest.  For example, the command:
+
+@example
+tpm_record_pcrs 0,2,4,7
+@end example
+
+@noindent
+would store the following in the default variable or property:
+
+@example
+00 sha256 a3b4c5d6e7f8091a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a
+02 sha256 c7d3a19e4f2b8065d1a3e7f9b2c4d6e8f0a1b3c5d7e9f2a4b6c8d0e2f4a6b8c0
+04 sha256 9f8e7d6c5b4a39281726150403020100ffeeddccbbaa99887766554433221100
+07 sha256 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+@end example
+
+If no EFI TCG2 protocol is available (i.e.@: no TPM 2.0 is present), the
+command exits successfully without writing anything.
 @end deffn
 
 @node true
@@ -8791,10 +9382,12 @@ Note: The command is not allowed when lockdown is enforced (@pxref{Lockdown}).
 * net_add_dns::                 Add a DNS server
 * net_add_route::               Add routing entry
 * net_bootp::                   Perform a bootp/DHCP autoconfiguration
+* net_bootp6::                  Perform a DHCPv6 autoconfiguration
 * net_del_addr::                Remove IP address from interface
 * net_del_dns::                 Remove a DNS server
 * net_del_route::               Remove a route entry
 * net_dhcp::                    Perform a DHCP autoconfiguration
+* net_dhcp6::                   Perform a DHCPv6 autoconfiguration
 * net_get_dhcp_option::         Retrieve DHCP options
 * net_ipv6_autoconf::           Perform IPv6 autoconfiguration
 * net_ls_addr::                 List interfaces
@@ -8845,6 +9438,17 @@ by @var{shortname} which can be used to remove it (@pxref{net_del_route}).
 Alias for net_dhcp, for compatibility with older Grub versions. Will perform
 the same DHCP handshake with potential fallback to BOOTP as the net_dhcp
 command (@pxref{net_dhcp}).
+
+@end deffn
+
+
+@node net_bootp6
+@subsection net_bootp6
+
+@deffn Command net_bootp6 [@var{card}]
+Alias for net_dhcp6, for compatibility with older version of the downstream
+patch set. It will perform the same DHCPv6 handshake with the net_dhcp6 command
+(@pxref{net_dhcp6}).
 
 @end deffn
 
@@ -8914,6 +9518,17 @@ Sets environment variable @samp{net_}@var{<card>}@samp{_boot_file}
 (@pxref{net_@var{<interface>}_boot_file}) to the value of option.
 @end table
 
+@end deffn
+
+
+@node net_dhcp6
+@subsection net_dhcp6
+
+@deffn Command net_dhcp6 [@var{card}]
+Perform configuration of @var{card} using DHCPv6 protocol. If no card name is
+specified, try to configure all existing cards. If configuration was
+successful, interface with name @var{card}@samp{:dhcp6} and configured address
+is added to @var{card}.
 @end deffn
 
 
@@ -9053,6 +9668,7 @@ GRUB shell may provide more information on parameters and usage.
 @item @command{lsefi} - Display EFI handles.
 @item @command{lsefimmap} - Display EFI memory map.
 @item @command{lsefisystab} - Display EFI system tables.
+@item @command{lsefivar} - Display EFI firmware variables.
 @item @command{lsmmap} - List memory map provided by firmware.
 @item @command{lspci} - List PCI devices.
 @item @command{lssal} - Display SAL system table.
@@ -9215,7 +9831,7 @@ environment variables and commands are listed in the same order.
 @chapter Security
 
 @menu
-* Authentication and authorisation::   Users and access control
+* Authentication and authorization::   Users and access control
 * Using GPG-style digital signatures:: Booting digitally signed code
 * Using appended signatures::          An alternative approach to booting digitally signed code
 * UEFI secure boot and shim::          Booting digitally signed PE files
@@ -9223,13 +9839,14 @@ environment variables and commands are listed in the same order.
 * Measured Boot::                      Measuring boot components
 * Lockdown::                           Lockdown when booting on a secure setup
 * TPM2 key protector::                 Managing disk key with TPM2 key protector
+* MFA key protector::                  Managing disk key with MFA key protector
 * Signing certificate and hash files:: Certificate and hash file signing
 * Signing GRUB itself::                Ensuring the integrity of the GRUB core image
 * Hardening::                          Configuration and customization to maximize security
 @end menu
 
-@node Authentication and authorisation
-@section Authentication and authorisation in GRUB
+@node Authentication and authorization
+@section Authentication and authorization in GRUB
 
 By default, the boot loader interface is accessible to anyone with physical
 access to the console: anyone can select and edit any menu entry, and anyone
@@ -9242,12 +9859,17 @@ However, in some environments, such as kiosks, it may be appropriate to lock
 down the boot loader to require authentication before performing certain
 operations.
 
-The @samp{password} (@pxref{password}) and @samp{password_pbkdf2}
+The @samp{password} (@pxref{password}), @samp{password_argon2}
+(@pxref{password_argon2}) and @samp{password_pbkdf2}
 (@pxref{password_pbkdf2}) commands can be used to define users, each of
 which has an associated password.  @samp{password} sets the password in
-plain text, requiring @file{grub.cfg} to be secure; @samp{password_pbkdf2}
-sets the password hashed using the Password-Based Key Derivation Function
-(RFC 2898), requiring the use of @command{grub-mkpasswd-pbkdf2}
+plain text, requiring @file{grub.cfg} to be secure; @samp{password_argon2}
+sets the password hashed using the Argon2 key derivation function (RFC 9106),
+requiring the use of @command{grub-mkpasswd-argon2}
+(@pxref{Invoking grub-mkpasswd-argon2}) to generate password hashes.
+@samp{password_pbkdf2} sets the password hashed using the Password-Based Key
+Derivation Function (RFC 2898), requiring the use of @command{grub-mkpasswd-argon2}
+(@pxref{Invoking grub-mkpasswd-argon2}) or @command{grub-mkpasswd-pbkdf2}
 (@pxref{Invoking grub-mkpasswd-pbkdf2}) to generate password hashes.
 
 In order to enable authentication support, the @samp{superusers} environment
@@ -9295,11 +9917,13 @@ menuentry "May be run by user1 or a superuser" --users user1 @{
 @end group
 @end example
 
-The @command{grub-mkconfig} program does not yet have built-in support for
-generating configuration files with authentication.  You can use
-@file{/etc/grub.d/40_custom} to add simple superuser authentication, by
-adding @kbd{set superusers=} and @kbd{password} or @kbd{password_pbkdf2}
-commands.
+The @command{grub-mkconfig} program has built-in support for generating
+configuration files with authentication.  See
+@pxref{Configuring access levels} for more information. Alternatively, you can
+use @file{/etc/grub.d/40_custom} to add simple superuser authentication, by
+adding @kbd{set superusers=} and @kbd{password}, @kbd{password_argon2} or
+@kbd{password_pbkdf2} commands. This is supported for backward compatibility,
+but is no longer recommended.
 
 @node Using GPG-style digital signatures
 @section Using GPG-style digital signatures in GRUB
@@ -9378,7 +10002,7 @@ set check_signatures=no
 @end example
 
 To prevent this, password-protection (@pxref{Authentication and
-authorisation}) is essential.  Note that even with GRUB password
+authorization}) is essential.  Note that even with GRUB password
 protection, GRUB itself cannot prevent someone with physical access to
 the machine from altering that machine's firmware (e.g., Coreboot
 or BIOS) configuration to cause the machine to boot from a different
@@ -9479,8 +10103,16 @@ Certificates/hashes of certificates/binaries added through @command{append_add_d
 @command{append_add_dbx_cert}, @command{append_add_db_hash}, and @command{append_add_dbx_hash}
 will not be persisted across boots.
 
-Only signatures created using SHA-256 or SHA-512 hash algorithm along with RSA keys of size 2048,
-3072, or 4096 bits are supported.
+Signature verification will honor and validate the signed attributes @samp{signedAttrs} if they are
+present in the signature block. If they are absent, it falls back to validating the raw payload directly.
+
+Signatures created using the SHA-256 or SHA-512 hash algorithms, along with the following RSA and ML-DSA,
+are only supported.
+
+@enumerate
+@item RSA: RSA-2048, RSA-3072, and RSA-4096
+@item ML-DSA: ML-DSA-44, ML-DSA-65, and ML-DSA-87
+@end enumerate
 
 A file can be signed with the @command{sign-file} utility supplied with the
 Linux kernel source. For example, if you have @code{signing.key} as the private
@@ -9541,6 +10173,39 @@ the generated EFI binary. The CSV file can be stored anywhere on the file system
 @example
 grub-mkimage -O x86_64-efi -o grubx64.efi -p '(tftp)/grub' --sbat sbat.csv efinet tftp
 @end example
+
+GRUB also installs a generated @file{sbat.csv} in the platform directory for
+supported targets. This file always contains the upstream @samp{grub} SBAT
+entry using the build-time global SBAT level. If GRUB is configured with
+@option{--with-sbat-file=FILE}, the contents of @var{FILE} are appended to the
+generated @file{sbat.csv}. This lets downstream or vendor builds add their own
+SBAT entries while keeping the upstream @samp{grub} entry consistent with the
+build-time global SBAT level.
+
+When invoking @command{grub-mkimage}, an empty @option{--sbat} argument (for
+example, @samp{--sbat=} or @samp{--sbat ""}) means to use the generated
+platform @file{sbat.csv}. A non-empty @option{--sbat} argument instead selects
+the specified SBAT CSV file. When an SBAT CSV file is supplied,
+@command{grub-mkimage} checks it against the build-time global SBAT level and
+warns if the data is malformed or inconsistent, including a missing or invalid
+@samp{grub} entry or a different @samp{grub} generation. This helps catch
+incorrect SBAT metadata before generating EFI or powerpc-ieee1275 images.
+
+To include downstream SBAT entries in images without passing a separate CSV
+file to @command{grub-mkimage}, provide them at configure time and then use an
+empty @option{--sbat} argument when building the image. For example:
+
+@example
+@group
+../configure --with-sbat-file=/path/to/vendor-sbat.csv ...
+
+grub-mkimage -O x86_64-efi -o grubx64.efi -p '(tftp)/grub' --sbat="" efinet tftp
+@end group
+@end example
+
+In this case, @command{grub-mkimage} embeds the generated platform
+@file{sbat.csv}, which already contains the upstream @samp{grub} entry and the
+additional downstream entries from @option{--with-sbat-file}.
 
 @node Measured Boot
 @section Measuring boot components
@@ -10028,12 +10693,100 @@ files.
 
 It is worth mentioning that the built-in password support, as described in
 @samp{Authentication and Authorization in GRUB} (@pxref{Authentication and
-authorisation}), can also be used to protect the command-line interface from
+authorization}), can also be used to protect the command-line interface from
 unauthorized access. However, it is not recommended to rely on this approach as
 it is an optional step. Setting it up requires additional manual intervention,
 which increases the risk of password leakage during the process. Moreover, the
 superuser list must be well maintained, and the password used cannot be
 synchronized with LUKS key rotation.
+
+@node MFA key protector
+@section Multi-Factor Authentication (MFA) key protector
+
+The MFA key protector enhances the security of encrypted partitions (such as LUKS)
+by enforcing a split-key architecture. Unlike standard key protectors that store
+or retrieve a single static key, the MFA protector derives the disk unlocking key
+by combining partial keys from two distinct sources.
+
+This approach ensures that an attacker cannot unlock the encrypted disk if they
+compromise only one of the factors (for example, stealing a USB drive with a key
+file but lacking the passphrase).
+
+The MFA key protector acts as a logic layer on top of other existing key
+protectors. It requires two underlying key protectors, referred to as
+@var{Protector 1} and @var{Protector 2}.
+
+@enumerate
+@item
+@var{Protector 1} retrieves the first segment of the key (e.g., from a file).
+@item
+@var{Protector 2} retrieves the second segment of the key (e.g., from user input).
+@item
+The MFA key protector concatenates these segments to reconstruct the final disk key.
+@end enumerate
+
+For a complete reference on the command syntax and options, please see
+@ref{mfa_key_protector_init}.
+
+@subsection Example Workflow
+
+Here are the sample commands to create a LUKS key (@file{luks.key}) by
+concatenating a 64-byte random file (@file{keyfile.bin}) and a user
+passphrase and enroll the key into the target partition (sda2).
+
+@example
+# Generate the random key file
+@kbd{dd if=/dev/random of=keyfile.bin bs=1 count=64}
+
+# Combine the key file and the user password
+@kbd{cp keyfile.bin luks.key}
+@kbd{read -p "password :" -s password && printf "%s" "$password" >> luks.key }
+
+# Enroll the combined key into LUKS
+@kbd{cryptsetup luksAddKey /dev/sda2 luks.key}
+@end example
+
+To unlock the partition, the underlying key protectors must be initialized
+first. The @command{file_key_protector_init} command configures the file
+protector by specifying the path to the key file (@file{keyfile.bin}). Note
+that the password key protector is initialized implicitly and requires no
+specific setup command.
+
+Once configured, use @command{mfa_key_protector_init} to define the order of
+the factors. Finally, when @command{cryptomount} is invoked with @option{-P mfa},
+GRUB retrieves the key file (Factor 1) and prompts the user for the
+passphrase (Factor 2).
+
+@example
+grub> @kbd{file_key_protector_init -k (hd0,gpt1)/efi/grub/keyfile.bin}
+grub> @kbd{mfa_key_protector_init -1 file -2 password}
+grub> @kbd{cryptomount -u <UUID> -P mfa}
+@end example
+
+Alternatively, the key file (@file{keyfile.bin}) can be sealed with the TPM
+to enhance security.
+
+@example
+@group
+@kbd{grub-protect --action=add \
+             --protector=tpm2 \
+             --tpm2-pcrs=0,2,4,7 \
+             --tpm2key \
+             --tpm2-keyfile=keyfile.bin \
+             --tpm2-outfile=/boot/efi/efi/grub/sealed.tpm}
+@end group
+@end example
+
+In this scenario, the MFA key protector is configured to retrieve the first
+key segment from the tpm2 key protector and the second from the password key
+protector.
+
+@example
+grub> @kbd{tpm2_key_protector_init -T (hd0,gpt1)/efi/grub/sealed.tpm}
+grub> @kbd{mfa_key_protector_init -1 tpm2 -2 password}
+grub> @kbd{cryptomount -u <UUID> -P mfa}
+@end example
+
 
 @node Signing certificate and hash files
 @section Signing certificate and hash files
@@ -10386,7 +11139,7 @@ Information retrieval:
 @itemize
 @item mipsel-loongson: lsspd
 @item mips-arc: lsdev
-@item efi: lsefisystab, lssal, lsefimmap, lsefi
+@item efi: lsefisystab, lssal, lsefimmap, lsefi, lsefivar
 @item i386-pc: lsapm
 @item i386-coreboot: lscoreboot, coreboot_boottime, cbmemc
 @item acpi-enabled (i386-pc, i386-coreboot, i386-multiboot, *-efi): lsacpi
@@ -10653,8 +11406,10 @@ bootability on other machines.
 @menu
 * Invoking grub-install::       How to use the GRUB installer
 * Invoking grub-mkconfig::      Generate a GRUB configuration file
+* Invoking grub-mkpasswd-argon2::
+                                Generate GRUB password hashes (Argon2)
 * Invoking grub-mkpasswd-pbkdf2::
-                                Generate GRUB password hashes
+                                Generate GRUB password hashes (PBKDF2)
 * Invoking grub-mkrelpath::     Make system path relative to its root
 * Invoking grub-mkrescue::      Make a GRUB rescue image
 * Invoking grub-mount::         Mount a file system using GRUB
@@ -10755,12 +11510,46 @@ Send the generated configuration file to @var{file}.  The default is to send
 it to standard output.
 @end table
 
+@node Invoking grub-mkpasswd-argon2
+@section Invoking grub-mkpasswd-argon2
+
+The program @command{grub-mkpasswd-pbkdf2} generates password hashes (Argon2)
+for GRUB (@pxref{Security}).
+
+@example
+grub-mkpasswd-argon2
+@end example
+
+@command{grub-mkpasswd-argon2} accepts the following options:
+
+@table @option
+@item -i @var{number}
+@itemx --iterations=@var{number}
+Number of iterations to perform. Defaults to 5.
+
+@item -m @var{number}
+@itemx --memory=@var{number}
+Amount of memory (in kibibytes) to use. Defaults to 131072.
+
+@item -p @var{number}
+@itemx --parallelism=@var{number}
+Degree of parallelism (i.e. number of threads). Defaults to 1.
+
+@item -l @var{number}
+@itemx --buflen=@var{number}
+Length of the generated hash. Defaults to 32.
+
+@item -s @var{number}
+@itemx --salt=@var{number}
+Length of the salt. Defaults to 16.
+@end table
+
 
 @node Invoking grub-mkpasswd-pbkdf2
 @section Invoking grub-mkpasswd-pbkdf2
 
-The program @command{grub-mkpasswd-pbkdf2} generates password hashes for
-GRUB (@pxref{Security}).
+The program @command{grub-mkpasswd-pbkdf2} generates password hashes (PBKDF)
+for GRUB (@pxref{Security}).
 
 @example
 grub-mkpasswd-pbkdf2
@@ -11065,7 +11854,7 @@ Set the key protector. Currently, @samp{tpm2} is the only supported key
 protector.
 
 @item --tpm2-asymmetric=@var{type}
-Choose the the type of SRK. The valid options are @samp{RSA} (@samp{RSA2048})
+Choose the type of SRK. The valid options are @samp{RSA} (@samp{RSA2048})
 and @samp{ECC} (@samp{ECC_NIST_P256}).(default: @samp{ECC})
 
 @item --tpm2-bank=@var{alg}
@@ -11403,14 +12192,9 @@ Reporting too many things is much better than omitting something
 important.
 @end enumerate
 
-If you follow the guideline above, submit a report to the
-@uref{https://savannah.gnu.org/bugs/?group=grub, Bug Tracking System}.
-Alternatively, you can submit a report via electronic mail to
-@email{bug-grub@@gnu.org}, but we strongly recommend that you use the
-Bug Tracking System, because e-mail can be passed over easily.
-
+If you follow the guideline above,
+@uref{https://gitlab.freedesktop.org/gnu-grub/grub/-/work_items, create an issue}.
 Once we get your report, we will try to fix the bugs.
-
 
 @node Future
 @appendix Where GRUB will go

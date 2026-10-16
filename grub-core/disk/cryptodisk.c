@@ -1255,6 +1255,13 @@ grub_cryptodisk_scan_device_real (const char *name,
 			  tries);
 	}
 
+      /* Zero must be handled separately because the try loop is skipped */
+      if (tries == 0)
+	{
+	  grub_error (GRUB_ERR_ACCESS_DENIED, "passphrase prompting is disabled");
+	  goto error;
+	}
+
       for (; tries > 0; tries--)
 	{
 	  part = grub_partition_get_name (source->partition);

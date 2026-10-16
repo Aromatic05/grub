@@ -38,6 +38,7 @@ static void *fdt;
 #define FDT_ADDR_SIZE_EXTRA ((2 * grub_fdt_prop_entry_size (sizeof(grub_uint32_t))) + \
                              sizeof (FDT_ADDR_CELLS_STRING) + \
                              sizeof (FDT_SIZE_CELLS_STRING))
+#define FDT_BLOB_ALIGNMENT 8
 
 static const struct grub_arg_option options_fdtdump[] = {
   {"prop",	'p', 0, N_("Get property."), N_("prop"), ARG_TYPE_STRING},
@@ -145,7 +146,7 @@ grub_cmd_devicetree (grub_command_t cmd __attribute__ ((unused)),
     goto out;
 
   size = grub_file_size (dtb);
-  blob = grub_malloc (size);
+  blob = grub_memalign (FDT_BLOB_ALIGNMENT, size);
   if (!blob)
     goto out;
 

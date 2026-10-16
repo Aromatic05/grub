@@ -91,7 +91,7 @@ case "${grub_modinfo_target_cpu}-${grub_modinfo_platform}" in
 	disk=arc/scsi0/disk0/rdisk0
 	;;
     arm*-efi)
-	disk=hd2
+	disk=hd1
 	;;
     *)
 	disk=hd0
@@ -171,6 +171,15 @@ create_disk_image "${imgfile}" 128
 ${parted} -a none -s "${imgfile}" mklabel msdos mkpart primary 0 10M mkpart primary 10M 20M mkpart extended 20M 100% mkpart logical 20M 30M mkpart logical 30M 40M mkpart logical 40M 50M mkpart logical 50M 60M
 list_parts part_msdos "${imgfile}" "${outfile}"
 check_output "${outfile}" $disk $disk,msdos1 $disk,msdos5 $disk,msdos6 $disk,msdos7 $disk,msdos8
+
+# 0 primary, 1 extended, 1 logical
+# Regression test for an MBR with no primary partitions: the empty primary
+# slots must still reserve their numbers so the first logical partition is
+# numbered msdos5, not msdos2.
+create_disk_image "${imgfile}" 128
+${parted} -a none -s "${imgfile}" mklabel msdos mkpart extended 1M 100% mkpart logical 2M 10M
+list_parts part_msdos "${imgfile}" "${outfile}"
+check_output "${outfile}" $disk $disk,msdos5
 
 
 #

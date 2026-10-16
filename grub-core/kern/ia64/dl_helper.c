@@ -46,7 +46,7 @@ grub_ia64_set_immu64 (grub_addr_t addr, grub_uint64_t val)
      slot 2: bits 23..63 in t1 */
 
   /* First, clear the bits that form the 64 bit constant.  */
-  t0 &= ~(0x3ffffLL << 46);
+  t0 &= ~(0x3ffffULL << 46);
   t1 &= ~(0x7fffffLL
 	  | ((  (0x07fLL << 13) | (0x1ffLL << 27)
 		| (0x01fLL << 22) | (0x001LL << 21)

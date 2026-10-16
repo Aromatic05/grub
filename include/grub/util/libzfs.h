@@ -42,6 +42,4 @@ extern nvlist_t *zpool_get_config (zpool_handle_t *, nvlist_t **);
 
 #endif /* ! HAVE_LIBZFS_H */
 
-libzfs_handle_t *grub_get_libzfs_handle (void);
-
 #endif

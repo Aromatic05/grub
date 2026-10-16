@@ -96,7 +96,8 @@ for patch in \
 	0010-asn1_test-remove-verbose-and-the-unnecessary-printf.patch \
 	0011-asn1_test-print-the-error-messages-with-grub_printf.patch \
 	0012-asn1_test-use-the-grub-specific-functions-and-types.patch \
-	0013-asn1_test-enable-the-testcase-only-when-GRUB_LONG_MA.patch ; do
+	0013-asn1_test-enable-the-testcase-only-when-GRUB_LONG_MA.patch \
+	0014-asn1_test-adapt-the-coding-long-oid-and-Test_errors-.patch ; do
   patch -p1 -i grub-core/lib/libtasn1-patches/$patch
 done
 

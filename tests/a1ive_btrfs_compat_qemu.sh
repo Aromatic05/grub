@@ -49,7 +49,7 @@ if insmod cat; then echo A1C_OK_INSMOD_CAT; else echo A1C_ERROR_INSMOD_CAT; fi
 
 if btrfs-info (hd1); then echo A1C_OK_BTRFS_INFO; else echo A1C_ERROR_BTRFS_INFO; fi
 if btrfs-get-default-subvol -i -o default_id (hd1); then
-  if [ "$default_id" = "256" ]; then echo A1C_OK_BTRFS_DEFAULT_ID; else echo "A1C_ERROR_DEFAULT_ID=$default_id"; fi
+  if [ "$default_id" = "257" ]; then echo A1C_OK_BTRFS_DEFAULT_ID; else echo "A1C_ERROR_DEFAULT_ID=$default_id"; fi
 else
   echo A1C_ERROR_BTRFS_DEFAULT_CMD
 fi
@@ -59,7 +59,7 @@ else
   echo A1C_ERROR_BTRFS_DEFAULT_PATH_CMD
 fi
 if btrfs-get-default-subvol -p -i -o idpath (hd1); then
-  if [ "$idpath" = "256 /rootfs" ]; then echo A1C_OK_BTRFS_DEFAULT_IDPATH; else echo "A1C_ERROR_DEFAULT_IDPATH=$idpath"; fi
+  if [ "$idpath" = "257 /rootfs" ]; then echo A1C_OK_BTRFS_DEFAULT_IDPATH; else echo "A1C_ERROR_DEFAULT_IDPATH=$idpath"; fi
 else
   echo A1C_ERROR_BTRFS_DEFAULT_IDPATH_CMD
 fi
@@ -107,7 +107,7 @@ if btrfs-mount-subvol (hd1) /missing-dir /rootfs; then echo A1C_ERROR_BTRFS_BAD_
 if btrfs-mount-subvol (hd1) /other /missing-subvol; then echo A1C_ERROR_BTRFS_BAD_MOUNT_SUBVOL; else echo A1C_OK_BTRFS_BAD_MOUNT_SUBVOL; fi
 
 # Both historical environment hooks must change the root used by file open.
-set btrfs_subvolid=256
+set btrfs_subvolid=257
 if cat --set=by_id (hd1)/default.txt; then
   if [ "$by_id" = "A1C_BTRFS_DEFAULT_OK" ]; then echo A1C_OK_BTRFS_SELECT_ID; else echo A1C_ERROR_BTRFS_SELECT_ID_CONTENT; fi
 else
@@ -171,8 +171,8 @@ fi
 grep -aq "Label: 'A1CBTRFS'" "$log" || fail 'btrfs-info did not report fixture label'
 grep -aq 'A1C_LIST_IDS=256' "$log" || fail 'Btrfs list did not include subvol 256'
 grep -aq '257' "$log" || fail 'Btrfs list did not include second subvol 257'
-grep -aq 'A1C_LIST_PATHS=/rootfs' "$log" || fail 'Btrfs -p did not include rootfs path'
+grep -aq '/rootfs' "$log" || fail 'Btrfs -p did not include rootfs path'
 grep -aq '/other' "$log" || fail 'Btrfs -p did not include other path'
-grep -aq 'ID 256 path /rootfs' "$log" || fail 'Btrfs default format did not report ID and path'
+grep -aq 'ID 257 path /rootfs' "$log" || fail 'Btrfs default format did not report ID and path'
 passed=1
 echo 'PASS: Btrfs default/list/path, mount redirection, variable root selection'

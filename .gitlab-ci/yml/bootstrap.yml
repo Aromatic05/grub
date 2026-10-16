@@ -1,0 +1,5 @@
+bootstrap:
+  stage: bootstrap
+  extends: .bootstrap
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

@@ -2,12 +2,26 @@
 
 This is GNU Libtasn1, a small ASN.1 library.
 
-The C library (libtasn1.*) is licensed under the GNU Lesser General
-Public License version 2.1 or later.  See the file COPYING.LIB.
+## License
 
-The command line tool, self tests, examples, and other auxilliary
-files, are licensed under the GNU General Public License version 3.0
-or later.  See the file COPYING.
+The GNU Libtasn1 C library (lib/) is released under the GNU Lesser
+General Public License (LGPL) version 2.1 or later; see
+[COPYING.LESSERv2](COPYING.LESSERv2).
+
+The command line tool (src/), self tests (tests/), examples
+(examples/), and other auxiliary files, are licensed under the GNU
+General Public License version 3.0 or later; see [COPYING](COPYING).
+
+The manual (doc/) is released under the GNU Free Documentation
+License. (FDL) version 1.3 or later, see
+[doc/fdl-1.3.texi](doc/fdl-1.3.texi).
+
+Other files are licensed as indicated in each file.  There may be
+exceptions to these general rules, see each file for precise
+information.
+
+For any copyright year range specified as YYYY-ZZZZ in this package
+note that the range specifies every single year in that closed interval.
 
 ## Building the library
 

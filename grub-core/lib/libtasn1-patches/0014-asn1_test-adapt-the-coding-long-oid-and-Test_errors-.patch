@@ -1,0 +1,167 @@
+From cd8a232f91c76a91f6ef6d1ef998f09ec6c00a6e Mon Sep 17 00:00:00 2001
+From: Thomas Grainger <tagrain@gmail.com>
+Date: Wed, 15 Jul 2026 23:31:47 +0100
+Subject: [PATCH] asn1_test: adapt the coding-long-oid and Test_errors
+ self-tests for GRUB
+
+Adapt two more libtasn1 self-tests to run inside the GRUB asn1_test module,
+applying the same transformations that patches 0007-0013 apply to the
+original set: include only asn1_test.h (plus the pre-generated
+pkix_asn1_tab.h), rename each main() to a test_*() entry point returning
+0/1, drop the argv/verbose handling, load the ASN.1 definitions from a
+compiled asn1_array2tree() table instead of parsing a .asn file at run time,
+and print diagnostics with grub_printf().
+
+coding-long-oid checks decoding of OIDs whose arcs need more than 32 bits.
+Upstream re-encodes the certificate and compares it against the input, but
+GRUB builds libtasn1 without the DER encoder (see patch 0001), so the
+re-encode/compare step is dropped and only the decoding path - the side that
+has to cope with the long OIDs - is exercised. Test_errors just walks
+asn1_strerror() over every error code.
+
+Signed-off-by: Thomas Grainger <tagrain@gmail.com>
+---
+ grub-core/tests/asn1/tests/Test_errors.c     | 12 +---
+ grub-core/tests/asn1/tests/coding-long-oid.c | 64 +++++---------------
+ 2 files changed, 18 insertions(+), 58 deletions(-)
+
+diff --git a/grub-core/tests/asn1/tests/Test_errors.c b/grub-core/tests/asn1/tests/Test_errors.c
+index b31af75..cc08bd1 100644
+--- a/grub-core/tests/asn1/tests/Test_errors.c
++++ b/grub-core/tests/asn1/tests/Test_errors.c
+@@ -18,25 +18,17 @@
+  *
+  */
+ 
+-#include <config.h>
+-
+-#include "libtasn1.h"
++#include "asn1_test.h"
+ 
+ int
+-main (int argc, char *argv[])
++test_errors (void)
+ {
+   int ec = 0;
+   const char *errstr;
+-  int verbose = 0;
+-
+-  if (argc > 1)
+-    verbose = 1;
+ 
+   do
+     {
+       errstr = asn1_strerror (ec);
+-      if (verbose != 0)
+-	asn1_perror (ec);
+       ec++;
+     }
+   while (errstr);
+diff --git a/grub-core/tests/asn1/tests/coding-long-oid.c b/grub-core/tests/asn1/tests/coding-long-oid.c
+index 245d1b6..7ae9ac9 100644
+--- a/grub-core/tests/asn1/tests/coding-long-oid.c
++++ b/grub-core/tests/asn1/tests/coding-long-oid.c
+@@ -18,18 +18,16 @@
+  *
+  */
+ 
+-#include <config.h>
++#include "asn1_test.h"
++#include "pkix_asn1_tab.h"
+ 
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <string.h>
+-#include <libtasn1.h>
+-
+-/* This checks the decoding and re-encoding of OIDs which contain elements
+- * >= 2^32 bits.
++/* This checks the decoding of OIDs which contain elements >= 2^32 bits.
++ * Upstream also re-encodes and compares against the input, but GRUB builds
++ * libtasn1 without the DER encoder (asn1_der_coding()), so this only exercises
++ * the decoding path - which is the side that has to cope with the long OIDs.
+  */
+ 
+-const unsigned char der_data[] =
++static const unsigned char der_data[] =
+   "\x30\x82\x06\xdc\x30\x82\x05\xc4\xa0\x03\x02\x01\x02\x02\x08\x35"
+   "\x73\x8c\xaf\x21\xea\xbd\x2d\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7"
+   "\x0d\x01\x01\x05\x05\x00\x30\x81\x8e\x31\x0b\x30\x09\x06\x03\x55"
+@@ -141,65 +139,35 @@ const unsigned char der_data[] =
+   "\x9c\x7b\xa2\x74\x6f\x87\x97\xa1\xd9\x82\x7f\x7d\x62\x6b\x45\x6c"
+   "\x0b\x5e\x25\x43\x8a\x20\x16\x7d\xe5\x84\x18\x3f\x7c\xda\xfc\xf9";
+ 
+-int der_data_size = sizeof (der_data) - 1;
+-
+-char new_data[4 * 1024];
++static int der_data_size = sizeof (der_data) - 1;
+ 
+ int
+-main (int argc, char **argv)
++test_coding_long_oid (void)
+ {
+   int result = 0;
+   asn1_node definitions = NULL, node1 = NULL;
+   char errorDescription[ASN1_MAX_ERROR_DESCRIPTION_SIZE];
+-  const char *pkixfile = getenv ("ASN1PKIX");
+-  int new_data_size;
+ 
+-  if (!pkixfile)
+-    pkixfile = "pkix.asn";
+-
+-  /* Encode */
+-  result = asn1_parser2tree (pkixfile, &definitions, errorDescription);
++  result = asn1_array2tree (pkix_asn1_tab, &definitions, errorDescription);
+   if (result != ASN1_SUCCESS)
+     {
+-      printf ("error in %d: %s\n", __LINE__, errorDescription);
+-      exit (1);
++      grub_printf ("error in %d: %s\n", __LINE__, errorDescription);
++      return 1;
+     }
+ 
+   result = asn1_create_element (definitions, "PKIX1.Certificate", &node1);
+   if (result != ASN1_SUCCESS)
+     {
+-      printf ("error in %d\n", __LINE__);
+-      exit (1);
++      grub_printf ("error in %d\n", __LINE__);
++      return 1;
+     }
+ 
+   result =
+     asn1_der_decoding (&node1, der_data, der_data_size, errorDescription);
+   if (result != ASN1_SUCCESS)
+     {
+-      printf ("error in %d: %s\n", __LINE__, errorDescription);
+-      exit (1);
+-    }
+-
+-  new_data_size = sizeof (new_data);
+-  result =
+-    asn1_der_coding (node1, "", new_data, &new_data_size, errorDescription);
+-  if (result != ASN1_SUCCESS)
+-    {
+-      printf ("error in %d\n", __LINE__);
+-      exit (1);
+-    }
+-
+-  if (new_data_size != der_data_size)
+-    {
+-      printf ("error in %d\n", __LINE__);
+-      printf ("new_size is %d, expected: %d\n", new_data_size, der_data_size);
+-      exit (1);
+-    }
+-
+-  if (memcmp (new_data, der_data, der_data_size) != 0)
+-    {
+-      printf ("error in %d\n", __LINE__);
+-      exit (1);
++      grub_printf ("error in %d: %s\n", __LINE__, errorDescription);
++      return 1;
+     }
+ 
+   asn1_delete_structure (&node1);
+-- 
+2.43.0
+

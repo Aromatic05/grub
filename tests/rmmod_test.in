@@ -1,0 +1,160 @@
+#! @BUILD_SHEBANG@
+set -e
+
+# Copyright (C) 2026  Free Software Foundation, Inc.
+#
+# GRUB is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# GRUB is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
+
+. "@builddir@/grub-core/modinfo.sh"
+
+# PLATFORM: emu links modules statically into grub-emu, so insmod/rmmod
+# do not exercise the dynamic-module dl path this test targets, and the
+# rescue image grub-shell builds does not carry the .mod files emu would
+# need.  The bug being exercised here is in grub_mini_cmd_rmmod's
+# unconditional grub_dl_unref, which is only meaningful for dynamically
+# loaded modules on real GRUB platforms.
+case "${grub_modinfo_target_cpu}-${grub_modinfo_platform}" in
+    *-emu)
+	exit 77;;
+esac
+
+# Regression test for the issue where grub_mini_cmd_rmmod called
+# grub_dl_unref unconditionally before grub_dl_unload.  For a freshly
+# autoloaded module that does not self-ref in its GRUB_MOD_INIT,
+# ref_count steady-states at 0 (per grub-core/kern/dl.c grub_dl_load_file),
+# so the unref underflowed grub_uint64_t and tripped
+# grub_fatal("Module reference count underflow"), aborting the GRUB
+# session.
+
+# Some grub serial outputs line-wrap long messages at the firmware's
+# console width (e.g. EFI Serial IO on arm64-efi wraps at column 80
+# and eats the space at the break point), so long-string assertions
+# below normalise the captured output by flattening whitespace.  The
+# short "OKn" markers never wrap, so they keep their on-line anchors.
+# Mechanism: tr replaces CR/LF/TAB with single spaces, then `tr -s ' '`
+# collapses runs so a wrapped message and an unwrapped one compare equal.
+flatten () {
+    printf '%s' "$1" | tr '\r\n\t' '   ' | tr -s ' '
+}
+
+# Test 1: rmmod on a ref_count == 0 autoloaded module must succeed
+# silently and continue execution.  `gzio` is registered as part of
+# the decompression chain at startup and does not self-ref in its
+# MOD_INIT, so its steady-state ref_count is 0 -- this is the path
+# that hits the underflow under the old unconditional grub_dl_unref.
+# Use lsmod to confirm gzio is present at ref_count 0 before rmmod-ing
+# it: if the rescue image ever stops autoloading gzio, or gzio drifts
+# to a nonzero ref_count, Test 1 would silently vacuously pass (the
+# rmmod would either emit "no such module" or take the ref_count>0
+# path, yet `echo OK1` still runs), masking the regression.  The
+# lsmod ref_count column is the field after the module name.
+out=$(echo 'lsmod; rmmod gzio; echo OK1' | @builddir@/grub-shell 2>&1)
+flat=$(flatten "$out")
+if ! echo "$flat" | grep -qE '(^| )gzio 0( |$)'; then
+    echo "FAIL: gzio not present at ref_count 0 in lsmod; Test 1 would"
+    echo "not exercise the ref_count==0 rmmod path.  Pick a different"
+    echo "autoloaded module that does not self-ref in its MOD_INIT."
+    echo "$out"
+    exit 1
+fi
+if echo "$flat" | grep -q 'no such module'; then
+    echo "FAIL: rmmod gzio reported 'no such module'; lsmod check"
+    echo "above should have caught this, but did not."
+    echo "$out"
+    exit 1
+fi
+if echo "$flat" | grep -q 'cannot unload referenced module'; then
+    echo "FAIL: rmmod gzio reported 'cannot unload referenced module';"
+    echo "Test 1 must exercise the ref_count==0 path, not a ref_count>0"
+    echo "path.  Pick a different autoloaded module that does not"
+    echo "self-ref in its MOD_INIT."
+    echo "$out"
+    exit 1
+fi
+if ! echo "$out" | grep -q '^OK1$'; then
+    echo "FAIL: rmmod on autoloaded ref_count==0 module did not run to completion"
+    echo "$out"
+    exit 1
+fi
+if echo "$flat" | grep -q 'Module reference count underflow'; then
+    echo "FAIL: rmmod on autoloaded ref_count==0 module hit underflow"
+    echo "$out"
+    exit 1
+fi
+
+# Test 2: insmod / rmmod round-trip must succeed.  grub_core_cmd_insmod
+# at grub-core/kern/corecmd.c:90 does grub_dl_ref(mod) after loading, so
+# the module's ref_count is 1 after `insmod`.  rmmod must release that
+# reference (the conditional grub_dl_unref) and unload the module.
+# Use `hexdump`: defined in grub-core/Makefile.core.def with no
+# `enable =` gate so it builds on every target, and its GRUB_MOD_INIT
+# does not call grub_dl_ref (commands/hexdump.c) so the post-insmod
+# ref_count is exactly 1.  (The MR-review regression was reported
+# against `gdb`, but `gdb` is gated `enable = i386;` and isn't present
+# on x86_64-efi / arm64-efi rescue images.)
+# A POST-INSMOD marker splits the captured output so the pre- and
+# post-rmmod lsmod views can be checked separately: a silent insmod
+# failure would otherwise let Test 2 vacuously pass.
+out=$(echo 'insmod hexdump; lsmod; echo POST-INSMOD; rmmod hexdump; lsmod; echo OK2' | @builddir@/grub-shell 2>&1)
+flat=$(flatten "$out")
+pre=$(echo "$out" | sed -n '1,/POST-INSMOD/p')
+post=$(echo "$out" | sed -n '/POST-INSMOD/,$p')
+pre_flat=$(flatten "$pre")
+post_flat=$(flatten "$post")
+if ! echo "$pre_flat" | grep -qE '(^| )hexdump '; then
+    echo "FAIL: hexdump not loaded after 'insmod hexdump'.  Either"
+    echo "hexdump.mod is missing from the rescue image (Test 2 would"
+    echo "vacuously pass) or insmod errored silently."
+    echo "$out"
+    exit 1
+fi
+if echo "$post_flat" | grep -qE '(^| )hexdump '; then
+    echo "FAIL: hexdump still present in lsmod after 'rmmod hexdump'"
+    echo "$out"
+    exit 1
+fi
+if ! echo "$out" | grep -q '^OK2$'; then
+    echo "FAIL: insmod/rmmod round-trip aborted instead of completing"
+    echo "$out"
+    exit 1
+fi
+if echo "$flat" | grep -q 'cannot unload referenced module'; then
+    echo "FAIL: rmmod hexdump refused after insmod hexdump; the"
+    echo "conditional grub_dl_unref must release the reference insmod"
+    echo "took."
+    echo "$out"
+    exit 1
+fi
+if echo "$flat" | grep -q 'Module reference count underflow'; then
+    echo "FAIL: insmod hexdump; rmmod hexdump hit underflow"
+    echo "$out"
+    exit 1
+fi
+
+# Test 3: rmmod on a name that does not match any module must error,
+# not abort.
+out=$(echo 'rmmod nosuchmodule42; echo OK3' | @builddir@/grub-shell 2>&1)
+flat=$(flatten "$out")
+if ! echo "$out" | grep -q '^OK3$'; then
+    echo "FAIL: rmmod on unknown module aborted instead of erroring"
+    echo "$out"
+    exit 1
+fi
+if ! echo "$flat" | grep -q 'no such module'; then
+    echo "FAIL: expected 'no such module' error"
+    echo "$out"
+    exit 1
+fi
+
+exit 0

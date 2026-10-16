@@ -164,7 +164,7 @@ grub_util_render_label (const char *label_font,
 		       strerror (errno));
     }
 
-  fontfull = xasprintf ("(host)/%s", t);
+  fontfull = xasprintf ("(host)%s", t);
   free (t);
 
   grub_font_loader_init ();

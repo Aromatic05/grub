@@ -25,7 +25,7 @@
 #include <grub/symbol.h>
 #include <grub/misc.h>
 
-#if defined(GRUB_DIVISION_IN_SOFTWARE) && GRUB_DIVISION_IN_SOFTWARE
+#if defined(GRUB_DIVISION_IN_SOFTWARE) && GRUB_DIVISION_IN_SOFTWARE && !defined(__mips__)
 
 grub_uint32_t
 EXPORT_FUNC (__udivsi3) (grub_uint32_t a, grub_uint32_t b);
@@ -38,6 +38,10 @@ EXPORT_FUNC (__divsi3) (grub_int32_t a, grub_int32_t b);
 
 grub_int32_t
 EXPORT_FUNC (__modsi3) (grub_int32_t a, grub_int32_t b);
+
+#endif
+
+#if (defined(GRUB_DIVISION_IN_SOFTWARE) && GRUB_DIVISION_IN_SOFTWARE)
 
 grub_int64_t
 EXPORT_FUNC (__divdi3) (grub_int64_t a, grub_int64_t b);
@@ -72,6 +76,9 @@ grub_uint32_t
 EXPORT_FUNC (__aeabi_uidiv) (grub_uint32_t a, grub_uint32_t b);
 grub_uint32_t
 EXPORT_FUNC (__aeabi_uidivmod) (grub_uint32_t a, grub_uint32_t b);
+
+grub_uint64_t
+EXPORT_FUNC (__aeabi_uldivmod) (grub_uint64_t a, grub_uint64_t b);
 
 grub_int32_t
 EXPORT_FUNC (__aeabi_idiv) (grub_int32_t a, grub_int32_t b);
@@ -207,6 +214,7 @@ void EXPORT_FUNC (__register_frame_info) (void);
 void EXPORT_FUNC (__deregister_frame_info) (void);
 void EXPORT_FUNC (___chkstk_ms) (void);
 void EXPORT_FUNC (__chkstk_ms) (void);
+void EXPORT_FUNC (_pei386_runtime_relocator) (void);
 #endif
 
 #endif

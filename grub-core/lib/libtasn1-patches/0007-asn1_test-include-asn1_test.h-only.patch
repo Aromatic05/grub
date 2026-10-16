@@ -1,4 +1,4 @@
-From 9cc63a71d6772947127d4d77e135d5fda68ccb8d Mon Sep 17 00:00:00 2001
+From caa670416654490630c6ce802202bef0e066c275 Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Fri, 16 Aug 2024 14:10:21 +0800
 Subject: [PATCH 07/13] asn1_test: include asn1_test.h only
@@ -22,10 +22,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  8 files changed, 9 insertions(+), 40 deletions(-)
 
 diff --git a/grub-core/tests/asn1/tests/CVE-2018-1000654.c b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-index 0c22b7012..98c2a8b8c 100644
+index 68eb079..c2f210e 100644
 --- a/grub-core/tests/asn1/tests/CVE-2018-1000654.c
 +++ b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-@@ -22,9 +22,7 @@
+@@ -24,9 +24,7 @@
  /* Description: reproducer for CVE-2018-1000654			*/
  /****************************************************************/
  
@@ -37,10 +37,10 @@ index 0c22b7012..98c2a8b8c 100644
  #include "CVE-2018-1000654-2_asn1_tab.h"
  
 diff --git a/grub-core/tests/asn1/tests/Test_overflow.c b/grub-core/tests/asn1/tests/Test_overflow.c
-index c61dea4bb..73e9d8c68 100644
+index 0ecbf34..7d70f6d 100644
 --- a/grub-core/tests/asn1/tests/Test_overflow.c
 +++ b/grub-core/tests/asn1/tests/Test_overflow.c
-@@ -20,12 +20,7 @@
+@@ -22,12 +22,7 @@
  
  /* Written by Simon Josefsson */
  
@@ -55,12 +55,12 @@ index c61dea4bb..73e9d8c68 100644
  int
  main (int argc, char **argv)
 diff --git a/grub-core/tests/asn1/tests/Test_simple.c b/grub-core/tests/asn1/tests/Test_simple.c
-index 6cd07e069..3aa8ce21b 100644
+index d054def..a1865f5 100644
 --- a/grub-core/tests/asn1/tests/Test_simple.c
 +++ b/grub-core/tests/asn1/tests/Test_simple.c
-@@ -20,11 +20,7 @@
-  *
-  */
+@@ -22,11 +22,7 @@
+ 
+ #include <config.h>
  
 -#include <stdio.h>
 -#include <string.h>
@@ -72,12 +72,12 @@ index 6cd07e069..3aa8ce21b 100644
  struct tv
  {
 diff --git a/grub-core/tests/asn1/tests/Test_strings.c b/grub-core/tests/asn1/tests/Test_strings.c
-index 27f7215e1..c49229af9 100644
+index 6944060..f5fc0b8 100644
 --- a/grub-core/tests/asn1/tests/Test_strings.c
 +++ b/grub-core/tests/asn1/tests/Test_strings.c
-@@ -20,11 +20,7 @@
-  *
-  */
+@@ -22,11 +22,7 @@
+ 
+ #include <config.h>
  
 -#include <stdio.h>
 -#include <string.h>
@@ -89,12 +89,12 @@ index 27f7215e1..c49229af9 100644
  struct tv
  {
 diff --git a/grub-core/tests/asn1/tests/object-id-decoding.c b/grub-core/tests/asn1/tests/object-id-decoding.c
-index 06a6c52a2..0a77db752 100644
+index 8691401..400dc92 100644
 --- a/grub-core/tests/asn1/tests/object-id-decoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-decoding.c
-@@ -18,11 +18,7 @@
-  *
-  */
+@@ -20,11 +20,7 @@
+ 
+ #include <config.h>
  
 -#include <stdio.h>
 -#include <string.h>
@@ -106,12 +106,12 @@ index 06a6c52a2..0a77db752 100644
  struct tv
  {
 diff --git a/grub-core/tests/asn1/tests/object-id-encoding.c b/grub-core/tests/asn1/tests/object-id-encoding.c
-index 1a3396986..e32835830 100644
+index 90d69d0..67bf81f 100644
 --- a/grub-core/tests/asn1/tests/object-id-encoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-encoding.c
-@@ -18,11 +18,7 @@
-  *
-  */
+@@ -20,11 +20,7 @@
+ 
+ #include <config.h>
  
 -#include <stdio.h>
 -#include <string.h>
@@ -123,12 +123,12 @@ index 1a3396986..e32835830 100644
  struct tv
  {
 diff --git a/grub-core/tests/asn1/tests/octet-string.c b/grub-core/tests/asn1/tests/octet-string.c
-index 69eb18a62..8e803af41 100644
+index 1bd8108..6b2eade 100644
 --- a/grub-core/tests/asn1/tests/octet-string.c
 +++ b/grub-core/tests/asn1/tests/octet-string.c
-@@ -20,11 +20,7 @@
-  *
-  */
+@@ -22,11 +22,7 @@
+ 
+ #include <config.h>
  
 -#include <stdio.h>
 -#include <string.h>
@@ -140,10 +140,10 @@ index 69eb18a62..8e803af41 100644
  struct tv
  {
 diff --git a/grub-core/tests/asn1/tests/reproducers.c b/grub-core/tests/asn1/tests/reproducers.c
-index a09d8b021..ce24e0991 100644
+index 667536d..c0cb694 100644
 --- a/grub-core/tests/asn1/tests/reproducers.c
 +++ b/grub-core/tests/asn1/tests/reproducers.c
-@@ -22,13 +22,9 @@
+@@ -24,13 +24,9 @@
  /* Description: run reproducers for several fixed issues        */
  /****************************************************************/
  

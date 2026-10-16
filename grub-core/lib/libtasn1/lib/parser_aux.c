@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2000-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2000-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,10 +14,11 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
+
+#include <config.h>
 
 #include <limits.h>		/* WORD_BIT */
 
@@ -62,7 +63,7 @@ __attribute__((no_sanitize ("integer")))
 /* Return: pointer to the new element.                */
 /******************************************************/
 asn1_node
-_asn1_add_static_node (list_type ** e_list, unsigned int type)
+_asn1_add_static_node (list_type **e_list, unsigned int type)
 {
   list_type *p;
   asn1_node punt;
@@ -88,7 +89,7 @@ _asn1_add_static_node (list_type ** e_list, unsigned int type)
 }
 
 static int
-_asn1_add_static_node2 (list_type ** e_list, asn1_node node)
+_asn1_add_static_node2 (list_type **e_list, asn1_node node)
 {
   list_type *p;
 
@@ -125,6 +126,7 @@ asn1_find_node (asn1_node_const pointer, const char *name)
   const char *n_start;
   unsigned int nsize;
   unsigned int nhash;
+  const struct asn1_node_array_st *numbered_children;
 
   if (pointer == NULL)
     return NULL;
@@ -208,6 +210,7 @@ asn1_find_node (asn1_node_const pointer, const char *name)
       if (p->down == NULL)
 	return NULL;
 
+      numbered_children = &p->numbered_children;
       p = p->down;
       if (p == NULL)
 	return NULL;
@@ -221,6 +224,12 @@ asn1_find_node (asn1_node_const pointer, const char *name)
 	}
       else
 	{			/* no "?LAST" */
+	  if (n[0] == '?' && c_isdigit (n[1]))
+	    {
+	      long position = strtol (n + 1, NULL, 10);
+	      if (position > 0 && position < LONG_MAX)
+		p = _asn1_node_array_get (numbered_children, position - 1);
+	    }
 	  while (p)
 	    {
 	      if (p->name_hash == nhash && !strcmp (p->name, n))
@@ -508,6 +517,8 @@ _asn1_remove_node (asn1_node node, unsigned int flags)
       if (node->value != node->small_value)
 	free (node->value);
     }
+
+  free (node->numbered_children.nodes);
   free (node);
 }
 
@@ -559,7 +570,7 @@ _asn1_is_up (asn1_node_const up_cand, asn1_node_const down)
 /* Description: deletes the list element given                    */
 /******************************************************************/
 void
-_asn1_delete_node_from_list (list_type * list, asn1_node node)
+_asn1_delete_node_from_list (list_type *list, asn1_node node)
 {
   list_type *p = list;
 
@@ -577,7 +588,7 @@ _asn1_delete_node_from_list (list_type * list, asn1_node node)
 /*  pointed by them).                                             */
 /******************************************************************/
 void
-_asn1_delete_list (list_type * e_list)
+_asn1_delete_list (list_type *e_list)
 {
   list_type *p;
 
@@ -595,7 +606,7 @@ _asn1_delete_list (list_type * e_list)
 /*  pointed by them.                                              */
 /******************************************************************/
 void
-_asn1_delete_list_and_nodes (list_type * e_list)
+_asn1_delete_list_and_nodes (list_type *e_list)
 {
   list_type *p;
 
@@ -727,7 +738,7 @@ _asn1_change_integer_value (asn1_node node)
 /*   otherwise ASN1_SUCCESS                                       */
 /******************************************************************/
 int
-_asn1_expand_object_id (list_type ** list, asn1_node node)
+_asn1_expand_object_id (list_type **list, asn1_node node)
 {
   asn1_node p, p2, p3, p4, p5;
   char name_root[ASN1_MAX_NAME_SIZE], name2[2 * ASN1_MAX_NAME_SIZE + 1];

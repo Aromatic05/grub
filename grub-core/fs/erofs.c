@@ -827,7 +827,7 @@ grub_erofs_dir (grub_device_t device, const char *path, grub_fs_dir_hook_t hook,
   erofs_iterate_dir (fdiro, erofs_dir_iter, &ctx);
 
  fail:
-  if (fdiro != &ctx.data->inode)
+  if (ctx.data != NULL && fdiro != &ctx.data->inode)
     grub_free (fdiro);
   grub_free (ctx.data);
 
@@ -869,7 +869,7 @@ grub_erofs_open (grub_file_t file, const char *name)
   return GRUB_ERR_NONE;
 
  fail:
-  if (fdiro != &data->inode)
+  if (data != NULL && fdiro != &data->inode)
     grub_free (fdiro);
   grub_free (data);
 

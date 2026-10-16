@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2002-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,11 +14,11 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
+#include <config.h>
 
 /*****************************************************/
 /* File: structure.c                                 */
@@ -27,10 +27,13 @@
 /*****************************************************/
 
 
-#include <int.h>
-#include <structure.h>
+#include "int.h"
+#include "structure.h"
 #include "parser_aux.h"
-#include <gstr.h>
+#include "gstr.h"
+#include "c-ctype.h"
+#include "element.h"
+#include <limits.h>
 
 
 extern char _asn1_identifierMissing[];
@@ -174,7 +177,7 @@ _asn1_create_static_structure (asn1_node_const pointer,
  *   %ASN1_ARRAY_ERROR if the array pointed by @array is wrong.
  **/
 int
-asn1_array2tree (const asn1_static_node * array, asn1_node * definitions,
+asn1_array2tree (const asn1_static_node *array, asn1_node *definitions,
 		 char *errorDescription)
 {
   asn1_node p, p_last = NULL;
@@ -291,7 +294,7 @@ asn1_array2tree (const asn1_static_node * array, asn1_node * definitions,
  *   *@structure was NULL.
  **/
 int
-asn1_delete_structure (asn1_node * structure)
+asn1_delete_structure (asn1_node *structure)
 {
   return _asn1_delete_structure (NULL, structure, 0);
 }
@@ -308,13 +311,13 @@ asn1_delete_structure (asn1_node * structure)
  *   *@structure was NULL.
  **/
 int
-asn1_delete_structure2 (asn1_node * structure, unsigned int flags)
+asn1_delete_structure2 (asn1_node *structure, unsigned int flags)
 {
   return _asn1_delete_structure (NULL, structure, flags);
 }
 
 int
-_asn1_delete_structure (list_type * e_list, asn1_node * structure,
+_asn1_delete_structure (list_type *e_list, asn1_node *structure,
 			unsigned int flags)
 {
   asn1_node p, p2, p3;
@@ -390,6 +393,15 @@ asn1_delete_element (asn1_node structure, const char *element_name)
 
   if (source_node == NULL)
     return ASN1_ELEMENT_NOT_FOUND;
+
+  if (source_node->parent
+      && source_node->name[0] == '?' && c_isdigit (source_node->name[1]))
+    {
+      long position = strtol (source_node->name + 1, NULL, 10);
+      if (position > 0 && position < LONG_MAX)
+	_asn1_node_array_set (&source_node->parent->numbered_children,
+			      position - 1, NULL);
+    }
 
   p2 = source_node->right;
   p3 = _asn1_find_left (source_node);
@@ -578,7 +590,7 @@ _asn1_type_choice_config (asn1_node node)
 
 
 static int
-_asn1_expand_identifier (asn1_node * node, asn1_node_const root)
+_asn1_expand_identifier (asn1_node *node, asn1_node_const root)
 {
   asn1_node p, p2, p3;
   char name2[ASN1_MAX_NAME_SIZE + 2];
@@ -701,7 +713,7 @@ _asn1_expand_identifier (asn1_node * node, asn1_node_const root)
  **/
 int
 asn1_create_element (asn1_node_const definitions, const char *source_name,
-		     asn1_node * element)
+		     asn1_node *element)
 {
   asn1_node dest_node;
   int res;
@@ -735,7 +747,7 @@ asn1_create_element (asn1_node_const definitions, const char *source_name,
  * from the @name element inside the structure @structure.
  **/
 void
-asn1_print_structure (FILE * out, asn1_node_const structure, const char *name,
+asn1_print_structure (FILE *out, asn1_node_const structure, const char *name,
 		      int mode)
 {
   asn1_node_const p, root;

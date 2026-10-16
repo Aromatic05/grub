@@ -763,6 +763,8 @@ grub_freebsd_boot (void)
       stack[0] = entry;
       stack[1] = bi.tags;
       stack[2] = kern_end;
+
+      grub_relocator_use_preamble (relocator);
       return grub_relocator64_boot (relocator, state, 0, 0x40000000);
     }
   else

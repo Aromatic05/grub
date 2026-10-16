@@ -669,13 +669,14 @@ grub_util_is_special_file (const char *name)
 
 #else
 
-void
+int
 grub_util_file_sync (FILE *f)
 {
   fflush (f);
   if (!allow_fd_syncs)
-    return;
+    return 0;
   fsync (fileno (f));
+  return 0;
 }
 
 FILE *

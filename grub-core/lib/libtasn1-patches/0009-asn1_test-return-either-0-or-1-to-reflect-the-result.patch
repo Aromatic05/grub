@@ -1,4 +1,4 @@
-From 103ec39de5277e2683099017959415e107b885a5 Mon Sep 17 00:00:00 2001
+From e5a33c3e976f31b8e1b81ec9e5e2b550f54c8c46 Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Fri, 16 Aug 2024 15:32:39 +0800
 Subject: [PATCH 09/13] asn1_test: return either 0 or 1 to reflect the results
@@ -17,10 +17,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  2 files changed, 6 insertions(+), 6 deletions(-)
 
 diff --git a/grub-core/tests/asn1/tests/CVE-2018-1000654.c b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-index a935ab541..2085b3cd3 100644
+index 5554086..398253f 100644
 --- a/grub-core/tests/asn1/tests/CVE-2018-1000654.c
 +++ b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-@@ -45,7 +45,7 @@ test_CVE_2018_1000654 (void)
+@@ -47,7 +47,7 @@ test_CVE_2018_1000654 (void)
      {
        asn1_perror (result);
        printf ("ErrorDescription = %s\n\n", errorDescription);
@@ -29,7 +29,7 @@ index a935ab541..2085b3cd3 100644
      }
  
    asn1_delete_structure (&definitions);
-@@ -59,12 +59,12 @@ test_CVE_2018_1000654 (void)
+@@ -61,12 +61,12 @@ test_CVE_2018_1000654 (void)
      {
        asn1_perror (result);
        printf ("ErrorDescription = %s\n\n", errorDescription);
@@ -45,10 +45,10 @@ index a935ab541..2085b3cd3 100644
 +  return 0;
  }
 diff --git a/grub-core/tests/asn1/tests/reproducers.c b/grub-core/tests/asn1/tests/reproducers.c
-index e843b74b9..54a243d51 100644
+index 9720693..d80712b 100644
 --- a/grub-core/tests/asn1/tests/reproducers.c
 +++ b/grub-core/tests/asn1/tests/reproducers.c
-@@ -63,7 +63,7 @@ test_reproducers (void)
+@@ -65,7 +65,7 @@ test_reproducers (void)
      {
        asn1_perror (result);
        printf ("ErrorDescription = %s\n\n", errorDescription);
@@ -57,7 +57,7 @@ index e843b74b9..54a243d51 100644
      }
  
    asn1_delete_structure (&definitions);
-@@ -74,7 +74,7 @@ test_reproducers (void)
+@@ -76,7 +76,7 @@ test_reproducers (void)
      {
        asn1_perror (result);
        printf ("ErrorDescription = %s\n\n", errorDescription);
@@ -66,7 +66,7 @@ index e843b74b9..54a243d51 100644
      }
  
    asn1_delete_structure (&definitions);
-@@ -82,5 +82,5 @@ test_reproducers (void)
+@@ -84,5 +84,5 @@ test_reproducers (void)
    if (verbose)
      printf ("Success\n");
  

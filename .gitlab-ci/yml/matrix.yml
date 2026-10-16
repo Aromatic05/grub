@@ -1,0 +1,179 @@
+.target-platform-matrix:
+  parallel:
+    matrix:
+      - TARGET: aarch64-linux-gnu
+        PLATFORM: [efi]
+      - TARGET: arm-linux-gnueabihf
+        PLATFORM: [coreboot, efi, uboot]
+      - TARGET: i386
+        PLATFORM: [coreboot, efi, ieee1275, multiboot, pc, qemu, xen, xen_pvh]
+      - TARGET: ia64-linux
+        PLATFORM: [efi]
+      - TARGET: loongarch64-linux
+        PLATFORM: [efi]
+      - TARGET: mips-linux-gnu
+        PLATFORM: [arc, qemu_mips]
+      - TARGET: mipsel-linux-gnu
+        PLATFORM: [arc, loongson, qemu_mips]
+      - TARGET: powerpc64-linux-gnu
+        PLATFORM: [ieee1275]
+      - TARGET: powerpc64le-linux-gnu
+        PLATFORM: [ieee1275]
+      - TARGET: riscv32-linux
+        PLATFORM: [efi]
+      - TARGET: riscv64-linux-gnu
+        PLATFORM: [efi]
+      - TARGET: sparc64-linux-gnu
+        PLATFORM: [ieee1275]
+      - TARGET: x86_64
+        PLATFORM: [efi, emu, xen]
+
+.target-platform-clang-matrix:
+  parallel:
+    matrix:
+      - TARGET: x86_64
+        PLATFORM: [efi, emu, xen]
+
+.target-platform-windows-matrix:
+  parallel:
+    matrix:
+      - TARGET: x86_64-w64-mingw32
+        PLATFORM: [efi]
+      - TARGET: i686-w64-mingw32
+        PLATFORM: [efi, pc]
+
+# We know these checks will fail which are either false positives or
+# real issues, in both cases it requires further debugging and fixes.
+# Work is being tracked at
+# https://gitlab.freedesktop.org/gnu-grub/grub/-/work_items/21
+.test-matrix-allow-failure:
+  parallel:
+    matrix:
+      - TYPE: native
+        TEST:
+          - hfs_test
+          - zfs_test
+          - zfs_zstd_test
+
+.test-matrix-rerun-on-failure:
+  parallel:
+    matrix:
+      - TYPE: native
+        TEST:
+          - btrfs_test
+          - exfat_test
+          - ext234_test
+          - hfsplus_test
+
+.test-matrix:
+  parallel:
+    matrix:
+      - TYPE: native
+        TEST:
+          - cmp_test
+          - cpio_test
+          - date_test
+          - erofs_test
+          - example_scripted_test
+          - example_unit_test
+          - f2fs_test
+          - fat_test
+          - fdt_unit_test
+          - gettext_strings_test
+          - grub_mkconfig_bootnext_self_test
+          - grub_mkconfig_bootnext_test
+          - grub_script_blanklines
+          - grub_script_dollar
+          - grub_script_final_semicolon
+          - grub_script_no_commands
+          - image_unit_test
+          - iso9660_test
+          - jfs_test
+          - loadenv_unit_test
+          - luks1_test
+          - luks2_test
+          - minixfs_test
+          - nilfs2_test
+          - ntfs_test
+          - printf_test
+          - priority_queue_unit_test
+          - reiserfs_test
+          - romfs_test
+          - squashfs_test
+          - syslinux_test
+          - tar_test
+          - tpcm_unit_test
+          - udf_test
+          - xfs_test
+      - TYPE: non-native
+        TEST:
+          - ahci_test
+          - asn1_test
+          - cdboot_test
+          - core_compress_test
+          - ehci_test
+          - example_grub_script_test
+          - fddboot_test
+          - file_filter_test
+          - grub_cmd_bootnext
+          - grub_cmd_bootnext_reboot
+          - grub_cmd_cryptomount
+          - grub_cmd_date
+          - grub_cmd_echo
+          - grub_cmd_regexp
+          - grub_cmd_save_env
+          - grub_cmd_set_date
+          - grub_cmd_sleep
+          - grub_cmd_test
+          - grub_cmd_tr
+          - grub_func_test
+          - grub_script_blockarg
+          - grub_script_break
+          - grub_script_comments
+          - grub_script_continue
+          - grub_script_echo1
+          - grub_script_echo_keywords
+          - grub_script_escape_comma
+          - grub_script_eval
+          - grub_script_expansion
+          - grub_script_for1
+          - grub_script_functions
+          - grub_script_gettext
+          - grub_script_if
+          - grub_script_leading_whitespace
+          - grub_script_not
+          - grub_script_return
+          - grub_script_setparams
+          - grub_script_shift
+          - grub_script_strcmp
+          - grub_script_test
+          - grub_script_vars1
+          - grub_script_while1
+          - gzcompress_test
+          - hddboot_test
+          - help_test
+          - lzocompress_test
+          - net_bootp_fields_test
+          - net_bootp_reply_test
+          - net_config_roundtrip_test
+          - net_dhcp_lease_test
+          - net_dhcp_tftp_integration_test
+          - net_dns_lookup_test
+          - net_http_chunk_test
+          - net_http_error_test
+          - net_http_transfer_test
+          - net_ip_frag_test
+          - net_tftp_error_test
+          - net_tftp_transfer_test
+          - netboot_test
+          - ohci_test
+          - partmap_test
+          - pata_test
+          - pseries_test
+          - rmmod_test
+          - serial_test
+          - test_sha512sum
+          - test_unset
+          - tpm2_key_protector_test
+          - uhci_test
+          - xzcompress_test

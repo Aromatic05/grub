@@ -1,0 +1,26 @@
+include:
+  - local: '.gitlab-ci/yml/global.yml'
+  - local: '.gitlab-ci/yml/matrix.yml'
+
+stages:
+  - bootstrap
+  - build
+  - submit
+
+bootstrap:
+  stage: bootstrap
+  extends: .bootstrap
+
+cov-build:
+  stage: build
+  extends: .build
+  artifacts:
+    paths:
+      - $COVERITY_DIR
+
+submit:
+  stage: submit
+  dependencies:
+    - cov-build
+  script:
+    - $SCRIPT_DIR/cov-submit.sh

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2012-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -19,6 +19,8 @@
  * Written by Simon Josefsson
  *
  */
+
+#include <config.h>
 
 #include <stdio.h>
 #include <string.h>

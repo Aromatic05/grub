@@ -95,27 +95,34 @@ struct tga_data
 static grub_err_t
 fetch_pixel (struct tga_data *data)
 {
+  /*
+   * A short read here means the file is exhausted before all width*height
+   * pixels were produced.  grub_file_read() does not set grub_errno on a
+   * plain end-of-file, so "return grub_errno" would hand back GRUB_ERR_NONE
+   * and the decode loops would keep iterating over the image dimensions.
+   * Return a definite error so the caller stops immediately.
+   */
   if (!data->uses_rle)
     {
       if (grub_file_read (data->file, &data->pixel[0], data->bpp)
 	  != data->bpp)
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
       return GRUB_ERR_NONE;
     }
   if (!data->pktlen)
     {
       grub_uint8_t type;
       if (grub_file_read (data->file, &type, sizeof (type)) != sizeof(type))
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
       data->is_rle = !!(type & 0x80);
       data->pktlen = (type & 0x7f) + 1;
       if (data->is_rle && grub_file_read (data->file, &data->pixel[0], data->bpp)
 	  != data->bpp)
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
     }
   if (!data->is_rle && grub_file_read (data->file, &data->pixel[0], data->bpp)
       != data->bpp)
-    return grub_errno;
+    return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
   data->pktlen--;
   return GRUB_ERR_NONE;
 }
@@ -130,7 +137,7 @@ tga_load_palette (struct tga_data *data)
 
   if (grub_file_read (data->file, &data->palette, len)
       != (grub_ssize_t) len)
-    return grub_errno;
+    return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
 
 #ifndef GRUB_CPU_WORDS_BIGENDIAN
   {
@@ -310,7 +317,7 @@ grub_video_reader_tga (struct grub_video_bitmap **bitmap,
       != sizeof (data.hdr))
     {
       grub_file_close (data.file);
-      return grub_errno;
+      return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: unexpected end of data");
     }
 
   /* Skip ID field.  */
@@ -345,7 +352,10 @@ grub_video_reader_tga (struct grub_video_bitmap **bitmap,
 
   /* Check image height and width are within restrictions. */
   if ((data.image_height > IMAGE_HW_MAX_PX) || (data.image_width > IMAGE_HW_MAX_PX))
-    return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: invalid image size");
+    {
+      grub_file_close (data.file);
+      return grub_error (GRUB_ERR_BAD_FILE_TYPE, "tga: invalid image size");
+    }
 
   /* Check that bitmap encoding is supported.  */
   switch (data.hdr.image_type)

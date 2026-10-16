@@ -1,4 +1,4 @@
-From af5f0a651de09e44e78177b988857acd3208c4b6 Mon Sep 17 00:00:00 2001
+From 98324b026c5bbf1eec70ea859d3c18cf8841c1fd Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Fri, 16 Aug 2024 15:00:42 +0800
 Subject: [PATCH 11/13] asn1_test: print the error messages with grub_printf()
@@ -22,10 +22,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  8 files changed, 67 insertions(+), 99 deletions(-)
 
 diff --git a/grub-core/tests/asn1/tests/CVE-2018-1000654.c b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-index 81448cde8..b78667900 100644
+index 41dd0eb..d85bfed 100644
 --- a/grub-core/tests/asn1/tests/CVE-2018-1000654.c
 +++ b/grub-core/tests/asn1/tests/CVE-2018-1000654.c
-@@ -38,8 +38,8 @@ test_CVE_2018_1000654 (void)
+@@ -40,8 +40,8 @@ test_CVE_2018_1000654 (void)
  		     errorDescription);
    if (result != ASN1_RECURSION)
      {
@@ -36,7 +36,7 @@ index 81448cde8..b78667900 100644
        return 1;
      }
  
-@@ -50,8 +50,8 @@ test_CVE_2018_1000654 (void)
+@@ -52,8 +52,8 @@ test_CVE_2018_1000654 (void)
  		     errorDescription);
    if (result != ASN1_RECURSION)
      {
@@ -48,10 +48,10 @@ index 81448cde8..b78667900 100644
      }
  
 diff --git a/grub-core/tests/asn1/tests/Test_overflow.c b/grub-core/tests/asn1/tests/Test_overflow.c
-index 9f9578a1f..ffac8507a 100644
+index 32f3073..74efea1 100644
 --- a/grub-core/tests/asn1/tests/Test_overflow.c
 +++ b/grub-core/tests/asn1/tests/Test_overflow.c
-@@ -36,7 +36,7 @@ test_overflow (void)
+@@ -38,7 +38,7 @@ test_overflow (void)
  
      if (l != -2L)
        {
@@ -60,7 +60,7 @@ index 9f9578a1f..ffac8507a 100644
  	return 1;
        }
    }
-@@ -57,8 +57,7 @@ test_overflow (void)
+@@ -59,8 +59,7 @@ test_overflow (void)
  
        if (l != -2L)
  	{
@@ -70,7 +70,7 @@ index 9f9578a1f..ffac8507a 100644
  	  return 1;
  	}
      }
-@@ -79,8 +78,7 @@ test_overflow (void)
+@@ -81,8 +80,7 @@ test_overflow (void)
  
      if (l != -4L)
        {
@@ -80,7 +80,7 @@ index 9f9578a1f..ffac8507a 100644
  	return 1;
        }
    }
-@@ -101,8 +99,7 @@ test_overflow (void)
+@@ -103,8 +101,7 @@ test_overflow (void)
  
      if (l != -4L)
        {
@@ -90,7 +90,7 @@ index 9f9578a1f..ffac8507a 100644
  	return 1;
        }
    }
-@@ -123,8 +120,7 @@ test_overflow (void)
+@@ -125,8 +122,7 @@ test_overflow (void)
  
      if (l != -2L)
        {
@@ -101,10 +101,10 @@ index 9f9578a1f..ffac8507a 100644
        }
    }
 diff --git a/grub-core/tests/asn1/tests/Test_simple.c b/grub-core/tests/asn1/tests/Test_simple.c
-index 12993bfba..dc70db191 100644
+index d981e85..6075108 100644
 --- a/grub-core/tests/asn1/tests/Test_simple.c
 +++ b/grub-core/tests/asn1/tests/Test_simple.c
-@@ -94,7 +94,7 @@ test_simple (void)
+@@ -96,7 +96,7 @@ test_simple (void)
      result = asn1_encode_simple_der (etype, my_str, my_str_len, tl, &tl_len);
      if (result != ASN1_VALUE_NOT_VALID)
        {
@@ -113,7 +113,7 @@ index 12993bfba..dc70db191 100644
  	return 1;
        }
    }
-@@ -105,7 +105,7 @@ test_simple (void)
+@@ -107,7 +107,7 @@ test_simple (void)
    result = asn1_get_bit_der (der, 0, &ret_len, str, str_size, &bit_len);
    if (result != ASN1_GENERIC_ERROR)
      {
@@ -122,7 +122,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -129,7 +129,7 @@ test_simple (void)
+@@ -131,7 +131,7 @@ test_simple (void)
  
        if (der_len != tv[i].derlen || memcmp (der, tv[i].der, der_len) != 0)
  	{
@@ -131,7 +131,7 @@ index 12993bfba..dc70db191 100644
  	  return 1;
  	}
  
-@@ -140,8 +140,7 @@ test_simple (void)
+@@ -142,8 +142,7 @@ test_simple (void)
        if (result != ASN1_SUCCESS || ret_len != tv[i].derlen
  	  || bit_len != tv[i].bitlen)
  	{
@@ -141,7 +141,7 @@ index 12993bfba..dc70db191 100644
  	  return 1;
  	}
      }
-@@ -163,7 +162,7 @@ test_simple (void)
+@@ -165,7 +164,7 @@ test_simple (void)
    if (result != ASN1_SUCCESS || ret_len != 5
        || bit_len != 18 || memcmp (str, "\x6e\x5d\xc0", 3) != 0)
      {
@@ -150,7 +150,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -171,7 +170,7 @@ test_simple (void)
+@@ -173,7 +172,7 @@ test_simple (void)
    asn1_bit_der (str, bit_len, der, &der_len);
    if (der_len != 5 || memcmp (der, "\x04\x06\x6e\x5d\xc0", 5) != 0)
      {
@@ -159,7 +159,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -184,7 +183,7 @@ test_simple (void)
+@@ -186,7 +185,7 @@ test_simple (void)
    if (result != ASN1_SUCCESS || ret_len != 5
        || bit_len != 18 || memcmp (str, "\x6e\x5d\xe0", 3) != 0)
      {
@@ -168,7 +168,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -192,7 +191,7 @@ test_simple (void)
+@@ -194,7 +193,7 @@ test_simple (void)
    asn1_bit_der (str, bit_len, der, &der_len);
    if (der_len != 5 || memcmp (der, "\x04\x06\x6e\x5d\xc0", 5) != 0)
      {
@@ -177,7 +177,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -206,7 +205,7 @@ test_simple (void)
+@@ -208,7 +207,7 @@ test_simple (void)
    if (result != ASN1_SUCCESS || ret_len != 6
        || bit_len != 18 || memcmp (str, "\x6e\x5d\xc0", 3) != 0)
      {
@@ -186,7 +186,7 @@ index 12993bfba..dc70db191 100644
        return 1;
      }
  
-@@ -214,7 +213,7 @@ test_simple (void)
+@@ -216,7 +215,7 @@ test_simple (void)
    asn1_bit_der (str, bit_len, der, &der_len);
    if (der_len != 5 || memcmp (der, "\x04\x06\x6e\x5d\xc0", 5) != 0)
      {
@@ -196,10 +196,10 @@ index 12993bfba..dc70db191 100644
      }
  
 diff --git a/grub-core/tests/asn1/tests/Test_strings.c b/grub-core/tests/asn1/tests/Test_strings.c
-index 2538f2558..65c30937f 100644
+index 6016990..aaf0435 100644
 --- a/grub-core/tests/asn1/tests/Test_strings.c
 +++ b/grub-core/tests/asn1/tests/Test_strings.c
-@@ -89,17 +89,14 @@ test_strings (void)
+@@ -91,17 +91,14 @@ test_strings (void)
  				    tl, &tl_len);
        if (ret != ASN1_SUCCESS)
  	{
@@ -219,7 +219,7 @@ index 2538f2558..65c30937f 100644
  	  return 1;
  	}
  
-@@ -109,16 +106,13 @@ test_strings (void)
+@@ -111,16 +108,13 @@ test_strings (void)
  				&str_len);
        if (ret != ASN1_SUCCESS)
  	{
@@ -238,7 +238,7 @@ index 2538f2558..65c30937f 100644
  	  return 1;
  	}
      }
-@@ -132,16 +126,13 @@ test_strings (void)
+@@ -134,16 +128,13 @@ test_strings (void)
  				&str_len, NULL);
        if (ret != ASN1_SUCCESS)
  	{
@@ -258,10 +258,10 @@ index 2538f2558..65c30937f 100644
  	}
        free (b);
 diff --git a/grub-core/tests/asn1/tests/object-id-decoding.c b/grub-core/tests/asn1/tests/object-id-decoding.c
-index fdbb8ea21..c087b46e3 100644
+index 808ee46..5da5800 100644
 --- a/grub-core/tests/asn1/tests/object-id-decoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-decoding.c
-@@ -85,10 +85,8 @@ test_object_id_decoding (void)
+@@ -87,10 +87,8 @@ test_object_id_decoding (void)
  				sizeof (str));
        if (ret != tv[i].expected_error)
  	{
@@ -274,7 +274,7 @@ index fdbb8ea21..c087b46e3 100644
  	  return 1;
  	}
  
-@@ -97,17 +95,15 @@ test_object_id_decoding (void)
+@@ -99,17 +97,15 @@ test_object_id_decoding (void)
  
        if (ret_len != tv[i].der_len - 1)
  	{
@@ -297,10 +297,10 @@ index fdbb8ea21..c087b46e3 100644
  	}
  
 diff --git a/grub-core/tests/asn1/tests/object-id-encoding.c b/grub-core/tests/asn1/tests/object-id-encoding.c
-index a497015e3..e3da092cc 100644
+index b6f423f..a12f1d2 100644
 --- a/grub-core/tests/asn1/tests/object-id-encoding.c
 +++ b/grub-core/tests/asn1/tests/object-id-encoding.c
-@@ -93,33 +93,29 @@ test_object_id_encoding (void)
+@@ -95,33 +95,29 @@ test_object_id_encoding (void)
  	{
  	  if (ret == tv[i].expected_error)
  	    continue;
@@ -346,10 +346,10 @@ index a497015e3..e3da092cc 100644
  	  return 1;
  	}
 diff --git a/grub-core/tests/asn1/tests/octet-string.c b/grub-core/tests/asn1/tests/octet-string.c
-index 8c49c6e0c..d3a35dff8 100644
+index 503fbda..ce15d7a 100644
 --- a/grub-core/tests/asn1/tests/octet-string.c
 +++ b/grub-core/tests/asn1/tests/octet-string.c
-@@ -131,9 +131,8 @@ test_octet_string (void)
+@@ -133,9 +133,8 @@ test_octet_string (void)
  				sizeof (str), &str_size);
  	  if (ret != tv[i].expected_error)
  	    {
@@ -361,7 +361,7 @@ index 8c49c6e0c..d3a35dff8 100644
  	      return 1;
  	    }
  	  if (tv[i].expected_error)
-@@ -141,27 +140,25 @@ test_octet_string (void)
+@@ -143,27 +142,25 @@ test_octet_string (void)
  
  	  if (ret_len != tv[i].der_len - 1)
  	    {
@@ -398,7 +398,7 @@ index 8c49c6e0c..d3a35dff8 100644
  	      return 1;
  	    }
  
-@@ -172,8 +169,7 @@ test_octet_string (void)
+@@ -174,8 +171,7 @@ test_octet_string (void)
  	  if (der_len != tv[i].der_len - 1
  	      || memcmp (tv[i].der_str + 1, der, tv[i].der_len - 1) != 0)
  	    {
@@ -408,7 +408,7 @@ index 8c49c6e0c..d3a35dff8 100644
  	      return 1;
  	    }
  	}
-@@ -185,10 +181,9 @@ test_octet_string (void)
+@@ -187,10 +183,9 @@ test_octet_string (void)
  				(unsigned int *) &der_len);
        if (ret != tv[i].expected_error)
  	{
@@ -422,7 +422,7 @@ index 8c49c6e0c..d3a35dff8 100644
  	  return 1;
  	}
        if (tv[i].expected_error)
-@@ -196,25 +191,22 @@ test_octet_string (void)
+@@ -198,25 +193,22 @@ test_octet_string (void)
  
        if (der_len != tv[i].der_len)
  	{
@@ -457,10 +457,10 @@ index 8c49c6e0c..d3a35dff8 100644
  	}
        free (tmp);
 diff --git a/grub-core/tests/asn1/tests/reproducers.c b/grub-core/tests/asn1/tests/reproducers.c
-index fa3cea762..0e3c9fd65 100644
+index a79cfbb..6e0e554 100644
 --- a/grub-core/tests/asn1/tests/reproducers.c
 +++ b/grub-core/tests/asn1/tests/reproducers.c
-@@ -58,8 +58,7 @@ test_reproducers (void)
+@@ -60,8 +60,7 @@ test_reproducers (void)
    result = asn1_array2tree (endless_asn1_tab, &definitions, errorDescription);
    if (result != ASN1_SUCCESS)
      {
@@ -470,7 +470,7 @@ index fa3cea762..0e3c9fd65 100644
        return 1;
      }
  
-@@ -69,8 +68,7 @@ test_reproducers (void)
+@@ -71,8 +70,7 @@ test_reproducers (void)
    result = asn1_array2tree (tab, &definitions, errorDescription);
    if (result != ASN1_SUCCESS)
      {

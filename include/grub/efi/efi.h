@@ -49,7 +49,6 @@ void *EXPORT_FUNC(grub_efi_open_protocol) (grub_efi_handle_t handle,
 					   grub_efi_uint32_t attributes);
 grub_efi_status_t
 EXPORT_FUNC(grub_efi_close_protocol) (grub_efi_handle_t handle, grub_guid_t *protocol);
-int EXPORT_FUNC(grub_efi_set_text_mode) (int on);
 void EXPORT_FUNC(grub_efi_stall) (grub_efi_uintn_t microseconds);
 void *
 EXPORT_FUNC(grub_efi_allocate_pages_real) (grub_efi_physical_address_t address,
@@ -199,5 +198,28 @@ char *EXPORT_FUNC (grub_efi_device_path_to_str) (grub_efi_device_path_t *dp);
 void grub_efi_unlock_rom_area (void);
 void grub_efi_lock_rom_area (void);
 void grub_efi_fake_bios_data (int use_rom);
+static inline grub_efi_status_t
+grub_efi_allocate_pool (grub_efi_memory_type_t pool_type,
+                       grub_efi_uintn_t buffer_size,
+                       void **buffer)
+{
+  grub_efi_boot_services_t *b;
+  grub_efi_status_t status;
+
+  b = grub_efi_system_table->boot_services;
+  status = b->allocate_pool (pool_type, buffer_size, buffer);
+  return status;
+}
+
+static inline grub_efi_status_t
+grub_efi_free_pool (void *buffer)
+{
+  grub_efi_boot_services_t *b;
+  grub_efi_status_t status;
+
+  b = grub_efi_system_table->boot_services;
+  status = b->free_pool (buffer);
+  return status;
+}
 
 #endif /* ! GRUB_EFI_EFI_HEADER */

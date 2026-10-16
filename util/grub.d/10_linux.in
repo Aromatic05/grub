@@ -2,7 +2,7 @@
 set -e
 
 # grub-mkconfig helper script.
-# Copyright (C) 2006,2007,2008,2009,2010  Free Software Foundation, Inc.
+# Copyright (C) 2006,2007,2008,2009,2010,2026  Free Software Foundation, Inc.
 #
 # GRUB is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -54,9 +54,9 @@ esac
 if ( [ "x${GRUB_DEVICE_UUID}" = "x" ] && [ "x${GRUB_DEVICE_PARTUUID}" = "x" ] ) \
     || ( [ "x${GRUB_DISABLE_LINUX_UUID}" = "xtrue" ] \
 	&& [ "x${GRUB_DISABLE_LINUX_PARTUUID}" = "xtrue" ] ) \
-    || ( ! test -e "/dev/disk/by-uuid/${GRUB_DEVICE_UUID}" \
-	&& ! test -e "/dev/disk/by-partuuid/${GRUB_DEVICE_PARTUUID}" ) \
-    || ( test -e "${GRUB_DEVICE}" && uses_abstraction "${GRUB_DEVICE}" lvm ); then
+    || ( ! findfs UUID="${GRUB_DEVICE_UUID}" > /dev/null 2>&1 \
+	&& ! findfs PARTUUID="${GRUB_DEVICE_PARTUUID}" > /dev/null 2>&1 ) \
+    || ( test -e "${GRUB_DEVICE}" && ( uses_abstraction "${GRUB_DEVICE}" lvm || uses_abstraction "${GRUB_DEVICE}" diskfilter ) ); then
   LINUX_ROOT_DEVICE=${GRUB_DEVICE}
 elif [ "x${GRUB_DEVICE_UUID}" = "x" ] \
     || [ "x${GRUB_DISABLE_LINUX_UUID}" = "xtrue" ]; then
@@ -75,7 +75,13 @@ case x"$GRUB_FS" in
     xzfs)
 	rpool=`${grub_probe} --device ${GRUB_DEVICE} --target=fs_label 2>/dev/null || zdb -l ${GRUB_DEVICE} | awk -F \' '/ name/ { print $2 }'`
 	bootfs="`make_system_path_relative_to_its_root / | sed -e "s,@$,,"`"
-	LINUX_ROOT_DEVICE="ZFS=${rpool}${bootfs%/}"
+	# grub-probe fails on encrypted zfs pools, use zfs list as fallback
+	if [ -n "$rpool" ] && [ -n "$bootfs" ]; then
+	    LINUX_ROOT_DEVICE="ZFS=${rpool}${bootfs%/}"
+	else
+	    root_dataset=`zfs list -Ho mountpoint,name | grep '^/[[:space:]]' | tail -n1 | cut -f 2 2>/dev/null || true`
+	    LINUX_ROOT_DEVICE="ZFS=${root_dataset}"
+	fi
 	;;
 esac
 
@@ -94,9 +100,13 @@ linux_entry ()
   if [ x$type != xsimple ] ; then
       case $type in
 	  recovery)
-	      title="$(gettext_printf "%s, with Linux %s (recovery mode)" "${os}" "${version}")" ;;
+	      title="$(gettext_printf "%s, with Linux %s (recovery mode)" "${os}" "${version}")"
+	      allowed_user_list="$(grub_get_auth_user_list $GRUB_RECOVERY_ACCESS_LEVEL)"
+	      ;;
 	  *)
-	      title="$(gettext_printf "%s, with Linux %s" "${os}" "${version}")" ;;
+	      title="$(gettext_printf "%s, with Linux %s" "${os}" "${version}")"
+	      allowed_user_list="$(grub_get_auth_user_list $GRUB_ADVANCED_ACCESS_LEVEL)"
+	      ;;
       esac
       if [ x"$title" = x"$GRUB_ACTUAL_DEFAULT" ] || [ x"Previous Linux versions>$title" = x"$GRUB_ACTUAL_DEFAULT" ]; then
 	  replacement_title="$(echo "Advanced options for ${OS}" | sed 's,>,>>,g')>$(echo "$title" | sed 's,>,>>,g')"
@@ -104,9 +114,10 @@ linux_entry ()
 	  title_correction_code="${title_correction_code}if [ \"x\$default\" = '$quoted' ]; then default='$(echo "$replacement_title" | grub_quote)'; fi;"
 	  grub_warn "$(gettext_printf "Please don't use old title \`%s' for GRUB_DEFAULT, use \`%s' (for versions before 2.00) or \`%s' (for 2.00 or later)" "$GRUB_ACTUAL_DEFAULT" "$replacement_title" "gnulinux-advanced-$boot_device_id>gnulinux-$version-$type-$boot_device_id")"
       fi
-      echo "menuentry '$(echo "$title" | grub_quote)' ${CLASS} \$menuentry_id_option 'gnulinux-$version-$type-$boot_device_id' {" | sed "s/^/$submenu_indentation/"
+      echo "menuentry '$(echo "$title" | grub_quote)' ${CLASS} \$menuentry_id_option 'gnulinux-$version-$type-$boot_device_id' ${allowed_user_list}{" | sed "s/^/$submenu_indentation/"
   else
-      echo "menuentry '$(echo "$os" | grub_quote)' ${CLASS} \$menuentry_id_option 'gnulinux-simple-$boot_device_id' {" | sed "s/^/$submenu_indentation/"
+      allowed_user_list="$(grub_get_auth_user_list $GRUB_SIMPLE_ACCESS_LEVEL)"
+      echo "menuentry '$(echo "$os" | grub_quote)' ${CLASS} \$menuentry_id_option 'gnulinux-simple-$boot_device_id' ${allowed_user_list}{" | sed "s/^/$submenu_indentation/"
   fi      
   if [ x$type != xrecovery ] ; then
       save_default_entry | grub_add_tab
@@ -118,7 +129,9 @@ linux_entry ()
       echo "	load_video" | sed "s/^/$submenu_indentation/"
       if grep -qx "CONFIG_FB_EFI=y" "${config}" 2> /dev/null \
 	  && grep -qx "CONFIG_VT_HW_CONSOLE_BINDING=y" "${config}" 2> /dev/null; then
-	  echo "	set gfxpayload=keep" | sed "s/^/$submenu_indentation/"
+	  echo '	if [ "x$grub_platform" = xefi ]; then' | sed "s/^/$submenu_indentation/"
+	  echo "		set gfxpayload=keep" | sed "s/^/$submenu_indentation/"
+	  echo '	fi' | sed "s/^/$submenu_indentation/"
       fi
   else
       if [ "x$GRUB_GFXPAYLOAD_LINUX" != xtext ]; then
@@ -293,7 +306,7 @@ for linux in ${reverse_sorted_list}; do
 	boot_device_id="$(grub_get_device_id "${GRUB_DEVICE}")"
     fi
     # TRANSLATORS: %s is replaced with an OS name
-    echo "submenu '$(gettext_printf "Advanced options for %s" "${OS}" | grub_quote)' \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' {"
+    echo "submenu '$(gettext_printf "Advanced options for %s" "${OS}" | grub_quote)' \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' $(grub_echo_unrestricted_maybe){"
     is_top_level=false
   fi
 

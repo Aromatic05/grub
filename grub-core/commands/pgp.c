@@ -31,6 +31,7 @@
 #include <grub/kernel.h>
 #include <grub/extcmd.h>
 #include <grub/verify.h>
+#include <grub/time.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
@@ -45,6 +46,12 @@ static const struct grub_arg_option options[] =
      N_("Skip signature-checking of the public key file."), 0, ARG_TYPE_NONE},
     {0, 0, 0, 0, 0, 0}
   };
+
+/* OpenPGP packet tags (RFC 4880, section 4.3).  */
+#define GRUB_PGP_PACKET_SECRET_KEY	5
+#define GRUB_PGP_PACKET_PUBLIC_KEY	6
+#define GRUB_PGP_PACKET_SECRET_SUBKEY	7
+#define GRUB_PGP_PACKET_PUBLIC_SUBKEY	14
 
 static grub_err_t
 read_packet_header (grub_file_t sig, grub_uint8_t *out_type, grub_size_t *len)
@@ -79,7 +86,7 @@ read_packet_header (grub_file_t sig, grub_uint8_t *out_type, grub_size_t *len)
 
   if (!(type & 0x80))
     return grub_error (GRUB_ERR_BAD_SIGNATURE, N_("bad signature"));
-  if (type & 0x40)
+  if (type & 0x40) /* Bit 6 set: new format packet length */
     {
       *out_type = (type & 0x3f);
       if (grub_file_read (sig, &l, sizeof (l)) != 1)
@@ -91,10 +98,11 @@ read_packet_header (grub_file_t sig, grub_uint8_t *out_type, grub_size_t *len)
 	}
       if (l < 224)
 	{
+          /* RFC4880 2-octet length: ((b1 - 192) << 8) + (b2 + 192) */
 	  *len = (l - 192) << GRUB_CHAR_BIT;
 	  if (grub_file_read (sig, &l, sizeof (l)) != 1)
 	    return grub_error (GRUB_ERR_BAD_SIGNATURE, N_("bad signature"));
-	  *len |= l;
+	  *len = (*len | l) + 192;
 	  return 0;
 	}
       if (l == 255)
@@ -106,6 +114,8 @@ read_packet_header (grub_file_t sig, grub_uint8_t *out_type, grub_size_t *len)
 	}
       return grub_error (GRUB_ERR_BAD_SIGNATURE, N_("bad signature"));
     }
+
+  /* Bit 6 unset: old format packet length */
   *out_type = ((type >> 2) & 0xf);
   switch (type & 0x3)
     {
@@ -238,11 +248,31 @@ grub_load_public_key (grub_file_t f)
       grub_dprintf ("crypt", "len = %x\n", (int) len);
 
       pend = grub_file_tell (f) + len;
-      if (type != 6 && type != 14
-	  && type != 5 && type != 7)
+      if (type != GRUB_PGP_PACKET_PUBLIC_KEY
+	  && type != GRUB_PGP_PACKET_PUBLIC_SUBKEY
+	  && type != GRUB_PGP_PACKET_SECRET_KEY
+	  && type != GRUB_PGP_PACKET_SECRET_SUBKEY)
 	{
 	  grub_file_seek (f, pend);
 	  continue;
+	}
+
+      /*
+       * Secret key packets embed the public key in the same leading format,
+       * so signature checking still works with them.  Warn rather than reject:
+       * this runs at boot time, where a hard error could leave a system
+       * unbootable for users who imported a secret key by mistake.
+       *
+       * TODO: once this warning has shipped in a release (e.g. after GRUB
+       * 2.15), turn it into a hard rejection of secret key packets.
+       */
+      if (type == GRUB_PGP_PACKET_SECRET_KEY
+	  || type == GRUB_PGP_PACKET_SECRET_SUBKEY)
+	{
+	  grub_printf_ (N_("warning: secret key packet found in public key data; "
+			   "use the corresponding public key instead\n"));
+	  /* Pause so the warning is noticed past normal boot scroll-by. */
+	  grub_sleep (5);
 	}
 
       if (grub_file_read (f, &v, sizeof (v)) != sizeof (v))
@@ -448,6 +478,49 @@ grub_pubkey_write (void *ctxt_, void *buf, grub_size_t size)
 }
 
 static grub_err_t
+parse_signature_keyid (grub_uint64_t *keyid,
+                       const grub_uint8_t *readbuf,
+                       const grub_ssize_t len)
+{
+  const grub_uint8_t *ptr;
+  grub_uint32_t l;
+
+  for (ptr = readbuf; ptr < readbuf + len; ptr += l)
+    {
+      if (*ptr < 192)
+        l = *ptr++;
+      else if (*ptr < 255)
+        {
+          if (ptr + 1 >= readbuf + len)
+            return GRUB_ERR_EOF;
+          l = (((ptr[0] & ~192) << GRUB_CHAR_BIT) | ptr[1]) + 192;
+          ptr += 2;
+        }
+      else
+        {
+          if (ptr + 5 >= readbuf + len)
+            return GRUB_ERR_EOF;
+          l = grub_be_to_cpu32 (grub_get_unaligned32 (ptr + 1));
+          ptr += 5;
+        }
+
+      if (l == 0)
+        return GRUB_ERR_OUT_OF_RANGE;
+      /* will need l bytes in readbuf (l includes 1 byte subpkt type) */
+      if (l > ((readbuf + len) - ptr))
+        return GRUB_ERR_EOF;
+
+      if (*ptr == 0x10 && l >= 9) /* subpkt 16: issuer key ID */
+        {
+          *keyid = grub_get_unaligned64 (ptr + 1);
+          return GRUB_ERR_NONE;
+        }
+    }
+
+  return GRUB_ERR_EOF;
+}
+
+static grub_err_t
 grub_verify_signature_real (struct grub_pubkey_context *ctxt,
 			    struct grub_public_key *pkey)
 {
@@ -463,6 +536,7 @@ grub_verify_signature_real (struct grub_pubkey_context *ctxt,
   grub_ssize_t r;
   grub_uint8_t hash_start[2];
   grub_uint64_t keyid = 0;
+  grub_err_t keyid_res;
   struct grub_public_subkey *sk;
 
   readbuf = grub_malloc (READBUF_SIZE);
@@ -471,55 +545,37 @@ grub_verify_signature_real (struct grub_pubkey_context *ctxt,
 
   ctxt->hash->write (ctxt->hash_context, &ctxt->v, sizeof (ctxt->v));
   ctxt->hash->write (ctxt->hash_context, &ctxt->v4, sizeof (ctxt->v4));
-  while (rem)
-    {
-      r = grub_file_read (ctxt->sig, readbuf,
-			  rem < READBUF_SIZE ? rem : READBUF_SIZE);
-      if (r < 0)
-	goto fail;
-      if (r == 0)
-	break;
-      ctxt->hash->write (ctxt->hash_context, readbuf, r);
-      rem -= r;
-    }
+
+  if (rem > READBUF_SIZE)
+    goto fail;
+  r = grub_file_read (ctxt->sig, readbuf, rem);
+  if (r != rem)
+    goto fail;
+  ctxt->hash->write (ctxt->hash_context, readbuf, r);
+  /* keyid packet may be in a hashed or unhashed subpacket; check hashed */
+  keyid_res = parse_signature_keyid (&keyid, readbuf, r);
+
   ctxt->hash->write (ctxt->hash_context, &ctxt->v, sizeof (ctxt->v));
   s = 0xff;
   ctxt->hash->write (ctxt->hash_context, &s, sizeof (s));
   ctxt->hash->write (ctxt->hash_context, &headlen, sizeof (headlen));
+
   r = grub_file_read (ctxt->sig, &unhashed_sub, sizeof (unhashed_sub));
   if (r != sizeof (unhashed_sub))
     goto fail;
-  {
-    grub_uint8_t *ptr;
-    grub_uint32_t l;
-    rem = grub_be_to_cpu16 (unhashed_sub);
-    if (rem > READBUF_SIZE)
-      goto fail;
-    r = grub_file_read (ctxt->sig, readbuf, rem);
-    if (r != rem)
-      goto fail;
-    for (ptr = readbuf; ptr < readbuf + rem; ptr += l)
-      {
-	if (*ptr < 192)
-	  l = *ptr++;
-	else if (*ptr < 255)
-	  {
-	    if (ptr + 1 >= readbuf + rem)
-	      break;
-	    l = (((ptr[0] & ~192) << GRUB_CHAR_BIT) | ptr[1]) + 192;
-	    ptr += 2;
-	  }
-	else
-	  {
-	    if (ptr + 5 >= readbuf + rem)
-	      break;
-	    l = grub_be_to_cpu32 (grub_get_unaligned32 (ptr + 1));
-	    ptr += 5;
-	  }
-	if (*ptr == 0x10 && l >= 8)
-	  keyid = grub_get_unaligned64 (ptr + 1);
-      }
-  }
+  rem = grub_be_to_cpu16 (unhashed_sub);
+  if (rem > READBUF_SIZE)
+    goto fail;
+  r = grub_file_read (ctxt->sig, readbuf, rem);
+  if (r != rem)
+    goto fail;
+  if (keyid_res != GRUB_ERR_NONE)
+    {
+      /* keyid was not in hashed packets; check unhashed */
+      keyid_res = parse_signature_keyid (&keyid, readbuf, r);
+      if (keyid_res != GRUB_ERR_NONE)
+        goto fail;
+    }
 
   ctxt->hash->final (ctxt->hash_context);
 
@@ -666,11 +722,13 @@ grub_verify_signature (grub_file_t f, const char *fsig,
 	break;
       err = grub_pubkey_write (&ctxt, readbuf, r);
       if (err)
-	return err;
+	goto fail;
     }
 
   grub_verify_signature_real (&ctxt, pkey);
  fail:
+  if (readbuf)
+    grub_free(readbuf);
   grub_pubkey_close_real (&ctxt);
   return grub_errno;
 }

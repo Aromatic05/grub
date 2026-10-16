@@ -21,7 +21,6 @@ import re
 import sys
 import os
 import datetime
-import codecs
 
 def removesuffix(base: str, suffix: str) -> str:
     """ Backport of `removesuffix` from PEP-616 (Python 3.9+) """
@@ -96,9 +95,9 @@ mdblocksizes = {"_gcry_digest_spec_crc32" : 64,
 
 cipher_files = sorted (os.listdir (cipher_dir_in))
 
-with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as cryptolist, \
-     codecs.open (os.path.join ("grub-core", "Makefile.gcry.def"), "w", "utf-8") as conf, \
-     codecs.open ("Makefile.utilgcry.def", "w", "utf-8") as confutil:
+with open (os.path.join (cipher_dir_out, "crypto.lst"), "w", encoding="utf-8") as cryptolist, \
+     open (os.path.join ("grub-core", "Makefile.gcry.def"), "w", encoding="utf-8") as conf, \
+     open ("Makefile.utilgcry.def", "w", encoding="utf-8") as confutil:
 
     conf.write ("AutoGen definitions Makefile.tpl;\n\n")
     confutil.write ("AutoGen definitions Makefile.tpl;\n\n")
@@ -133,7 +132,7 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
         "gcry_sha512"  : ["hash-common.c"],
     }
     extra_files_list = [x for xs in extra_files.values() for x in xs] + [
-        "pubkey-util.c", "rsa-common.c", "dsa-common.c", "md.c"]
+        "pubkey-util.c", "rsa-common.c", "dsa-common.c", "md.c", "dilithium-common.c", "dilithium-dep.c", "dilithium.c"]
 
     for cipher_file in cipher_files:
         infile = os.path.join (cipher_dir_in, cipher_file)
@@ -142,7 +141,7 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
             continue
         chlognew = "	* %s" % cipher_file
         # Unused generic support files
-        if re.match (r"(Makefile\.am|primegen\.c|cipher\.c|cipher-.*\.c|mac-.*\.c|mac\.c|pubkey\.c)$", cipher_file):
+        if re.match (r"(Makefile\.am|primegen\.c|cipher\.c|cipher-.*\.c|mac-.*\.c|mac\.c|pubkey\.c|mceliece6688128f\.sh)$", cipher_file):
             chlog = "%s%s: Removed\n" % (chlog, chlognew)
             continue
         # TODO: Support scrypt KDF
@@ -159,7 +158,7 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
             chlog = "%s%s: Removed\n" % (chlog, chlognew)
             continue
         # TODO: Use optimized versions
-        if re.match (r"(.*\.[sS]|.*-intel-shaext\.c|.*-ssse3-i386\.c|.*-ppc\.c|.*-ssse3-amd64\.c|.*-s390x\.c|rijndael-aesni\.c|crc-intel-pclmul\.c|.*-armv8-ce.c|.*-aarch64-ce\.c|.*-p10le\.c|rijndael-padlock.c|.*-ppc[89]le.c|rijndael-vaes.c|rijndael-vaes-i386.c|serpent-avx512-x86.c)$", cipher_file):
+        if re.match (r"(.*\.[sS]|.*-intel-shaext\.c|.*-ssse3-i386\.c|.*-ppc\.c|.*-ssse3-amd64\.c|.*-s390x\.c|rijndael-aesni\.c|crc-intel-pclmul\.c|.*-armv8-ce.c|.*-aarch64-ce\.c|.*-p10le\.c|rijndael-padlock.c|.*-ppc[89]le.c|rijndael-vaes.c|rijndael-vaes-i386.c|serpent-avx512-x86.c|chacha20-riscv-v.c|crc-riscv-zbb-zbc.c|rijndael-riscv-zvkned.c|rijndael-vp-aarch64.c|rijndael-vp-riscv.c|sha256-riscv-zvknha-zvkb.c|sha512-riscv-zvknhb-zvkb.c)$", cipher_file):
             chlog = "%s%s: Removed\n" % (chlog, chlognew)
             continue
         # We use pregenerated version
@@ -172,12 +171,16 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
         nch = False
         if re.match (r".*\.[ch]$", cipher_file):
             isc = re.match (r".*\.c$", cipher_file)
-            with codecs.open (infile, "r", "utf-8") as f, codecs.open (outfile, "w", "utf-8") as fw:
+            with open (infile, "r", encoding="utf-8") as f, open (outfile, "w", encoding="utf-8") as fw:
                 fw.write ("/* This file was automatically imported with \n")
                 fw.write ("   import_gcry.py. Please don't modify it */\n")
                 add_license = cipher_file == "pubkey-util.c" or (isc and not cipher_file in extra_files_list)
                 if add_license:
                     fw.write ("#include <grub/dl.h>\n")
+                if cipher_file == "kdf.c":
+                    fw.write ("#ifndef SIZE_MAX\n")
+                    fw.write ("#define SIZE_MAX ((size_t) -1)\n")
+                    fw.write ("#endif\n")
                 if cipher_file == "camellia.h":
                     fw.write ("#include <grub/misc.h>\n")
                     fw.write ("void camellia_setup128(const unsigned char *key, grub_uint32_t *subkey);\n")
@@ -268,18 +271,19 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
                             chlognew = "%s %s" % (chlognew, chmsg)
                             nch = True
                         continue
-                    if (not hold) and (re.match (r"[ \t]*(run_selftests|do_tripledes_set_extra_info),?", line) is not None):
+                    if (not hold) and (re.match (r"[ \t]*(do_tripledes_set_extra_info),?", line) is not None):
                         iscomma = True
                         line = ""
                     if hold:
                         hold = False
                         # We're optimising for size and exclude anything needing good
                         # randomness.
-                        if re.match ("(_gcry_hash_selftest_check_one|bulk_selftest_setkey|run_selftests|do_tripledes_set_extra_info|selftest|sm4_selftest|_gcry_[a-z0-9_]*_hash_buffers|_gcry_sha1_hash_buffer|tripledes_set2keys|_gcry_rmd160_mixblock|serpent_test|dsa_generate_ext|test_keys|gen_k|sign|gen_x931_parm_xp|generate_x931|generate_key|dsa_generate|dsa_sign|ecc_sign|generate|generate_fips186|_gcry_register_pk_dsa_progress|_gcry_register_pk_ecc_progress|progress|scanval|ec2os|ecc_generate_ext|ecc_generate|ecc_get_param|_gcry_register_pk_dsa_progress|gen_x931_parm_xp|gen_x931_parm_xi|rsa_decrypt|rsa_sign|rsa_generate_ext|rsa_generate|secret|check_exponent|rsa_blind|rsa_unblind|extract_a_from_sexp|curve_free|curve_copy|point_set|_gcry_dsa_gen_rfc6979_k|bits2octets|int2octets|_gcry_md_debug|_gcry_md_selftest|_gcry_md_is_enabled|_gcry_md_is_secure|_gcry_md_init|_gcry_md_info|md_get_algo|md_extract|_gcry_md_get |_gcry_md_get_algo |_gcry_md_extract|_gcry_md_setkey|md_setkey|prepare_macpads|_gcry_md_algo_name|search_oid|spec_from_oid|spec_from_name|spec_from_algo|map_algo|cshake_hash_buffers|selftest_seq)", line) is not None:
+                        if re.match ("(_gcry_hash_selftest_check_one|bulk_selftest_setkey|run_selftests|do_tripledes_set_extra_info|selftest|sm4_selftest|_gcry_[a-z0-9_]*_hash_buffers|_gcry_sha1_hash_buffer|tripledes_set2keys|_gcry_rmd160_mixblock|serpent_test|dsa_generate_ext|test_keys|gen_k|sign|gen_x931_parm_xp|generate_x931|generate_key|dsa_generate|dsa_sign|ecc_sign|generate|generate_fips186|_gcry_register_pk_dsa_progress|_gcry_register_pk_ecc_progress|progress|scanval|ec2os|ecc_generate_ext|ecc_generate|ecc_get_param|_gcry_register_pk_dsa_progress|gen_x931_parm_xp|gen_x931_parm_xi|rsa_decrypt|rsa_sign|rsa_generate_ext|rsa_generate|secret|check_exponent|rsa_blind|rsa_unblind|extract_a_from_sexp|curve_free|curve_copy|point_set|_gcry_dsa_gen_rfc6979_k|bits2octets|int2octets|_gcry_md_debug|_gcry_md_selftest|_gcry_md_is_enabled|_gcry_md_is_secure|_gcry_md_init|_gcry_md_info|md_get_algo|_gcry_md_get|_gcry_md_get_algo|_gcry_md_algo_name|search_oid|spec_from_oid|spec_from_name|spec_from_algo|map_algo|cshake_hash_buffers|selftest_seq|mldsa_generate|randombytes|mldsa_sign)", line) is not None and (not re.match ("_gcry_md_hash_buffers",line) and not re.match ("_gcry_md_get_algo_dlen",line)):
                             skip = 1
                             if not re.match ("selftest", line) is None and cipher_file == "idea.c":
                                 skip = 3
-
+                            if not re.match ("run_selftests", line) is None:
+                                fw.write ("#define run_selftests 0")
                             if not re.match ("serpent_test", line) is None:
                                 fw.write ("static const char *serpent_test (void) { return 0; }\n")
                             if not re.match ("sm4_selftest", line) is None:
@@ -291,6 +295,12 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
                                 fw.write ("#define dsa_generate 0")
                             if not re.match ("ecc_generate", line) is None:
                                 fw.write ("#define ecc_generate 0")
+                            if not re.match ("mldsa_generate ", line) is None:
+                                fw.write ("#define mldsa_generate 0")
+                            if not re.match ("mldsa_sign", line) is None:
+                                fw.write ("#define mldsa_sign 0")
+                            if not re.match ("randombytes", line) is None:
+                                fw.write ("#define randombytes 0")
                             if not re.match ("rsa_generate ", line) is None:
                                 fw.write ("#define rsa_generate 0")
                             if not re.match ("rsa_sign", line) is None:
@@ -625,13 +635,13 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
         infile = os.path.join (indir, "src", src)
         if os.path.isdir (infile):
             continue
-        with codecs.open (outfile, "w", "utf-8") as fw:
+        with open (outfile, "w", encoding="utf-8") as fw:
             if src == "gcrypt-module.h":
                 continue
             if src == "visibility.h":
                 fw.write ("# include <grub/gcrypt/gcrypt.h>\n")
                 continue
-            with codecs.open (infile, "r", "utf-8") as f:
+            with open (infile, "r", encoding="utf-8") as f:
                 if src == "types.h":
                     fw.write (f.read ().replace ("float f;", "").replace ("double g;", "") \
                      .replace("#ifndef HAVE_BYTE",
@@ -661,7 +671,7 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
         outfile = os.path.join (basedir, "mpi", src)
         if os.path.isdir (infile):
             continue
-        with codecs.open (infile, "r", "utf-8") as f, codecs.open (outfile, "w", "utf-8") as fw:
+        with open (infile, "r", encoding="utf-8") as f, open (outfile, "w", encoding="utf-8") as fw:
             fw.write ("/* This file was automatically imported with \n")
             fw.write ("   import_gcry.py. Please don't modify it */\n")
             hold = False
@@ -694,31 +704,31 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
     chlog = "%s	* crypto.lst: New file.\n" % chlog
 
     outfile = os.path.join (cipher_dir_out, "types.h")
-    with codecs.open (outfile, "w", "utf-8") as fw:
+    with open (outfile, "w", encoding="utf-8") as fw:
         fw.write ("#include <grub/types.h>\n")
         fw.write ("#include <cipher_wrap.h>\n")
         chlog = "%s	* types.h: New file.\n" % chlog
 
     outfile = os.path.join (cipher_dir_out, "memory.h")
-    with codecs.open (outfile, "w", "utf-8") as fw:
+    with open (outfile, "w", encoding="utf-8") as fw:
         fw.write ("#include <cipher_wrap.h>\n")
         chlog = "%s	* memory.h: New file.\n" % chlog
 
 
     outfile = os.path.join (cipher_dir_out, "cipher.h")
-    with codecs.open (outfile, "w", "utf-8") as fw:
+    with open (outfile, "w", encoding="utf-8") as fw:
         fw.write ("#include <grub/crypto.h>\n")
         fw.write ("#include <cipher_wrap.h>\n")
         chlog = "%s	* cipher.h: Likewise.\n" % chlog
 
     outfile = os.path.join (cipher_dir_out, "g10lib.h")
-    with codecs.open (outfile, "w", "utf-8") as fw:
+    with open (outfile, "w", encoding="utf-8") as fw:
         fw.write ("#include <cipher_wrap.h>\n")
         chlog = "%s	* g10lib.h: Likewise.\n" % chlog
 
     conf.close ()
 
-    with codecs.open (os.path.join (cipher_dir_out, "init.c"), "w", "utf-8") as initfile:
+    with open (os.path.join (cipher_dir_out, "init.c"), "w", encoding="utf-8") as initfile:
         initfile.write ("#include <grub/crypto.h>\n")
         for module in modules_sym_md:
             initfile.write ("extern void grub_%s_init (void);\n" % module)
@@ -744,7 +754,7 @@ with codecs.open (os.path.join (cipher_dir_out, "crypto.lst"), "w", "utf-8") as 
 
 
 outfile = os.path.join (cipher_dir_out, "ChangeLog")
-with codecs.open (outfile, "w", "utf-8") as fw:
+with open (outfile, "w", encoding="utf-8") as fw:
     dt = datetime.date.today ()
     fw.write ("%04d-%02d-%02d  Automatic import tool\n" % \
               (dt.year,dt.month, dt.day))

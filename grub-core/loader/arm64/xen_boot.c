@@ -46,6 +46,11 @@ GRUB_MOD_LICENSE ("GPLv3+");
  */
 #define FDT_NODE_NAME_MAX_SIZE  (49)
 
+#undef USE_DEVICE_TREE
+#if defined (__aarch64__) || defined (__arm__)
+#define USE_DEVICE_TREE 1
+#endif
+
 struct compat_string_struct
 {
   grub_size_t size;
@@ -90,6 +95,7 @@ xen_boot_address_align (grub_addr_t start, grub_size_t align)
   return (align ? (ALIGN_UP (start, align)) : start);
 }
 
+#ifdef USE_DEVICE_TREE
 static grub_err_t
 prepare_xen_hypervisor_params (void *xen_boot_fdt)
 {
@@ -185,10 +191,12 @@ prepare_xen_module_params (struct xen_boot_binary *module, void *xen_boot_fdt)
 
   return GRUB_ERR_NONE;
 }
+#endif
 
 static grub_err_t
 finalize_params_xen_boot (void)
 {
+#ifdef USE_DEVICE_TREE
   struct xen_boot_binary *module;
   void *xen_boot_fdt;
   grub_size_t additional_size = 0x1000;
@@ -241,6 +249,9 @@ fail:
   grub_fdt_unload ();
 
   return grub_error (GRUB_ERR_IO, "failed to install/update FDT");
+#else
+  return GRUB_ERR_NONE;
+#endif
 }
 
 
@@ -284,7 +295,7 @@ single_binary_unload (struct xen_boot_binary *binary)
     grub_list_remove (GRUB_AS_LIST (binary));
 
   grub_dprintf ("xen_loader",
-		"Module struct memory free @ %p size: 0x%lx\n",
+		"Module struct memory free @ %p size: 0x%zx\n",
 		binary, sizeof (binary));
   grub_free (binary);
 
@@ -312,7 +323,9 @@ xen_unload (void)
 {
   loaded = false;
   all_binaries_unload ();
+#ifdef USE_DEVICE_TREE
   grub_fdt_unload ();
+#endif
   grub_dl_unref (my_mod);
 
   return GRUB_ERR_NONE;
@@ -323,7 +336,7 @@ xen_boot_binary_load (struct xen_boot_binary *binary, grub_file_t file,
 		      int argc, char *argv[])
 {
   binary->size = grub_file_size (file);
-  grub_dprintf ("xen_loader", "Xen_boot file size: 0x%lx\n", binary->size);
+  grub_dprintf ("xen_loader", "Xen_boot file size: 0x%zx\n", binary->size);
 
   binary->start
     = (grub_addr_t) grub_efi_allocate_any_pages (GRUB_EFI_BYTES_TO_PAGES
@@ -335,7 +348,7 @@ xen_boot_binary_load (struct xen_boot_binary *binary, grub_file_t file,
       return;
     }
 
-  grub_dprintf ("xen_loader", "Xen_boot numpages: 0x%lx\n",
+  grub_dprintf ("xen_loader", "Xen_boot numpages: 0x%zx\n",
 	        GRUB_EFI_BYTES_TO_PAGES (binary->size + binary->align));
 
   if (grub_file_read (file, (void *) xen_boot_address_align (binary->start,

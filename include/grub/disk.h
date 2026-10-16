@@ -54,6 +54,7 @@ enum grub_disk_dev_id
     GRUB_DISK_DEVICE_OBDISK_ID,
     GRUB_DISK_DEVICE_MEM_ID,
     GRUB_DISK_DEVICE_INITRD_ID,
+    GRUB_DISK_DEVICE_NVME_ID,
   };
 
 struct grub_disk;
@@ -315,6 +316,7 @@ struct grub_disk_cache
   grub_disk_addr_t sector;
   char *data;
   int lock;
+  struct grub_disk_cache *next;
 };
 
 extern struct grub_disk_cache EXPORT_VAR(grub_disk_cache_table)[GRUB_DISK_CACHE_NUM];

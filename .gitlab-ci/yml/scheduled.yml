@@ -1,0 +1,51 @@
+trigger-build-clang:
+  stage: scheduled
+  trigger:
+    include: '.gitlab-ci/yml/build-clang.yml'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+trigger-build-windows:
+  stage: scheduled
+  trigger:
+    include: '.gitlab-ci/yml/build-windows.yml'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+trigger-x86_64-efi-check:
+  stage: scheduled
+  variables:
+    TARGET: x86_64
+    PLATFORM: efi
+  trigger:
+    include: '.gitlab-ci/yml/check.yml'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+trigger-aarch64-linux-gnu-efi-check:
+  stage: scheduled
+  variables:
+    TARGET: aarch64-linux-gnu
+    PLATFORM: efi
+  trigger:
+    include: '.gitlab-ci/yml/check.yml'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+trigger-x86_64-efi-coverity-scan:
+  stage: scheduled
+  variables:
+    TARGET: x86_64
+    PLATFORM: efi
+    COVERITY_SCAN: true
+    COVERITY_DIR: cov-int
+  trigger:
+    include: '.gitlab-ci/yml/cov-scan.yml'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+

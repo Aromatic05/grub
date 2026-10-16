@@ -1,4 +1,4 @@
-From 5ee39f0bb8b0b713f766c0fc83439d83ac2c0bf2 Mon Sep 17 00:00:00 2001
+From 39300fed5ebf870b9a384da4f951293fe713e3ce Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Tue, 25 Jun 2024 16:32:50 +0800
 Subject: [PATCH 05/13] libtasn1: Use grub_divmod64() for division
@@ -14,10 +14,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/grub-core/lib/libtasn1-grub/lib/parser_aux.c b/grub-core/lib/libtasn1-grub/lib/parser_aux.c
-index c05bd2339..e4e4c0556 100644
+index 813b3d8..0f4399e 100644
 --- a/grub-core/lib/libtasn1-grub/lib/parser_aux.c
 +++ b/grub-core/lib/libtasn1-grub/lib/parser_aux.c
-@@ -632,7 +632,7 @@ _asn1_ltostr (int64_t v, char str[LTOSTR_MAX_SIZE])
+@@ -643,7 +643,7 @@ _asn1_ltostr (int64_t v, char str[LTOSTR_MAX_SIZE])
    count = 0;
    do
      {

@@ -204,6 +204,11 @@ grub_via_workaround_init (void)
     {
       grub_cpuid (1, proc_info, /* Don't care. */ manufacturer[0],
                   manufacturer[2], manufacturer[1]);
+
+      /* Check family, apply only to family 6 and lower. */
+      if (((proc_info & 0xf00) >> 8) > 6)
+        return;
+
       /* Check model, apply only to VIA C3 and lower. */
       if (((proc_info & 0xf0) >> 4 | (proc_info & 0xf0000) >> 12) > 10)
         return;

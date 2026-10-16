@@ -31,6 +31,14 @@
 #include <grub/gfxmenu_view.h>
 #include <grub/gui.h>
 #include <grub/color.h>
+#include <grub/safemath.h>
+
+/*
+ * Largest magnitude accepted for a single term of a proportional spec: small
+ * enough that the term multiplied by GRUB_FIXED_1 still fits comfortably in a
+ * 32-bit int, generous enough for any real theme.
+ */
+#define PROPORTIONAL_TERM_MAX 30000
 
 static grub_err_t
 parse_proportional_spec (const char *value, signed *abs, grub_fixed_signed_t *prop);
@@ -468,7 +476,9 @@ static grub_err_t
 parse_proportional_spec (const char *value, signed *abs, grub_fixed_signed_t *prop)
 {
   signed num;
+  unsigned long raw;
   const char *ptr;
+  const char *end = NULL;
   int sig = 0;
   *abs = 0;
   *prop = 0;
@@ -484,18 +494,41 @@ parse_proportional_spec (const char *value, signed *abs, grub_fixed_signed_t *pr
 	  ptr++;
 	}
 
-      num = grub_strtoul (ptr, &ptr, 0);
-      if (grub_errno)
-	return grub_errno;
+      grub_errno = GRUB_ERR_NONE;
+      raw = grub_strtoul (ptr, &end, 0);
+      if (grub_errno != GRUB_ERR_NONE || end == ptr)
+       return grub_error (GRUB_ERR_BAD_NUMBER,
+                          "invalid proportional value `%s'", value);
+      ptr = end;
+      /*
+       * raw is theme-file-controlled with no inherent bound (grub_strtoul()
+       * can return anything up to ULONG_MAX), but it feeds into either
+       * grub_signed_to_fixed() (multiplies by GRUB_FIXED_1 == 65536, for a
+       * '%' term) or a running sum (for a plain pixel-offset term); both are
+       * signed 32-bit int arithmetic that overflow -- undefined behaviour --
+       * well before any value a real theme has a reason to use. Reject
+       * anything past the bound before it is used at all.
+       */
+      if (raw > PROPORTIONAL_TERM_MAX)
+	return grub_error (GRUB_ERR_OUT_OF_RANGE,
+			   "proportional value `%s' out of range", value);
+      num = (signed) raw;
       if (sig)
 	num = -num;
       if (*ptr == '%')
 	{
-	  *prop += grub_fixed_fsf_divide (grub_signed_to_fixed (num), 100);
+	  grub_fixed_signed_t term = grub_fixed_fsf_divide (grub_signed_to_fixed (num), 100);
+	  if (grub_add (*prop, term, prop))
+	    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+			       "proportional value `%s' overflow", value);
 	  ptr++;
 	}
       else
-	*abs += num;
+	{
+	  if (grub_add (*abs, num, abs))
+	    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+			       "proportional value `%s' overflow", value);
+	}
     }
   return GRUB_ERR_NONE;
 }

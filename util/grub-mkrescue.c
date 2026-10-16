@@ -359,7 +359,7 @@ check_xorriso (const char *val)
   /* Parent.  Read xorriso's output.  */
   fout = fdopen (fd, "r");
   if (! fout)
-    return 0;
+    goto out;
 
   while (getline (&buf, &len, fout) > 0)
     {
@@ -367,10 +367,14 @@ check_xorriso (const char *val)
 	ret = 1;
     }
 
-  close (fd);
+out:
+  if (fout)
+    fclose (fout);
+  else
+    close (fd);
   waitpid (pid, &wstatus, 0);
   free (buf);
-  if (!WIFEXITED (wstatus) || WEXITSTATUS(wstatus) != 0)
+  if (!fout || !WIFEXITED (wstatus) || WEXITSTATUS(wstatus) != 0)
     return 0;
   return ret;
 }
@@ -670,7 +674,11 @@ main (int argc, char *argv[])
 						 "i386-pc", 0);
 	      sz = ftello (sa);
 	      fflush (sa);
+#ifdef __CYGWIN__
+	      fsync (fileno (sa));
+#else
 	      grub_util_fd_sync (fileno (sa));
+#endif
 	      fclose (sa);
 
 	      if (sz > 32768)

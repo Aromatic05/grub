@@ -34,7 +34,34 @@ dnl "TARGET_" (such as TARGET_CC, TARGET_CFLAGS, etc.) are used for
 dnl the target type. See INSTALL for full list of variables and
 dnl description of the relationships between them.
 
-AC_INIT([GRUB],[2.15],[bug-grub@gnu.org])
+AC_INIT([GRUB],[2.16],[bug-grub@gnu.org])
+
+# 1: Initial value
+# 2: https://lists.gnu.org/archive/html/grub-devel/2022-06/msg00035.html
+# 3: https://lists.gnu.org/archive/html/grub-devel/2022-11/msg00059.html
+# 4: https://lists.gnu.org/archive/html/grub-devel/2023-10/msg00028.html
+# 5: https://lists.gnu.org/archive/html/grub-devel/2025-02/msg00024.html
+# 6: https://lists.gnu.org/archive/html/grub-devel/2025-11/msg00155.html
+GLOBAL_SBAT_LEVEL=6
+AC_SUBST([GLOBAL_SBAT_LEVEL])
+AC_DEFINE_UNQUOTED([GLOBAL_SBAT_LEVEL], [$GLOBAL_SBAT_LEVEL], [GRUB Global SBAT level])
+
+AC_ARG_WITH([sbat-file],
+  AS_HELP_STRING([--with-sbat-file=FILE],
+                 [append downstream SBAT CSV entries from FILE to the installed sbat.csv]),
+  [],
+  [with_sbat_file=])
+
+if test "x$with_sbat_file" = xyes; then
+  AC_MSG_ERROR([--with-sbat-file requires a file path])
+elif test "x$with_sbat_file" = xno || test "x$with_sbat_file" = x; then
+  VENDOR_SBAT_FILE=
+else
+  if test ! -r "$with_sbat_file"; then
+    AC_MSG_ERROR([cannot read vendor SBAT file: $with_sbat_file])
+  fi
+  VENDOR_SBAT_FILE="$with_sbat_file"
+fi
 
 AS_CASE(["$ERROR_PLATFORM_NOT_SUPPORT_SSP"],
   [n | no | nO | N | No | NO], [ERROR_PLATFORM_NOT_SUPPORT_SSP=no],
@@ -575,11 +602,21 @@ tmp_CFLAGS="$CFLAGS"
 tmp_LDFLAGS="$LDFLAGS"
 tmp_CPPFLAGS="$CPPFLAGS"
 tmp_LIBS="$LIBS"
+tmp_EXEEXT="$EXEEXT"
+tmp_ac_exeext="$ac_exeext"
 CC="$TARGET_CC"
 CFLAGS="$TARGET_CFLAGS"
 CPPFLAGS="$TARGET_CPPFLAGS"
 LDFLAGS="$TARGET_LDFLAGS"
 LIBS=""
+
+case "$target_os" in
+  cygwin*|mingw32*|mingw64*)		TARGET_EXEEXT=.exe ;;
+  *)					TARGET_EXEEXT= ;;
+esac
+
+EXEEXT="$TARGET_EXEEXT"
+ac_exeext="$TARGET_EXEEXT"
 
 if test "x$target_m32" = x1; then
   # Force 32-bit mode.
@@ -1454,13 +1491,16 @@ if test x$grub_cv_target_cc_link_format = x-arch,i386 || test x$grub_cv_target_c
    TARGET_IMG_LDFLAGS='-nostdlib -static -Wl,-preload -Wl,-segalign,20'
    TARGET_IMG_LDFLAGS_AC='-nostdlib -static -Wl,-preload -Wl,-segalign,20'
    TARGET_IMG_BASE_LDOPT="-Wl,-image_base"
+   TARGET_IMG_BASE_LDOPT_ARG_SEP=","
    TARGET_LDFLAGS_OLDMAGIC=""
 elif test x$grub_cv_target_cc_link_format = x-mi386pe || test x$grub_cv_target_cc_link_format = x-mi386pep ; then
   TARGET_APPLE_LINKER=0
   TARGET_LDFLAGS_OLDMAGIC="-Wl,-N"
-  TARGET_IMG_LDSCRIPT='$(top_srcdir)'"/conf/i386-cygwin-img-ld.sc"
+  TARGET_IMG_LDSCRIPT='$(top_srcdir)'"/conf/i386-cygwin-img.lds"
   TARGET_IMG_LDFLAGS="-Wl,-T${TARGET_IMG_LDSCRIPT}"
-  TARGET_IMG_LDFLAGS_AC="-Wl,-T${srcdir}/conf/i386-cygwin-img-ld.sc"
+  TARGET_IMG_LDFLAGS_AC="-Wl,-T${srcdir}/conf/i386-cygwin-img.lds"
+  TARGET_IMG_BASE_LDOPT="-Wl,--defsym=_grub_text_base"
+  TARGET_IMG_BASE_LDOPT_ARG_SEP="="
   TARGET_IMG_CFLAGS=
 else
   TARGET_APPLE_LINKER=0
@@ -1468,6 +1508,27 @@ else
   TARGET_IMG_LDSCRIPT=
   TARGET_IMG_LDFLAGS='-Wl,-N'
   TARGET_IMG_LDFLAGS_AC='-Wl,-N'
+  if test "x$target_cpu-$platform" != "xi386-pc"; then
+    AX_CHECK_LINK_FLAG([-Wl,--image-base,0],
+        [TARGET_IMG_BASE_LDOPT="-Wl,--image-base,0 -Wl,-Ttext"],
+        [TARGET_IMG_BASE_LDOPT="-Wl,-Ttext"],
+        [],
+        [AC_LANG_SOURCE([
+    asm (".globl start; start:");
+    asm (".globl _start; _start:");
+    asm (".globl __start; __start:");
+    void __main (void);
+    void __main (void) {}
+    int main (void);
+        ])])
+    TARGET_IMG_BASE_LDOPT_ARG_SEP=","
+  else
+    TARGET_IMG_BASE_LDOPT="-Wl,--defsym=_grub_text_base"
+    TARGET_IMG_BASE_LDOPT_ARG_SEP="="
+    TARGET_IMG_LDSCRIPT='$(top_srcdir)'"/conf/i386-pc-kernel.lds"
+    TARGET_IMG_LDFLAGS="${TARGET_IMG_LDFLAGS} -Wl,-T${TARGET_IMG_LDSCRIPT}"
+    TARGET_IMG_LDFLAGS_AC="-Wl,-T${srcdir}/conf/i386-pc-kernel.lds"
+  fi
   TARGET_IMG_CFLAGS=
 fi
 
@@ -1792,24 +1853,7 @@ LIBS=""
 # Defined in acinclude.m4.
 grub_ASM_USCORE
 grub_PROG_TARGET_CC
-
-# The error message produced by autoconf if autoconf-archive is not installed is
-# quite misleading and not very helpful. So, try point people in the right direction.
-m4_ifndef([AX_CHECK_LINK_FLAG], [m4_fatal([autoconf-archive is missing. You must install it to generate the configure script.])])
-
 if test "x$TARGET_APPLE_LINKER" != x1 ; then
-AX_CHECK_LINK_FLAG([-Wl,--image-base,0x400000],
-    [TARGET_IMG_BASE_LDOPT="-Wl,--image-base"],
-    [TARGET_IMG_BASE_LDOPT="-Wl,-Ttext"],
-    [],
-    [AC_LANG_SOURCE([
-asm (".globl start; start:");
-asm (".globl _start; _start:");
-asm (".globl __start; __start:");
-void __main (void);
-void __main (void) {}
-int main (void);
-    ])])
 grub_PROG_OBJCOPY_ABSOLUTE
 fi
 grub_PROG_LD_BUILD_ID_NONE
@@ -1817,7 +1861,18 @@ if test "x$target_cpu" = xi386; then
   if test "$platform" != emu && test "x$TARGET_APPLE_LINKER" != x1 ; then
     if test ! -z "$TARGET_IMG_LDSCRIPT"; then
       # Check symbols provided by linker script.
-      CFLAGS="$TARGET_CFLAGS -nostdlib ${TARGET_IMG_LDFLAGS_AC} ${TARGET_IMG_BASE_LDOPT},0x8000"
+      target_img_base_ld="${TARGET_IMG_BASE_LDOPT}"
+      case "$target_img_base_ld" in
+        *_grub_text_base)
+          target_img_base_ld="${target_img_base_ld}="
+        ;;
+        *)
+          target_img_base_ld="${target_img_base_ld},"
+        ;;
+      esac
+      target_img_base_ld="${target_img_base_ld}0x8000"
+      CFLAGS="$TARGET_CFLAGS -nostdlib ${TARGET_IMG_LDFLAGS_AC} ${target_img_base_ld}"
+      target_img_base_ld=""
     fi
     grub_CHECK_BSS_START_SYMBOL
     grub_CHECK_END_SYMBOL
@@ -1866,6 +1921,8 @@ CFLAGS="$tmp_CFLAGS"
 CPPFLAGS="$tmp_CPPFLAGS"
 LDFLAGS="$tmp_LDFLAGS"
 LIBS="$tmp_LIBS"
+EXEEXT="$tmp_EXEEXT"
+ac_exeext="$tmp_ac_exeext"
 
 #
 # Check for options.
@@ -2161,7 +2218,7 @@ AC_ARG_WITH([unifont],
 if test "x$with_unifont" = x; then
   # search in well-known directories
   for ext in pcf pcf.gz bdf bdf.gz ttf ttf.gz otf otf.gz; do
-    for dir in . /usr/src /usr/share/fonts/X11/misc /usr/share/fonts/unifont /usr/share/fonts/uni /usr/share/fonts/truetype/unifont /usr/share/fonts/misc /usr/pkg/share/fonts/X11/misc /usr/local/share/fonts/gnu-unifont /usr/local/share/fonts/unifont; do
+    for dir in . /usr/src /usr/share/fonts/X11/misc /usr/share/fonts/unifont /usr/share/fonts/uni /usr/share/fonts/truetype/unifont /usr/share/fonts/misc /usr/pkg/share/fonts/X11/misc /usr/local/share/fonts/gnu-unifont /usr/local/share/fonts/unifont /usr/share/fonts/opentype/unifont; do
       if test -f "$dir/unifont.$ext"; then
         md5="$(md5sum "$dir/unifont.$ext"|awk '{ print $1; }')"
         # PCF and BDF from version 6.3 isn't hanled properly by libfreetype.
@@ -2419,6 +2476,7 @@ AC_SUBST(TARGET_CCASFLAGS)
 AC_SUBST(TARGET_IMG_LDFLAGS)
 AC_SUBST(TARGET_IMG_CFLAGS)
 AC_SUBST(TARGET_IMG_BASE_LDOPT)
+AC_SUBST(TARGET_IMG_BASE_LDOPT_ARG_SEP)
 AC_SUBST(TARGET_APPLE_LINKER)
 
 AC_SUBST(HOST_CFLAGS)
@@ -2543,6 +2601,13 @@ fi
 
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([grub-core/Makefile])
+AC_CONFIG_FILES([grub-core/sbat.csv], [
+  if test -n "$VENDOR_SBAT_FILE"; then
+    cat "$VENDOR_SBAT_FILE" >> "$ac_file" || exit 1
+  fi
+], [
+  VENDOR_SBAT_FILE="$VENDOR_SBAT_FILE"
+])
 AC_CONFIG_FILES([grub-core/lib/gnulib/Makefile])
 AC_CONFIG_FILES([po/Makefile.in])
 AC_CONFIG_FILES([docs/Makefile])

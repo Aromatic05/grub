@@ -104,7 +104,8 @@ struct grub_png_data
   int row_bytes, color_bits;
   grub_uint8_t *image_data;
 
-  int inside_idat, idat_remain;
+  int inside_idat;
+  grub_uint32_t idat_remain;
 
   int code_values[DEFLATE_HLIT_MAX];
   int code_maxval[DEFLATE_HUFF_LEN];
@@ -761,6 +762,9 @@ grub_png_read_dynamic_block (struct grub_png_data *data)
 	    return grub_error (GRUB_ERR_BAD_FILE_TYPE,
 			       "png: invalid huff code");
 	  len = cplens[n];
+	  if (cplext[n] == 99)
+	    return grub_error (GRUB_ERR_BAD_FILE_TYPE,
+			       "png: invalid huff code");
 	  if (cplext[n])
 	    len += grub_png_get_bits (data, cplext[n]);
 	  if (grub_errno != GRUB_ERR_NONE)
@@ -1018,7 +1022,7 @@ grub_png_decode_png (struct grub_png_data *data)
   grub_uint8_t magic[8];
 
   if (grub_file_read (data->file, &magic[0], 8) != 8)
-    return grub_errno;
+    return grub_error (GRUB_ERR_BAD_FILE_TYPE, "png: unexpected end of data");
 
   if (grub_memcmp (magic, png_magic, sizeof (png_magic)))
     return grub_error (GRUB_ERR_BAD_FILE_TYPE, "png: not a png file");

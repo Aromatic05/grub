@@ -55,6 +55,9 @@ static bool initrd_use_loadfile2 = false;
 static grub_guid_t load_file2_guid = GRUB_EFI_LOAD_FILE2_PROTOCOL_GUID;
 static grub_guid_t device_path_guid = GRUB_EFI_DEVICE_PATH_GUID;
 
+static grub_guid_t loaded_image_device_path_guid =
+    GRUB_EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL_GUID;
+
 /*
  * Clang will produce a warning for missing initializer for the
  * zero-length array "vendor_defined_data" inside this structure.
@@ -197,6 +200,10 @@ grub_arch_efi_linux_boot_image (grub_addr_t addr, grub_size_t size, char *args)
   grub_efi_handle_t image_handle;
   grub_efi_status_t status;
   grub_efi_loaded_image_t *loaded_image;
+  grub_efi_boot_services_t *b = grub_efi_system_table->boot_services;
+  grub_efi_device_path_t *saved_file_path = NULL;
+  grub_efi_device_path_t *saved_device_path = NULL;
+  bool override_dp = false;
   grub_size_t len;
   grub_size_t args_len;
 
@@ -228,23 +235,54 @@ grub_arch_efi_linux_boot_image (grub_addr_t addr, grub_size_t size, char *args)
 	}
     }
 
-  grub_free (mempath);
-
   grub_dprintf ("linux", "linux command line: '%s'\n", args);
 
   /* Convert command line to UTF-16. */
   loaded_image = grub_efi_get_loaded_image (image_handle);
   if (loaded_image == NULL)
     {
+      grub_free (mempath);
       grub_error (GRUB_ERR_BAD_FIRMWARE, "missing loaded_image proto");
       goto unload;
     }
+
+  /*
+   * The verifier may have loaded this image with no device path (see
+   * grub-core/kern/efi/sb.c): both loaded_image->file_path and the
+   * LOADED_IMAGE_DEVICE_PATH protocol are left NULL. Point them at the memory
+   * mapped path we built, matching what grub_efi_load_image() sets, and
+   * remember the originals so they can be restored if the image returns and has
+   * to be unloaded.
+   */
+  if (loaded_image->file_path == NULL)
+    {
+      loaded_image->file_path = (grub_efi_device_path_t *) mempath;
+
+      status = b->handle_protocol (image_handle, &loaded_image_device_path_guid,
+				   (void **) &saved_device_path);
+      if (status != GRUB_EFI_SUCCESS)
+        {
+          grub_error (GRUB_ERR_BAD_FIRMWARE,
+                "missing protocol for loaded image device path");
+          loaded_image->file_path = NULL;
+          grub_free (mempath);
+          goto unload;
+        }
+      b->reinstall_protocol_interface (image_handle,
+				       &loaded_image_device_path_guid,
+				       saved_device_path,
+				       (grub_efi_device_path_t *) mempath);
+      override_dp = true;
+    }
+  else
+    grub_free (mempath);  /* the image's loader made its own copy */
+
   args_len = grub_strlen (args);
   len = (args_len + 1) * sizeof (grub_efi_char16_t);
   loaded_image->load_options =
     grub_efi_allocate_any_pages (GRUB_EFI_BYTES_TO_PAGES (len));
   if (!loaded_image->load_options)
-    return grub_errno;
+    goto unload;
 
   len = grub_utf8_to_utf16 (loaded_image->load_options, len,
 			    (grub_uint8_t *) args, args_len, NULL);
@@ -261,6 +299,16 @@ grub_arch_efi_linux_boot_image (grub_addr_t addr, grub_size_t size, char *args)
 		       GRUB_EFI_BYTES_TO_PAGES (len));
   loaded_image->load_options = NULL;
 unload:
+  /* Restore the device path so the image's loader frees its own copy. */
+  if (override_dp)
+    {
+      loaded_image->file_path = saved_file_path;
+      b->reinstall_protocol_interface (image_handle,
+				       &loaded_image_device_path_guid,
+				       (grub_efi_device_path_t *) mempath,
+				       saved_device_path);
+      grub_free (mempath);
+    }
   grub_efi_unload_image (image_handle);
 
   return grub_errno;
@@ -474,6 +522,107 @@ grub_cmd_initrd (grub_command_t cmd __attribute__ ((unused)),
 }
 
 static grub_err_t
+grub_build_default_cmdline (int argc, char *argv[])
+{
+  cmdline_size = grub_loader_cmdline_size (argc, argv) + sizeof (LINUX_IMAGE);
+  linux_args = grub_malloc (cmdline_size);
+  if (linux_args == NULL)
+      return grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+
+  grub_memcpy (linux_args, LINUX_IMAGE, sizeof (LINUX_IMAGE));
+
+  return grub_create_loader_cmdline (argc, argv, linux_args + sizeof (LINUX_IMAGE) - 1,
+                                     cmdline_size, GRUB_VERIFY_KERNEL_CMDLINE);
+}
+
+#if !defined(__i386__) && !defined(__x86_64__)
+static grub_err_t
+grub_get_fdt_bootargs (char **bootargs)
+{
+  grub_uint32_t len;
+  const char *prop;
+  void *fdt;
+  int node;
+
+  *bootargs = NULL;
+
+  fdt = grub_efi_get_firmware_fdt ();
+  if (fdt == NULL)
+    return GRUB_ERR_NONE;
+
+  node = grub_fdt_find_subnode (fdt, 0, "chosen");
+  if (node < 0)
+    return GRUB_ERR_NONE;
+
+  prop = grub_fdt_get_prop (fdt, node, "bootargs", &len);
+  if (prop == NULL || len == 0)
+    return GRUB_ERR_NONE;
+
+  *bootargs = grub_malloc (len + 1);
+  if (*bootargs == NULL)
+    return grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+
+  grub_memcpy (*bootargs, prop, len);
+  (*bootargs)[len] = '\0';
+
+  grub_dprintf ("linux", "firmware DT bootargs: '%s'\n", *bootargs);
+
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+grub_build_linux_cmdline (int argc, char *argv[])
+{
+  grub_size_t dt_len, img_len;
+  char *dt_bootargs;
+  grub_err_t err;
+
+  /*
+   * If no kernel command line arguments are supplied, try to use the
+   * bootargs property from the /chosen node of the firmware device tree.
+   * Explicit arguments provided to GRUB always prevail.
+   */
+  if (argc != 1)
+    return grub_build_default_cmdline (argc, argv);
+
+  err = grub_get_fdt_bootargs (&dt_bootargs);
+  if (err != GRUB_ERR_NONE)
+    return err;
+  if (dt_bootargs == NULL)
+    return grub_build_default_cmdline (argc, argv);
+
+  dt_len = grub_strlen (dt_bootargs);
+  img_len = grub_strlen (argv[0]);
+
+  cmdline_size = sizeof (LINUX_IMAGE) + dt_len + 1 + img_len;
+
+  linux_args = grub_malloc (cmdline_size);
+  if (linux_args == NULL)
+    {
+      grub_free (dt_bootargs);
+      return grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+    }
+
+  grub_memcpy (linux_args, LINUX_IMAGE, sizeof (LINUX_IMAGE));
+  grub_memcpy (linux_args + sizeof (LINUX_IMAGE) - 1, argv[0], img_len);
+  linux_args[sizeof (LINUX_IMAGE) - 1 + img_len] = ' ';
+  grub_memcpy (linux_args + sizeof (LINUX_IMAGE) + img_len, dt_bootargs, dt_len + 1);
+
+  grub_dprintf ("linux", "using firmware DT bootargs '%s'\n", dt_bootargs);
+  err = grub_verify_string(linux_args + sizeof (LINUX_IMAGE) - 1, GRUB_VERIFY_KERNEL_CMDLINE);
+  grub_free (dt_bootargs);
+
+  return err;
+}
+#else /* !defined(__i386__) && !defined(__x86_64__) */
+static grub_err_t
+grub_build_linux_cmdline (int argc, char *argv[])
+{
+  return grub_build_default_cmdline (argc, argv);
+}
+#endif
+
+static grub_err_t
 grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
 		int argc, char *argv[])
 {
@@ -561,19 +710,7 @@ fallback:
                                    &effective_argc, &effective_argv);
     if (err)
       goto fail;
-    cmdline_size = grub_loader_cmdline_size (effective_argc, effective_argv)
-                   + sizeof (LINUX_IMAGE);
-    linux_args = grub_malloc (cmdline_size);
-    if (!linux_args)
-      err = grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
-    else
-      {
-        grub_memcpy (linux_args, LINUX_IMAGE, sizeof (LINUX_IMAGE));
-        err = grub_create_loader_cmdline (effective_argc, effective_argv,
-                                          linux_args + sizeof (LINUX_IMAGE) - 1,
-                                          cmdline_size,
-                                          GRUB_VERIFY_KERNEL_CMDLINE);
-      }
+    err = grub_build_linux_cmdline (effective_argc, effective_argv);
     grub_linux_release_args (argv, effective_argc, effective_argv);
     if (err)
       goto fail;

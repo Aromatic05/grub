@@ -882,6 +882,181 @@ init_pe_section(const struct grub_install_image_target_desc *image_target,
   ret_;					\
 }))
 
+static char **
+parse_sbat_fields (char *line)
+{
+  char **fields;
+  size_t i;
+  char *field = line;
+
+  fields = xmalloc (6 * sizeof (*fields));
+
+  for (i = 0; i < 6; i++)
+    {
+      char *comma;
+
+      fields[i] = field;
+
+      if (i == 5)
+	break;
+
+      if (*field == '\0')
+	{
+	  free (fields);
+	  return NULL;
+	}
+
+      comma = grub_strchr (field, ',');
+      if (comma == NULL)
+	{
+	  free (fields);
+	  return NULL;
+	}
+
+      *comma = '\0';
+      field = comma + 1;
+    }
+
+  /* The last field consumes the remainder of the line, so reject extras. */
+  if (grub_strchr (field, ',') != NULL)
+    {
+      free (fields);
+      return NULL;
+    }
+
+  return fields;
+}
+
+static int
+validate_sbat_line (char *line, const char *sbat_path, unsigned int line_num,
+		    char ***fields_out, unsigned long *generation)
+{
+  const unsigned char *ptr;
+  const char *tail;
+  char **fields;
+
+  for (ptr = (const unsigned char *) line; *ptr != '\0'; ptr++)
+    if (*ptr < 0x20 || *ptr > 0x7e)
+      {
+	grub_util_warn (
+	    _("invalid non-ASCII byte 0x%02x in SBAT entry %u of `%s'"),
+	    (unsigned int) *ptr,
+	    line_num,
+	    sbat_path);
+	return 0;
+      }
+
+  fields = parse_sbat_fields (line);
+  if (fields == NULL)
+    {
+      grub_util_warn (_("invalid SBAT entry %u in `%s': expected 6 "
+			"comma-separated fields"),
+		      line_num,
+		      sbat_path);
+      return 0;
+    }
+
+  *generation = grub_strtoul (fields[1], &tail, 10);
+  if (*fields[1] == '\0' || *tail != '\0')
+    {
+      grub_util_warn (_("invalid SBAT generation `%s' in entry %u of `%s'"),
+		      fields[1],
+		      line_num,
+		      sbat_path);
+      free (fields);
+      return 0;
+    }
+
+  *fields_out = fields;
+  return 1;
+}
+
+static void
+check_sbat_file (const char *sbat_path)
+{
+  char *buf;
+  char *ptr;
+  size_t sbat_size;
+  int found_grub = 0;
+  int found_sbat = 0;
+  unsigned int line_num = 0;
+
+  sbat_size = grub_util_get_image_size (sbat_path);
+  buf = xmalloc (sbat_size + 1);
+  grub_util_load_image (sbat_path, buf);
+  buf[sbat_size] = '\0';
+
+  for (ptr = buf; *ptr != '\0'; )
+    {
+      char *line = ptr;
+      char *next = grub_strchr (ptr, '\n');
+      char **fields;
+      unsigned long generation;
+
+      line_num++;
+
+      if (next)
+	{
+	  *next = '\0';
+	  ptr = next + 1;
+	}
+      else
+	ptr += grub_strlen (ptr);
+
+      /* Accept CRLF line endings by dropping trailing carriage return. */
+      {
+	size_t len = grub_strlen (line);
+
+	if (len > 0 && line[len - 1] == '\r')
+	  line[len - 1] = '\0';
+      }
+
+      /* Warn about and skip empty lines. */
+      if (*line == '\0')
+	{
+	  grub_util_warn (_("empty line %u in `%s'"), line_num, sbat_path);
+	  continue;
+	}
+
+      if (!validate_sbat_line (line, sbat_path, line_num, &fields, &generation))
+	continue;
+
+      if (grub_strcmp (fields[0], "sbat") == 0)
+	{
+	  if (found_sbat)
+	    grub_util_warn (_ ("duplicate SBAT version entry in `%s' at line %u"),
+			    sbat_path,
+			    line_num);
+	  found_sbat = 1;
+	}
+
+      if (grub_strcmp (fields[0], "grub") == 0)
+	{
+	  if (found_grub)
+	    grub_util_warn (_ ("duplicate GRUB SBAT entry in `%s' at line %u"),
+			    sbat_path,
+			    line_num);
+	  found_grub = 1;
+	  if (generation != (unsigned long) GLOBAL_SBAT_LEVEL)
+	    grub_util_warn (_("Global SBAT level %lu in `%s' does not match "
+			      "the build-time Global SBAT level %d"),
+			    generation,
+			    sbat_path,
+			    GLOBAL_SBAT_LEVEL);
+	}
+
+      free (fields);
+    }
+
+  if (!found_sbat)
+    grub_util_warn (_("no SBAT version entry found in `%s'"), sbat_path);
+
+  if (!found_grub)
+    grub_util_warn (_("no GRUB SBAT entry found in `%s'"), sbat_path);
+
+  free (buf);
+}
+
 void
 grub_install_generate_image (const char *dir, const char *prefix,
 			     FILE *out, const char *outname, char *mods[],
@@ -972,6 +1147,9 @@ grub_install_generate_image (const char *dir, const char *prefix,
       if (sbat_size < SBAT_HEADER_SIZE)
         grub_util_error (_("%s file should contain at least an SBAT header"), sbat_path);
     }
+
+  if (sbat_path != NULL)
+    check_sbat_file (sbat_path);
 
   if (appsig_size != 0 && image_target->id != IMAGE_PPC)
     grub_util_error (_("appended signature can be support only to powerpc-ieee1275 images"));

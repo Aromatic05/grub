@@ -829,13 +829,13 @@ grub_ieee1275_ibm_cas (void)
     grub_ieee1275_cell_t result;
   } args;
 
-  grub_ieee1275_get_integer_property (grub_ieee1275_chosen,
-                                      "ibm,arch-vec-5-platform-support",
-                                      (grub_uint32_t *) ibm_arch_platform_support,
-                                      sizeof (ibm_arch_platform_support),
-                                      &actual);
+  grub_ieee1275_get_property (grub_ieee1275_chosen,
+                              "ibm,arch-vec-5-platform-support",
+                              ibm_arch_platform_support,
+                              sizeof (ibm_arch_platform_support),
+                              &actual);
 
-  for (i = 0; i < prop_len; i++)
+  for (i = 0; i < prop_len; i += 2) /* Skipping the property value. */
     {
       switch (ibm_arch_platform_support[i])
         {
@@ -864,8 +864,6 @@ grub_ieee1275_ibm_cas (void)
             /* Ignoring the other indexes of ibm,arch-vec-5-platform-support. */
             break;
         }
-      /* Skipping the property value. */
-      i++;
     }
 
   struct cas_vector vector =
@@ -1027,18 +1025,15 @@ grub_ieee1275_get_secure_boot (void)
   grub_int32_t rc;
 
   rc = grub_ieee1275_finddevice ("/", &root);
+  if (rc == 0)
+    rc = grub_ieee1275_get_integer_property (root, "ibm,secure-boot", &sb_mode, sizeof (sb_mode), 0);
+
   if (rc != 0)
     {
-      grub_error (GRUB_ERR_UNKNOWN_DEVICE, "couldn't find / node");
+      grub_dprintf ("ieee1275", "couldn't examine /ibm,secure-boot property");
       return;
     }
 
-  rc = grub_ieee1275_get_integer_property (root, "ibm,secure-boot", &sb_mode, sizeof (sb_mode), 0);
-  if (rc != 0)
-    {
-      grub_error (GRUB_ERR_UNKNOWN_DEVICE, "couldn't examine /ibm,secure-boot property");
-      return;
-    }
   /*
    * Secure Boot Mode:
    * 0 - disabled
@@ -1059,8 +1054,6 @@ grub_ieee1275_get_secure_boot (void)
     }
   else
     grub_dprintf ("ieee1275", "Secure Boot Disabled\n");
-
-  grub_pks_keystore_init ();
 }
 #endif /* __powerpc__ */
 grub_addr_t grub_modbase;

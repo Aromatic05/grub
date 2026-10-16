@@ -1,4 +1,4 @@
-From f629f58b01b3e88052be5e50f51a667181203e05 Mon Sep 17 00:00:00 2001
+From 922b52b240c48db43452d18890dc85844c7841e0 Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Mon, 8 Apr 2024 14:57:21 +0800
 Subject: [PATCH 06/13] libtasn1: fix the potential buffer overrun
@@ -19,10 +19,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/grub-core/lib/libtasn1-grub/lib/coding.c b/grub-core/lib/libtasn1-grub/lib/coding.c
-index 5d03bca9d..0458829a5 100644
+index 3116319..75e7c74 100644
 --- a/grub-core/lib/libtasn1-grub/lib/coding.c
 +++ b/grub-core/lib/libtasn1-grub/lib/coding.c
-@@ -143,7 +143,7 @@ _asn1_tag_der (unsigned char class, unsigned int tag_value,
+@@ -141,7 +141,7 @@ _asn1_tag_der (unsigned char class, unsigned int tag_value,
  	  temp[k++] = tag_value & 0x7F;
  	  tag_value >>= 7;
  

@@ -374,6 +374,16 @@
     { 0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44 } \
   }
 
+#define GRUB_EFI_IP4_CONFIG2_PROTOCOL_GUID \
+  { 0x5b446ed1, 0xe30b, 0x4faa, \
+      { 0x87, 0x1a, 0x36, 0x54, 0xec, 0xa3, 0x60, 0x80 } \
+  }
+
+#define GRUB_EFI_IP6_CONFIG_PROTOCOL_GUID \
+  { 0x937fe521, 0x95ae, 0x4d1a, \
+      { 0x89, 0x29, 0x48, 0xbc, 0xd9, 0x0a, 0xd3, 0x1a } \
+  }
+
 #define LINUX_EFI_INITRD_MEDIA_GUID  \
   { 0x5568e427, 0x68fc, 0x4f3d, \
     { 0xac, 0x74, 0xca, 0x55, 0x52, 0x31, 0xcc, 0x68 } \
@@ -397,6 +407,11 @@
 #define GRUB_EFI_TCG2_FINAL_EVENTS_TABLE_GUID \
   { 0x1e2ed096, 0x30e2, 0x4254, \
     { 0xbd, 0x89, 0x86, 0x3b, 0xbe, 0xf8, 0x23, 0x25 } \
+  }
+
+#define GRUB_EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL_GUID \
+  { 0xbc62157e, 0x3e33, 0x4fec, \
+    { 0x99, 0x20, 0x2d, 0x3b, 0x36, 0xd7, 0x50, 0xdf } \
   }
 
 struct grub_efi_sal_system_table
@@ -647,6 +662,12 @@ typedef grub_efi_uintn_t grub_efi_status_t;
 #define GRUB_EFI_INCOMPATIBLE_VERSION	GRUB_EFI_ERROR_CODE (25)
 #define GRUB_EFI_SECURITY_VIOLATION	GRUB_EFI_ERROR_CODE (26)
 #define GRUB_EFI_CRC_ERROR		GRUB_EFI_ERROR_CODE (27)
+#define GRUB_EFI_END_OF_MEDIA           GRUB_EFI_ERROR_CODE (28)
+#define GRUB_EFI_END_OF_FILE            GRUB_EFI_ERROR_CODE (31)
+#define GRUB_EFI_INVALID_LANGUAGE       GRUB_EFI_ERROR_CODE (32)
+#define GRUB_EFI_COMPROMISED_DATA       GRUB_EFI_ERROR_CODE (33)
+#define GRUB_EFI_IP_ADDRESS_CONFLICT    GRUB_EFI_ERROR_CODE (34)
+#define GRUB_EFI_HTTP_ERROR             GRUB_EFI_ERROR_CODE (35)
 
 #define GRUB_EFI_WARN_UNKNOWN_GLYPH	GRUB_EFI_WARNING_CODE (1)
 #define GRUB_EFI_WARN_DELETE_FAILURE	GRUB_EFI_WARNING_CODE (2)
@@ -657,12 +678,35 @@ typedef void *grub_efi_handle_t;
 typedef void *grub_efi_event_t;
 typedef grub_efi_uint64_t grub_efi_lba_t;
 typedef grub_efi_uintn_t grub_efi_tpl_t;
-typedef grub_uint8_t grub_efi_mac_address_t[32];
-typedef grub_uint8_t grub_efi_ipv4_address_t[4];
-typedef grub_uint16_t grub_efi_ipv6_address_t[8];
-typedef grub_uint8_t grub_efi_ip_address_t[8] __attribute__ ((aligned(4)));
+typedef grub_efi_uint8_t grub_efi_mac_address_t[32];
+typedef grub_efi_uint8_t grub_efi_ipv4_address_t[4];
+typedef grub_efi_uint8_t grub_efi_ipv6_address_t[16];
+typedef union
+{
+  grub_efi_uint32_t addr[4];
+  grub_efi_ipv4_address_t v4;
+  grub_efi_ipv6_address_t v6;
+} grub_efi_ip_address_t __attribute__ ((aligned(4)));
+
 typedef grub_efi_uint64_t grub_efi_physical_address_t;
 typedef grub_efi_uint64_t grub_efi_virtual_address_t;
+typedef struct {
+  grub_uint8_t addr[4];
+} grub_efi_pxe_ipv4_address_t;
+
+typedef struct {
+  grub_uint8_t addr[16];
+} grub_efi_pxe_ipv6_address_t;
+
+typedef struct {
+  grub_uint8_t addr[32];
+} grub_efi_pxe_mac_address_t;
+
+typedef union {
+  grub_uint32_t addr[4];
+  grub_efi_pxe_ipv4_address_t v4;
+  grub_efi_pxe_ipv6_address_t v6;
+} grub_efi_pxe_ip_address_t;
 
 /* XXX although the spec does not specify the padding, this actually
    must have the padding!  */
@@ -896,6 +940,8 @@ struct grub_efi_ipv4_device_path
   grub_efi_uint16_t remote_port;
   grub_efi_uint16_t protocol;
   grub_efi_uint8_t static_ip_address;
+  grub_efi_ipv4_address_t gateway_ip_address;
+  grub_efi_ipv4_address_t subnet_mask;
 } GRUB_PACKED;
 typedef struct grub_efi_ipv4_device_path grub_efi_ipv4_device_path_t;
 
@@ -958,6 +1004,24 @@ struct grub_efi_vlan_device_path
   grub_efi_uint16_t vlan_id;
 } GRUB_PACKED;
 typedef struct grub_efi_vlan_device_path grub_efi_vlan_device_path_t;
+
+#define GRUB_EFI_URI_DEVICE_PATH_SUBTYPE		24
+
+struct grub_efi_uri_device_path
+{
+  grub_efi_device_path_t header;
+  grub_efi_char8_t uri[0];
+} GRUB_PACKED;
+typedef struct grub_efi_uri_device_path grub_efi_uri_device_path_t;
+
+#define GRUB_EFI_DNS_DEVICE_PATH_SUBTYPE                31
+struct grub_efi_dns_device_path
+{
+  grub_efi_device_path_t header;
+  grub_efi_uint8_t is_ipv6;
+  grub_efi_pxe_ip_address_t dns_server_ip[0];
+} GRUB_PACKED;
+typedef struct grub_efi_dns_device_path grub_efi_dns_device_path_t;
 
 #define GRUB_EFI_VENDOR_MESSAGING_DEVICE_PATH_SUBTYPE	10
 
@@ -1541,16 +1605,126 @@ struct grub_efi_simple_text_output_interface
 };
 typedef struct grub_efi_simple_text_output_interface grub_efi_simple_text_output_interface_t;
 
-typedef grub_uint8_t grub_efi_pxe_packet_t[1472];
+typedef struct grub_efi_pxe_dhcpv4_packet
+{
+  grub_efi_uint8_t bootp_opcode;
+  grub_efi_uint8_t bootp_hwtype;
+  grub_efi_uint8_t bootp_hwaddr_len;
+  grub_efi_uint8_t bootp_gate_hops;
+  grub_efi_uint32_t bootp_ident;
+  grub_efi_uint16_t bootp_seconds;
+  grub_efi_uint16_t bootp_flags;
+  grub_efi_uint8_t bootp_ci_addr[4];
+  grub_efi_uint8_t bootp_yi_addr[4];
+  grub_efi_uint8_t bootp_si_addr[4];
+  grub_efi_uint8_t bootp_gi_addr[4];
+  grub_efi_uint8_t bootp_hw_addr[16];
+  grub_efi_uint8_t bootp_srv_name[64];
+  grub_efi_uint8_t bootp_boot_file[128];
+  grub_efi_uint32_t dhcp_magik;
+  grub_efi_uint8_t dhcp_options[56];
+} grub_efi_pxe_dhcpv4_packet_t;
+
+struct grub_efi_pxe_dhcpv6_packet
+{
+  grub_efi_uint32_t message_type:8;
+  grub_efi_uint32_t transaction_id:24;
+  grub_efi_uint8_t dhcp_options[1024];
+} GRUB_PACKED;
+typedef struct grub_efi_pxe_dhcpv6_packet grub_efi_pxe_dhcpv6_packet_t;
+
+typedef union
+{
+  grub_efi_uint8_t raw[1472];
+  grub_efi_pxe_dhcpv4_packet_t dhcpv4;
+  grub_efi_pxe_dhcpv6_packet_t dhcpv6;
+} grub_efi_pxe_packet_t;
+
+typedef struct grub_efi_pxe_icmp_error
+{
+  grub_efi_uint8_t type;
+  grub_efi_uint8_t code;
+  grub_efi_uint16_t checksum;
+  union
+    {
+      grub_efi_uint32_t reserved;
+      grub_efi_uint32_t mtu;
+      grub_efi_uint32_t pointer;
+      struct
+	{
+	  grub_efi_uint16_t identifier;
+	  grub_efi_uint16_t sequence;
+	} echo;
+    } u;
+  grub_efi_uint8_t data[494];
+} grub_efi_pxe_icmp_error_t;
+
+typedef struct grub_efi_pxe_tftp_error
+{
+  grub_efi_uint8_t error_code;
+  grub_efi_char8_t error_string[127];
+} grub_efi_pxe_tftp_error_t;
+
+#define GRUB_EFI_PXE_BASE_CODE_MAX_IPCNT 8
+typedef struct grub_efi_pxe_ip_filter
+{
+  grub_efi_uint8_t filters;
+  grub_efi_uint8_t ip_count;
+  grub_efi_uint16_t reserved;
+  grub_efi_ip_address_t ip_list[GRUB_EFI_PXE_BASE_CODE_MAX_IPCNT];
+} grub_efi_pxe_ip_filter_t;
+
+typedef struct {
+  grub_efi_pxe_ip_address_t ip_addr;
+  grub_efi_pxe_mac_address_t mac_addr;
+} grub_efi_pxe_arp_entry_t;
+
+typedef struct {
+  grub_efi_pxe_ip_address_t ip_addr;
+  grub_efi_pxe_ip_address_t subnet_mask;
+  grub_efi_pxe_ip_address_t gw_addr;
+} grub_efi_pxe_route_entry_t;
+
+
+#define GRUB_EFI_PXE_BASE_CODE_MAX_ARP_ENTRIES 8
+#define GRUB_EFI_PXE_BASE_CODE_MAX_ROUTE_ENTRIES 8
 
 typedef struct grub_efi_pxe_mode
 {
-  grub_uint8_t unused[52];
+  grub_efi_boolean_t started;
+  grub_efi_boolean_t ipv6_available;
+  grub_efi_boolean_t ipv6_supported;
+  grub_efi_boolean_t using_ipv6;
+  grub_efi_boolean_t bis_supported;
+  grub_efi_boolean_t bis_detected;
+  grub_efi_boolean_t auto_arp;
+  grub_efi_boolean_t send_guid;
+  grub_efi_boolean_t dhcp_discover_valid;
+  grub_efi_boolean_t dhcp_ack_received;
+  grub_efi_boolean_t proxy_offer_received;
+  grub_efi_boolean_t pxe_discover_valid;
+  grub_efi_boolean_t pxe_reply_received;
+  grub_efi_boolean_t pxe_bis_reply_received;
+  grub_efi_boolean_t icmp_error_received;
+  grub_efi_boolean_t tftp_error_received;
+  grub_efi_boolean_t make_callbacks;
+  grub_efi_uint8_t ttl;
+  grub_efi_uint8_t tos;
+  grub_efi_ip_address_t station_ip;
+  grub_efi_ip_address_t subnet_mask;
   grub_efi_pxe_packet_t dhcp_discover;
   grub_efi_pxe_packet_t dhcp_ack;
   grub_efi_pxe_packet_t proxy_offer;
   grub_efi_pxe_packet_t pxe_discover;
   grub_efi_pxe_packet_t pxe_reply;
+  grub_efi_pxe_packet_t pxe_bis_reply;
+  grub_efi_pxe_ip_filter_t ip_filter;
+  grub_efi_uint32_t arp_cache_entries;
+  grub_efi_pxe_arp_entry_t arp_cache[GRUB_EFI_PXE_BASE_CODE_MAX_ARP_ENTRIES];
+  grub_efi_uint32_t route_table_entries;
+  grub_efi_pxe_route_entry_t route_table[GRUB_EFI_PXE_BASE_CODE_MAX_ROUTE_ENTRIES];
+  grub_efi_pxe_icmp_error_t icmp_error;
+  grub_efi_pxe_tftp_error_t tftp_error;
 } grub_efi_pxe_mode_t;
 
 typedef struct grub_efi_pxe
@@ -1854,5 +2028,73 @@ struct grub_efi_memory_attribute_protocol
 			    grub_efi_uint64_t attributes);
 };
 typedef struct grub_efi_memory_attribute_protocol grub_efi_memory_attribute_protocol_t;
+
+enum grub_efi_ip4_config2_data_type
+  {
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_INTERFACEINFO,
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_POLICY,
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_MANUAL_ADDRESS,
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_GATEWAY,
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_DNSSERVER,
+    GRUB_EFI_IP4_CONFIG2_DATA_TYPE_MAXIMUM,
+  };
+typedef enum grub_efi_ip4_config2_data_type grub_efi_ip4_config2_data_type_t;
+
+struct grub_efi_ip4_config2_protocol
+{
+  grub_efi_status_t (__grub_efi_api *set_data) (struct grub_efi_ip4_config2_protocol *this,
+				 grub_efi_ip4_config2_data_type_t data_type,
+				 grub_efi_uintn_t data_size,
+				 void *data);
+
+  grub_efi_status_t (__grub_efi_api *get_data) (struct grub_efi_ip4_config2_protocol *this,
+				 grub_efi_ip4_config2_data_type_t data_type,
+				 grub_efi_uintn_t *data_size,
+				 void *data);
+
+  grub_efi_status_t (__grub_efi_api *register_data_notify) (struct grub_efi_ip4_config2_protocol *this,
+					     grub_efi_ip4_config2_data_type_t data_type,
+					     grub_efi_event_t event);
+
+  grub_efi_status_t (__grub_efi_api *unregister_datanotify) (struct grub_efi_ip4_config2_protocol *this,
+					     grub_efi_ip4_config2_data_type_t data_type,
+					     grub_efi_event_t event);
+};
+typedef struct grub_efi_ip4_config2_protocol grub_efi_ip4_config2_protocol_t;
+
+enum grub_efi_ip6_config_data_type
+  {
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_INTERFACEINFO,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_ALT_INTERFACEID,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_POLICY,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_DUP_ADDR_DETECT_TRANSMITS,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_MANUAL_ADDRESS,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_GATEWAY,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_DNSSERVER,
+    GRUB_EFI_IP6_CONFIG_DATA_TYPE_MAXIMUM,
+  };
+typedef enum grub_efi_ip6_config_data_type grub_efi_ip6_config_data_type_t;
+
+struct grub_efi_ip6_config_protocol
+{
+  grub_efi_status_t (__grub_efi_api *set_data) (struct grub_efi_ip6_config_protocol *this,
+				 grub_efi_ip6_config_data_type_t data_type,
+				 grub_efi_uintn_t data_size,
+				 void *data);
+
+  grub_efi_status_t (__grub_efi_api *get_data) (struct grub_efi_ip6_config_protocol *this,
+				 grub_efi_ip6_config_data_type_t data_type,
+				 grub_efi_uintn_t *data_size,
+				 void *data);
+
+  grub_efi_status_t (__grub_efi_api *register_data_notify) (struct grub_efi_ip6_config_protocol *this,
+					     grub_efi_ip6_config_data_type_t data_type,
+					     grub_efi_event_t event);
+
+  grub_efi_status_t (__grub_efi_api *unregister_datanotify) (struct grub_efi_ip6_config_protocol *this,
+					     grub_efi_ip6_config_data_type_t data_type,
+					     grub_efi_event_t event);
+};
+typedef struct grub_efi_ip6_config_protocol grub_efi_ip6_config_protocol_t;
 
 #endif /* ! GRUB_EFI_API_HEADER */

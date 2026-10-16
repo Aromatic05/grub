@@ -339,7 +339,7 @@ struct grub_fshelp_node
 {
   struct grub_ext2_data *data;
   struct grub_ext2_inode inode;
-  int ino;
+  grub_uint32_t ino;
   int inode_read;
 };
 
@@ -635,7 +635,7 @@ grub_ext2_read_file (grub_fshelp_node_t node,
 /* Read the inode INO for the file described by DATA into INODE.  */
 static grub_err_t
 grub_ext2_read_inode (struct grub_ext2_data *data,
-		      int ino, struct grub_ext2_inode *inode)
+		      grub_uint32_t ino, struct grub_ext2_inode *inode)
 {
   struct grub_ext2_block_group blkgrp;
   struct grub_ext2_sblock *sblock = &data->sblock;
@@ -645,6 +645,8 @@ grub_ext2_read_inode (struct grub_ext2_data *data,
   grub_disk_addr_t base;
 
   /* It is easier to calculate if the first inode is 0.  */
+  if (ino == 0)
+    return grub_error (GRUB_ERR_BAD_FS, "invalid inode number");
   ino--;
 
   grub_ext2_blockgroup (data,
@@ -726,6 +728,12 @@ grub_ext2_mount (grub_disk_t disk)
     }
   else
     data->log_group_desc_size = 5;
+
+  if (data->log_group_desc_size > (int) LOG2_BLOCK_SIZE (data))
+    {
+      grub_error (GRUB_ERR_BAD_FS, "group descriptor size exceeds block size");
+      goto fail;
+    }
 
   data->disk = disk;
 
@@ -828,10 +836,9 @@ grub_ext2_iterate_dir (grub_fshelp_node_t dir,
     {
       struct ext2_dirent dirent;
 
-      grub_ext2_read_file (diro, 0, 0, fpos, sizeof (struct ext2_dirent),
-			   (char *) &dirent);
-      if (grub_errno)
-	return 0;
+      if (grub_ext2_read_file (diro, 0, 0, fpos, sizeof (struct ext2_dirent),
+			       (char *) &dirent) != (grub_ssize_t) sizeof (struct ext2_dirent))
+        return 0;
 
       if (dirent.direntlen == 0)
         return 0;
@@ -842,9 +849,8 @@ grub_ext2_iterate_dir (grub_fshelp_node_t dir,
 	  struct grub_fshelp_node *fdiro;
 	  enum grub_fshelp_filetype type = GRUB_FSHELP_UNKNOWN;
 
-	  grub_ext2_read_file (diro, 0, 0, fpos + sizeof (struct ext2_dirent),
-			       dirent.namelen, filename);
-	  if (grub_errno)
+	  if (grub_ext2_read_file (diro, 0, 0, fpos + sizeof (struct ext2_dirent),
+				   dirent.namelen, filename) != (grub_ssize_t) dirent.namelen)
 	    return 0;
 
 	  fdiro = grub_malloc (sizeof (struct grub_fshelp_node));
@@ -950,7 +956,7 @@ grub_ext2_open (struct grub_file *file, const char *name)
   return 0;
 
  fail:
-  if (fdiro != &data->diropen)
+  if (data != NULL && fdiro != &data->diropen)
     grub_free (fdiro);
   grub_free (data);
 
@@ -1041,7 +1047,7 @@ grub_ext2_dir (grub_device_t device, const char *path, grub_fs_dir_hook_t hook,
   grub_ext2_iterate_dir (fdiro, grub_ext2_dir_iter, &ctx);
 
  fail:
-  if (fdiro != &ctx.data->diropen)
+  if (ctx.data != NULL && fdiro != &ctx.data->diropen)
     grub_free (fdiro);
   grub_free (ctx.data);
 

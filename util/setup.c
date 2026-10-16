@@ -405,10 +405,10 @@ SETUP (const char *dir,
     };
     int is_ldm;
     grub_err_t err;
-    grub_disk_addr_t *sectors;
+    grub_disk_addr_t *sectors = NULL;
     int i;
     grub_fs_t fs;
-    unsigned int nsec, maxsec;
+    unsigned int nsec = 0, maxsec = 0;
 
     grub_partition_iterate (dest_dev->disk, identify_partmap, &ctx);
 

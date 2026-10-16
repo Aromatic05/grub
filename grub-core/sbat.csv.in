@@ -1,0 +1,2 @@
+sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
+grub,@GLOBAL_SBAT_LEVEL@,Free Software Foundation,@PACKAGE@,@VERSION@,https://www.gnu.org/software/grub/

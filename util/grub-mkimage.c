@@ -345,6 +345,12 @@ main (int argc, char *argv[])
       strcpy (ptr, dn);
     }
 
+  if (arguments.sbat && *arguments.sbat == '\0')
+    {
+      free (arguments.sbat);
+      arguments.sbat = xasprintf ("%s/sbat.csv", arguments.dir);
+    }
+
   grub_install_generate_image (arguments.dir, arguments.prefix, fp,
 			       arguments.output, arguments.modules,
 			       arguments.memdisk, arguments.pubkeys,

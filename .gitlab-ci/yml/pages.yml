@@ -1,0 +1,14 @@
+pages:
+  stage: pages
+  image: ruby:3.2
+  script:
+    - gem install bundler
+    - bundle install
+    - bundle exec jekyll build -d public
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - index.html
+  artifacts:
+    paths:
+      - public

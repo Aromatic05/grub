@@ -255,6 +255,10 @@ grub_menu_execute_entry(grub_menu_entry_t entry, int auto_boot)
       menu = grub_zalloc (sizeof (*menu));
       if (! menu)
 	return;
+      /* Don't require authorization to exit the submenu, GRUB ensures that we
+	 can only get into a submenu if we are authorized to access all parent
+	 submenus.  */
+      menu->skip_exit_auth = true;
       grub_env_set_menu (menu);
       if (auto_boot)
 	grub_env_set ("timeout", "0");
@@ -938,6 +942,9 @@ grub_show_menu (grub_menu_t menu, int nested, int autoboot)
       grub_print_error ();
 
       if (grub_normal_exit_level)
+	break;
+
+      if (menu->skip_exit_auth)
 	break;
 
       err2 = grub_auth_check_authentication (NULL);

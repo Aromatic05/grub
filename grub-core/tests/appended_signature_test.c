@@ -127,7 +127,7 @@ appended_signature_test (void)
   if (cmd_trust == NULL)
     {
       grub_test_assert (0, "can't find command `%s'", "append_add_db_cert");
-      return;
+      goto exit;
     }
 
   grub_errno = GRUB_ERR_NONE;
@@ -136,7 +136,7 @@ appended_signature_test (void)
                     grub_errno, grub_errmsg);
   /* If we have no certificate the remainder of the tests are meaningless. */
   if (err != GRUB_ERR_NONE)
-    return;
+    goto exit;
 
   /*
    * Reload the command: this works around some 'interesting' behaviour in the
@@ -190,7 +190,7 @@ appended_signature_test (void)
   grub_test_assert (err == GRUB_ERR_NONE, "loading certificate 2 failed: %d: %s",
                     grub_errno, grub_errmsg);
   if (err != GRUB_ERR_NONE)
-    return;
+    goto exit;
 
   DO_TEST (hi_signed_2nd, 1);
   DO_TEST (hi_signed, 1);
@@ -205,7 +205,7 @@ appended_signature_test (void)
   if (cmd_distrust == NULL)
     {
       grub_test_assert (0, "can't find command `%s'", "append_add_dbx_cert");
-      return;
+      goto exit;
     }
 
   /* Remove the certificate #1. */
@@ -263,22 +263,22 @@ appended_signature_test (void)
 
   cmd_trust = grub_command_find ("append_add_db_cert");
   err = (cmd_trust->func) (cmd_trust, 1, trust_args);
-  grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS || GRUB_ERR_ACCESS_DENIED),
+  grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS || err == GRUB_ERR_ACCESS_DENIED),
                     "loading certificate 1 failed: %d: %s",
                     grub_errno, grub_errmsg);
   if (err != GRUB_ERR_NONE)
-    return;
+    goto exit;
 
   DO_TEST (hi_signed, 1);
   DO_TEST (hi_double, 1);
   DO_TEST (hi_double_extended, 1);
 
   err = (cmd_trust->func) (cmd_trust, 1, trust_args2);
-  grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS || GRUB_ERR_ACCESS_DENIED),
+  grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS || err == GRUB_ERR_ACCESS_DENIED),
                     "loading certificate 2 failed: %d: %s",
                     grub_errno, grub_errmsg);
   if (err != GRUB_ERR_NONE)
-    return;
+    goto exit;
 
   DO_TEST (hi_signed_2nd, 1);
   DO_TEST (hi_signed, 1);
@@ -289,10 +289,10 @@ appended_signature_test (void)
   if (cmd_distrust == NULL)
     {
       grub_test_assert (0, "can't find command `%s'", "append_add_dbx_cert");
-      return;
+      goto exit;
     }
 
-  /* Now remove certificate #1. */
+  /* Now add certificate #1. */
   err = (cmd_distrust->func) (cmd_distrust, 1, trust_args);
   grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS),
                     "distrusting certificate 1 failed: %d: %s",
@@ -309,7 +309,7 @@ appended_signature_test (void)
   DO_TEST (hi_signed, 0);
   DO_TEST (hi_double, 1);
 
-  /* Remove the certificate #2. */
+  /* Add the certificate #2. */
   err = (cmd_distrust->func) (cmd_distrust, 1, trust_args2);
   grub_test_assert ((err == GRUB_ERR_NONE || err == GRUB_ERR_EXISTS),
                     "distrusting certificate 2 failed: %d: %s",
@@ -339,6 +339,7 @@ appended_signature_test (void)
   grub_test_assert (err == GRUB_ERR_NONE, "trusting certificate with extended key usage failed: %d: %s",
                     grub_errno, grub_errmsg);
 
+ exit:
   grub_procfs_unregister (&certificate_der_entry);
   grub_procfs_unregister (&certificate2_der_entry);
   grub_procfs_unregister (&certificate_printable_der_entry);

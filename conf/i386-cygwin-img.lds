@@ -2,6 +2,7 @@
 
 SECTIONS
 {
+  . = _grub_text_base;
   .text :
   {
     start = . ;
@@ -49,6 +50,10 @@ SECTIONS
   .stabstr :
   {
     *(.stabstr)
+  }
+  /DISCARD/ : {
+    *(.buildid)
+    *(.reloc)
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2002-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,24 +14,24 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
+#include <config.h>
 
 /*****************************************************/
 /* File: decoding.c                                  */
 /* Description: Functions to manage DER decoding     */
 /*****************************************************/
 
-#include <int.h>
-#include <parser_aux.h>
-#include <gstr.h>
-#include <structure.h>
-#include <element.h>
+#include "int.h"
+#include "parser_aux.h"
+#include "gstr.h"
+#include "structure.h"
+#include "element.h"
 #include <limits.h>
-#include <intprops.h>
+#include "intprops.h"
 #include "c-ctype.h"
 
 #ifdef DEBUG
@@ -915,7 +915,7 @@ delete_unneeded_choice_fields (asn1_node p)
  *   name (*@ELEMENT deleted).
  **/
 int
-asn1_der_decoding2 (asn1_node * element, const void *ider, int *max_ider_len,
+asn1_der_decoding2 (asn1_node *element, const void *ider, int *max_ider_len,
 		    unsigned int flags, char *errorDescription)
 {
   asn1_node node, p, p2, p3;
@@ -1460,7 +1460,7 @@ asn1_der_decoding2 (asn1_node * element, const void *ider, int *max_ider_len,
 	      move = RIGHT;
 	      break;
 	    case ASN1_ETYPE_ANY:
-	      /* Check indefinite lenth method in an EXPLICIT TAG */
+	      /* Check indefinite length method in an EXPLICIT TAG */
 
 	      if (!(flags & ASN1_DECODE_FLAG_STRICT_DER)
 		  && (p->type & CONST_TAG) && tag_len == 2
@@ -1570,7 +1570,14 @@ asn1_der_decoding2 (asn1_node * element, const void *ider, int *max_ider_len,
 	    move = UP;
 	}
       if (move == UP)
-	p = _asn1_find_up (p);
+	{
+	  /* If we are parsing a sequence or set and p is a direct
+	     child of it, no need to traverse the list back to the leftmost node. */
+	  if (tcache.tail == p)
+	    p = tcache.head;
+	  else
+	    p = _asn1_find_up (p);
+	}
     }
 
   _asn1_delete_not_used (*element);
@@ -1614,7 +1621,7 @@ cleanup:
  *   name (*@ELEMENT deleted).
  **/
 int
-asn1_der_decoding (asn1_node * element, const void *ider, int ider_len,
+asn1_der_decoding (asn1_node *element, const void *ider, int ider_len,
 		   char *errorDescription)
 {
   return asn1_der_decoding2 (element, ider, &ider_len, 0, errorDescription);
@@ -1645,7 +1652,7 @@ asn1_der_decoding (asn1_node * element, const void *ider, int ider_len,
  *   match the structure @structure (*ELEMENT deleted).
  **/
 int
-asn1_der_decoding_element (asn1_node * structure, const char *elementName,
+asn1_der_decoding_element (asn1_node *structure, const char *elementName,
 			   const void *ider, int len, char *errorDescription)
 {
   return asn1_der_decoding (structure, ider, len, errorDescription);
@@ -1743,7 +1750,7 @@ asn1_der_decoding_startEnd (asn1_node element, const void *ider, int ider_len,
  *   depending on DER decoding.
  **/
 int
-asn1_expand_any_defined_by (asn1_node_const definitions, asn1_node * element)
+asn1_expand_any_defined_by (asn1_node_const definitions, asn1_node *element)
 {
   char name[2 * ASN1_MAX_NAME_SIZE + 2], value[ASN1_MAX_NAME_SIZE];
   int retCode = ASN1_SUCCESS, result;
@@ -1899,7 +1906,7 @@ asn1_expand_any_defined_by (asn1_node_const definitions, asn1_node * element)
 				}
 			    }
 			  else
-			    {	/* error with the pointer to the structure to exapand */
+			    {	/* error with the pointer to the structure to expand */
 			      retCode = ASN1_ERROR_TYPE_ANY;
 			      break;
 			    }
@@ -1958,7 +1965,7 @@ asn1_expand_any_defined_by (asn1_node_const definitions, asn1_node * element)
  * asn1_expand_octet_string:
  * @definitions: ASN1 definitions
  * @element: pointer to an ASN1 structure
- * @octetName: name of the OCTECT STRING field to expand.
+ * @octetName: name of the OCTET STRING field to expand.
  * @objectName: name of the OBJECT IDENTIFIER field to use to define
  *    the type for expansion.
  *
@@ -1973,10 +1980,10 @@ asn1_expand_any_defined_by (asn1_node_const definitions, asn1_node * element)
  *   use for expansion, or other errors depending on DER decoding.
  **/
 int
-asn1_expand_octet_string (asn1_node_const definitions, asn1_node * element,
+asn1_expand_octet_string (asn1_node_const definitions, asn1_node *element,
 			  const char *octetName, const char *objectName)
 {
-  char name[2 * ASN1_MAX_NAME_SIZE + 1], value[ASN1_MAX_NAME_SIZE];
+  char name[2 * ASN1_MAX_NAME_SIZE + 2], value[ASN1_MAX_NAME_SIZE];
   int retCode = ASN1_SUCCESS, result;
   int len, len2, len3;
   asn1_node_const p2;
@@ -2080,7 +2087,7 @@ asn1_expand_octet_string (asn1_node_const definitions, asn1_node * element,
 		    }
 		}
 	      else
-		{		/* error with the pointer to the structure to exapand */
+		{		/* error with the pointer to the structure to expand */
 		  retCode = ASN1_VALUE_NOT_VALID;
 		  break;
 		}
@@ -2192,7 +2199,7 @@ asn1_decode_simple_der (unsigned int etype, const unsigned char *der,
 }
 
 static int
-append (uint8_t ** dst, unsigned *dst_size, const unsigned char *src,
+append (uint8_t **dst, unsigned *dst_size, const unsigned char *src,
 	unsigned src_size)
 {
   if (src_size == 0)

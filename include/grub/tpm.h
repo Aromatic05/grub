@@ -21,10 +21,13 @@
 
 #include <grub/env.h>
 
+#define GRUB_TPM_MAX_PCRS 24
+
+/* The largest digest for TPM 2.0 is SHA-512 (64 bytes). */
+#define GRUB_TPM_MAX_DIGEST_SIZE 64
+
 #define GRUB_STRING_PCR 8
 #define GRUB_BINARY_PCR 9
-
-#define SHA1_DIGEST_SIZE 20
 
 #define TPM_BASE     0x0
 #define TPM_SUCCESS  TPM_BASE

@@ -42,4 +42,8 @@ extern int test_simple (void);
 
 extern int test_strings (void);
 
+extern int test_coding_long_oid (void);
+
+extern int test_errors (void);
+
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2002-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,15 +14,14 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
-#include <int.h>
-#ifdef STDC_HEADERS
-# include <stdarg.h>
-#endif
+#include <config.h>
+
+#include "int.h"
+#include <stdarg.h>
 
 #define LIBTASN1_ERROR_ENTRY(name) { #name, name }
 

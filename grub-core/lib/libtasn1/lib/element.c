@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2000-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2000-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,10 +14,11 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
+
+#include <config.h>
 
 /*****************************************************/
 /* File: element.c                                   */
@@ -26,12 +27,14 @@
 /*****************************************************/
 
 
-#include <int.h>
+#include "int.h"
 #include "parser_aux.h"
-#include <gstr.h>
+#include "gstr.h"
 #include "structure.h"
 #include "c-ctype.h"
 #include "element.h"
+#include <limits.h>
+#include "intprops.h"
 
 void
 _asn1_hierarchical_name (asn1_node_const node, char *name, int name_size)
@@ -63,12 +66,12 @@ _asn1_hierarchical_name (asn1_node_const node, char *name, int name_size)
 /******************************************************************/
 /* Function : _asn1_convert_integer                               */
 /* Description: converts an integer from a null terminated string */
-/*              to der decoding. The convertion from a null       */
+/*              to der decoding. The conversion from a null       */
 /*              terminated string to an integer is made with      */
 /*              the 'strtol' function.                            */
 /* Parameters:                                                    */
 /*   value: null terminated string to convert.                    */
-/*   value_out: convertion result (memory must be already         */
+/*   value_out: conversion result (memory must be already         */
 /*              allocated).                                       */
 /*   value_out_size: number of bytes of value_out.                */
 /*   len: number of significant byte of value_out.                */
@@ -128,6 +131,41 @@ _asn1_convert_integer (const unsigned char *value, unsigned char *value_out,
   return ASN1_SUCCESS;
 }
 
+int
+_asn1_node_array_set (struct asn1_node_array_st *array, size_t position,
+		      asn1_node node)
+{
+  if (position >= array->size)
+    {
+      size_t new_size = position, i;
+      asn1_node *new_nodes;
+
+      if (INT_MULTIPLY_OVERFLOW (new_size, 2))
+	return ASN1_GENERIC_ERROR;
+      new_size *= 2;
+
+      if (INT_ADD_OVERFLOW (new_size, 1))
+	return ASN1_GENERIC_ERROR;
+      new_size += 1;
+
+      if (INT_MULTIPLY_OVERFLOW (new_size, sizeof (*new_nodes)))
+	return ASN1_GENERIC_ERROR;
+
+      new_nodes = realloc (array->nodes, new_size * sizeof (*new_nodes));
+      if (!new_nodes)
+	return ASN1_MEM_ALLOC_ERROR;
+
+      for (i = array->size; i < new_size; i++)
+	new_nodes[i] = NULL;
+
+      array->nodes = new_nodes;
+      array->size = new_size;
+    }
+
+  array->nodes[position] = node;
+  return ASN1_SUCCESS;
+}
+
 /* Appends a new element into the sequence (or set) defined by this
  * node. The new element will have a name of '?number', where number
  * is a monotonically increased serial number.
@@ -144,6 +182,7 @@ _asn1_append_sequence_set (asn1_node node, struct node_tail_cache_st *pcache)
   asn1_node p, p2;
   char temp[LTOSTR_MAX_SIZE + 1];
   long n;
+  int result;
 
   if (!node || !(node->down))
     return ASN1_GENERIC_ERROR;
@@ -176,17 +215,21 @@ _asn1_append_sequence_set (asn1_node node, struct node_tail_cache_st *pcache)
       pcache->tail = p2;
     }
 
-  if (p->name[0] == 0)
-    _asn1_str_cpy (temp, sizeof (temp), "?1");
-  else
+  n = 0;
+  if (p->name[0] != 0)
     {
-      n = strtol (p->name + 1, NULL, 0);
-      n++;
-      temp[0] = '?';
-      _asn1_ltostr (n, temp + 1);
+      n = strtol (p->name + 1, NULL, 10);
+      if (n <= 0 || n >= LONG_MAX - 1)
+	return ASN1_GENERIC_ERROR;
     }
+  temp[0] = '?';
+  _asn1_ltostr (n + 1, temp + 1);
   _asn1_set_name (p2, temp);
   /*  p2->type |= CONST_OPTION; */
+  result = _asn1_node_array_set (&node->numbered_children, n, p2);
+  if (result != ASN1_SUCCESS)
+    return result;
+  p2->parent = node;
 
   return ASN1_SUCCESS;
 }
@@ -697,7 +740,7 @@ asn1_write_value (asn1_node node_root, const char *name,
  * @name: the name of the element inside a structure that you want to read.
  * @ivalue: vector that will contain the element's content, must be a
  *   pointer to memory cells already allocated (may be %NULL).
- * @len: number of bytes of *value: value[0]..value[len-1]. Initialy
+ * @len: number of bytes of *value: value[0]..value[len-1]. Initially
  *   holds the sizeof value.
  *
  * Returns the value of one element inside a structure.
@@ -770,7 +813,7 @@ asn1_read_value (asn1_node_const root, const char *name, void *ivalue,
  * @name: the name of the element inside a structure that you want to read.
  * @ivalue: vector that will contain the element's content, must be a
  *   pointer to memory cells already allocated (may be %NULL).
- * @len: number of bytes of *value: value[0]..value[len-1]. Initialy
+ * @len: number of bytes of *value: value[0]..value[len-1]. Initially
  *   holds the sizeof value.
  * @etype: The type of the value read (ASN1_ETYPE)
  *
@@ -1098,7 +1141,7 @@ asn1_read_tag (asn1_node_const root, const char *name, int *tagValue,
  * Returns: %ASN1_SUCCESS if the node exists.
  **/
 int
-asn1_read_node_value (asn1_node_const node, asn1_data_node_st * data)
+asn1_read_node_value (asn1_node_const node, asn1_data_node_st *data)
 {
   data->name = node->name;
   data->value = node->value;

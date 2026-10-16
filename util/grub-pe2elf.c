@@ -342,6 +342,7 @@ write_reloc_section (FILE* fp, const char *name, char *image,
       shdr[i].sh_offset = offset;
       shdr[i].sh_link = symtab_section;
       shdr[i].sh_addralign = 4;
+      shdr[i].sh_flags = SHF_INFO_LINK;
       shdr[i].sh_entsize = sizeof (elf_reloc_t);
       shdr[i].sh_size = num_rels * sizeof (elf_reloc_t);
 

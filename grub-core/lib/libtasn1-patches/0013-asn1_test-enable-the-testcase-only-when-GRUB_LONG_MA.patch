@@ -1,4 +1,4 @@
-From 6d308d9053447dcc003a9ca740c47c00932d3569 Mon Sep 17 00:00:00 2001
+From 73f090a40848818038104189eba8a7dd8f27d290 Mon Sep 17 00:00:00 2001
 From: Gary Lin <glin@suse.com>
 Date: Mon, 7 Oct 2024 11:33:19 +0800
 Subject: [PATCH 13/13] asn1_test: enable the testcase only when GRUB_LONG_MAX
@@ -23,10 +23,10 @@ Reviewed-by: Daniel Kiper <daniel.kiper@oracle.com>
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/grub-core/tests/asn1/tests/Test_overflow.c b/grub-core/tests/asn1/tests/Test_overflow.c
-index 65843abf6..fdeff5634 100644
+index 6080155..6714eac 100644
 --- a/grub-core/tests/asn1/tests/Test_overflow.c
 +++ b/grub-core/tests/asn1/tests/Test_overflow.c
-@@ -43,7 +43,7 @@ test_overflow (void)
+@@ -45,7 +45,7 @@ test_overflow (void)
  
    /* Test that values larger than int but smaller than long are
       rejected.  This limitation was introduced with libtasn1 2.12. */
@@ -35,7 +35,7 @@ index 65843abf6..fdeff5634 100644
      {
        unsigned long num = ((long) GRUB_UINT_MAX) << 2;
        unsigned char der[20];
-@@ -61,6 +61,7 @@ test_overflow (void)
+@@ -63,6 +63,7 @@ test_overflow (void)
  	  return 1;
  	}
      }

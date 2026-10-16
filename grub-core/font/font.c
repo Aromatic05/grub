@@ -623,6 +623,11 @@ grub_font_load (const char *filename)
 			    sizeof (FONT_FORMAT_SECTION_NAMES_CHAR_INDEX) -
 			    1) == 0)
 	{
+	  if (font->char_index != NULL)
+	    {
+	      grub_error (GRUB_ERR_BAD_FONT, "invalid font file: too many CHIX sections");
+	      goto fail;
+	    }
 	  if (load_font_index (file, section.length, font) != 0)
 	    goto fail;
 	}
@@ -857,6 +862,14 @@ free_font (grub_font_t font)
 	grub_file_close (font->file);
       grub_free (font->name);
       grub_free (font->family);
+      if (font->char_index)
+       {
+         grub_uint32_t i;
+
+         /* Free any glyphs that were demand-loaded and cached.  */
+         for (i = 0; i < font->num_chars; i++)
+           grub_free (font->char_index[i].glyph);
+       }
       grub_free (font->char_index);
       grub_free (font->bmp_idx);
       grub_free (font);

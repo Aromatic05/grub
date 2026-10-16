@@ -17,117 +17,66 @@
  *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef APPENDEDSIG_H
+#define APPENDEDSIG_H
+
 #include <grub/crypto.h>
-#include <libtasn1.h>
-
-extern asn1_node grub_gnutls_gnutls_asn;
-extern asn1_node grub_gnutls_pkix_asn;
-
-#define GRUB_MAX_OID_LEN         32
-
-/* RSA public key. */
-#define GRUB_MAX_MPI             2
-#define GRUB_RSA_PK_MODULUS      0
-#define GRUB_RSA_PK_EXPONENT     1
-
-/* Certificate fingerprint. */
-#define GRUB_MAX_FINGERPRINT     3
-#define GRUB_FINGERPRINT_SHA256  0
-#define GRUB_FINGERPRINT_SHA384  1
-#define GRUB_FINGERPRINT_SHA512  2
+#include "x509.h"
+#include "pkcs7.h"
 
 /* Max size of hash data. */
-#define GRUB_MAX_HASH_LEN        64
+#define GRUB_MAX_HASH_LEN  64
+
+/* Public key type. */
+#define PKEY_ID_PKCS7      2
+
+/* Appended signature magic string and size. */
+#define SIG_MAGIC          "~Module signature appended~\n"
+#define SIG_MAGIC_SIZE     ((sizeof(SIG_MAGIC) - 1))
+
+#define OPTION_BINARY_HASH 0
+#define OPTION_CERT_HASH   1
 
 /*
- * One or more x509 certificates. We do limited parsing:
- * extracting only the version, serial, issuer, subject, RSA public key
- * and key size.
- * Also, hold the sha256, sha384, and sha512 fingerprint of the certificate.
+ * This structure is extracted from scripts/sign-file.c in the linux kernel
+ * source. It was licensed as LGPLv2.1+, which is GPLv3+ compatible.
  */
-struct x509_certificate
+struct module_signature
 {
-  struct x509_certificate *next;
-  grub_uint8_t version;
-  grub_uint8_t *serial;
-  grub_size_t serial_len;
-  char *issuer;
-  grub_size_t issuer_len;
-  char *subject;
-  grub_size_t subject_len;
-  /* We only support RSA public keys. This encodes [modulus, publicExponent]. */
-  gcry_mpi_t mpis[GRUB_MAX_MPI];
-  grub_int32_t modulus_size;
-  grub_uint8_t fingerprint[GRUB_MAX_FINGERPRINT][GRUB_MAX_HASH_LEN];
-};
-typedef struct x509_certificate grub_x509_cert_t;
+  grub_uint8_t algo;       /* Public-key crypto algorithm [0]. */
+  grub_uint8_t hash;       /* Digest algorithm [0]. */
+  grub_uint8_t id_type;    /* Key identifier type [PKEY_ID_PKCS7]. */
+  grub_uint8_t signer_len; /* Length of signer's name [0]. */
+  grub_uint8_t key_id_len; /* Length of key identifier [0]. */
+  grub_uint8_t __pad[3];
+  grub_uint32_t sig_len;   /* Length of signature data. */
+} GRUB_PACKED;
+typedef struct module_signature grub_modsig_t;
 
-/* A PKCS#7 signed data signer info. */
-struct pkcs7_signer
+#define SIG_METADATA_SIZE  (sizeof (grub_modsig_t))
+#define APPENDED_SIG_SIZE(pkcs7_data_size) \
+                           (pkcs7_data_size + SIG_MAGIC_SIZE + SIG_METADATA_SIZE)
+
+/* This represents an entire, parsed, appended signature. */
+struct append_sig
 {
-  const gcry_md_spec_t *hash;
-  gcry_mpi_t sig_mpi;
+  grub_modsig_t sig_metadata;     /* Module signature metadata. */
+  grub_size_t signature_len;      /* Length of PKCS#7 data + metadata + magic. */
+  grub_pkcs7_signed_data_t pkcs7; /* Parsed PKCS#7 data. */
 };
-typedef struct pkcs7_signer grub_pkcs7_signer_t;
+typedef struct append_sig grub_append_sig_t;
 
-/*
- * A PKCS#7 signed data message. We make no attempt to match intelligently, so
- * we don't save any info about the signer.
- */
-struct pkcs7_data
+typedef struct hash_list grub_hash_t;
+
+/* This represents Secure Boot Signature Databases db and dbx. */
+struct sd
 {
-  grub_int32_t signer_count;
-  grub_pkcs7_signer_t *signers;
+  grub_x509_cert_t *certs;    /* Certificate. */
+  grub_uint32_t no_of_certs;  /* Sizes of certificate/binary hash. */
+  grub_hash_t *hashes;        /* Certificate/binary hash. */
+  grub_uint32_t no_of_hashes; /* Sizes of certificate/binary hash. */
+  bool is_db;
 };
-typedef struct pkcs7_data grub_pkcs7_data_t;
+typedef struct sd grub_append_sd_t;
 
-/*
- * Import a DER-encoded certificate at 'data', of size 'size'. Place the results
- * into 'results', which must be already allocated.
- */
-extern grub_err_t
-grub_x509_cert_parse (const void *data, grub_size_t size, grub_x509_cert_t *results);
-
-/*
- * Release all the storage associated with the x509 certificate. If the caller
- * dynamically allocated the certificate, it must free it. The caller is also
- * responsible for maintenance of the linked list.
- */
-extern void
-grub_x509_cert_release (grub_x509_cert_t *cert);
-
-/*
- * Parse a PKCS#7 message, which must be a signed data message. The message must
- * be in 'sigbuf' and of size 'data_size'. The result is placed in 'msg', which
- * must already be allocated.
- */
-extern grub_err_t
-grub_pkcs7_data_parse (const void *sigbuf, grub_size_t data_size, grub_pkcs7_data_t *msg);
-
-/*
- * Release all the storage associated with the PKCS#7 message. If the caller
- * dynamically allocated the message, it must free it.
- */
-extern void
-grub_pkcs7_data_release (grub_pkcs7_data_t *msg);
-
-/* Do libtasn1 init. */
-extern int
-grub_asn1_init (void);
-
-/*
- * Read a value from an ASN1 node, allocating memory to store it. It will work
- * for anything where the size libtasn1 returns is right:
- *  - Integers
- *  - Octet strings
- *  - DER encoding of other structures
- *
- * It will _not_ work for things where libtasn1 size requires adjustment:
- *  - Strings that require an extra null byte at the end
- *  - Bit strings because libtasn1 returns the length in bits, not bytes.
- *
- * If the function returns a non-NULL value, the caller must free it.
- */
-extern void *
-grub_asn1_allocate_and_read (asn1_node node, const char *name, const char *friendly_name,
-                             grub_int32_t *content_size);
+#endif /* APPENDEDSIG_H */

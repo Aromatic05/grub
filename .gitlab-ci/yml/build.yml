@@ -1,0 +1,7 @@
+build:
+  stage: build
+  extends:
+    - .build
+    - .target-platform-matrix
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

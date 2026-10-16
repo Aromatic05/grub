@@ -643,6 +643,38 @@ grub_vbe_set_video_mode (grub_uint32_t vbe_mode,
   if (grub_errno != GRUB_ERR_NONE)
     return grub_errno;
 
+  grub_uint32_t string_seg = (controller_info.oem_string_ptr & 0xFFFF0000) >> 16;
+  grub_uint32_t string_offset = controller_info.oem_string_ptr & 0xFFFF;
+  const char * oem_string = (const char *) (string_seg << 4) + string_offset;
+
+  if (vbe_mode >= 0x100 && oem_string != NULL && *oem_string != '\0')
+    {
+      if (grub_strncmp(oem_string, "Zhaoxin", 7) == 0 || grub_strncmp(oem_string, "Glenfly", 7) == 0)
+        {
+          grub_uint8_t * fb_ptr;
+          struct grub_video_mode_info local_mode_info;
+          grub_size_t page_size;
+          grub_size_t vram_size = controller_info.total_memory << 16;
+          local_mode_info.height = new_vbe_mode_info.y_resolution;
+
+          if (controller_info.version >= 0x300)
+            local_mode_info.pitch = new_vbe_mode_info.lin_bytes_per_scan_line;
+          else
+            local_mode_info.pitch = new_vbe_mode_info.bytes_per_scan_line;
+
+          fb_ptr = (grub_uint8_t *) new_vbe_mode_info.phys_base_addr;
+
+          page_size = local_mode_info.pitch * local_mode_info.height;
+
+          if (vram_size >= 2 * page_size)
+            grub_memset(fb_ptr, 0, 2 * page_size);
+          else
+            grub_memset(fb_ptr, 0, page_size);
+
+          vbe_mode |= 1 << 15;
+        }
+    }
+
   /* Try to set video mode.  */
   status = grub_vbe_bios_set_mode (vbe_mode, 0);
   if (status != GRUB_VBE_STATUS_OK)

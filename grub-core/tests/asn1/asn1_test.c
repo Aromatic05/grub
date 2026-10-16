@@ -44,6 +44,10 @@ asn1_test (void)
   grub_test_assert (test_simple () == 0, "ASN.1 simple test failed");
 
   grub_test_assert (test_strings () == 0, "ASN.1 strings test fail" );
+
+  grub_test_assert (test_coding_long_oid () == 0, "ASN.1 long OID decoding test failed");
+
+  grub_test_assert (test_errors () == 0, "ASN.1 error strings test failed");
 }
 
 /* Register asn1_test method as a functional test.  */

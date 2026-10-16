@@ -187,6 +187,13 @@ grub_jpeg_get_number (struct grub_jpeg_data *data, int num)
   if (num == 0)
     return 0;
 
+  /* A valid magnitude category is at most 15 bits (JPEG SSSS field). */
+  if (num < 0 || num > 15)
+    {
+      grub_error (GRUB_ERR_BAD_FILE_TYPE, "jpeg: invalid number of bits");
+      return 0;
+    }
+
   msb = value = grub_jpeg_get_bit (data);
   for (i = 1; i < num && grub_errno == GRUB_ERR_NONE; i++)
     value = (value << 1) + (grub_jpeg_get_bit (data) != 0);
@@ -245,7 +252,7 @@ grub_jpeg_decode_huff_table (struct grub_jpeg_data *data)
 
       if (grub_file_read (data->file, &count, sizeof (count)) !=
 	  sizeof (count))
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "jpeg: unexpected end of data");
 
       n = 0;
       for (i = 0; i < ARRAY_SIZE (count); i++)
@@ -260,7 +267,7 @@ grub_jpeg_decode_huff_table (struct grub_jpeg_data *data)
 	return grub_errno;
 
       if (grub_file_read (data->file, data->huff_value[id], n) != n)
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "jpeg: unexpected end of data");
 
       base = 0;
       ofs = 0;
@@ -316,7 +323,7 @@ grub_jpeg_decode_quan_table (struct grub_jpeg_data *data)
       if (grub_file_read (data->file, &data->quan_table[id],
 			  sizeof (data->quan_table[id]))
 	  != sizeof (data->quan_table[id]))
-	return grub_errno;
+	return grub_error (GRUB_ERR_BAD_FILE_TYPE, "jpeg: unexpected end of data");
 
     }
 
@@ -418,8 +425,13 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
 {
   int *pd;
   int i;
-  int t0, t1, t2, t3, t4, t5, t6, t7;
-  int v0, v1, v2, v3, v4;
+  /*
+   * Use unsigned arithmetic during calculation as this is well-defined
+   * in C for wrap around, as oppossed to signed which is considered
+   * undefined behavior.
+   */
+  grub_uint32_t t0, t1, t2, t3, t4, t5, t6, t7;
+  grub_uint32_t v0, v1, v2, v3, v4;
 
   pd = du;
   for (i = 0; i < JPEG_UNIT_SIZE; i++, pd++)
@@ -429,7 +441,7 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
 	   pd[JPEG_UNIT_SIZE * 5] | pd[JPEG_UNIT_SIZE * 6] |
 	   pd[JPEG_UNIT_SIZE * 7]) == 0)
 	{
-	  pd[JPEG_UNIT_SIZE * 0] <<= SHIFT_BITS;
+	  pd[JPEG_UNIT_SIZE * 0] = (int) ((grub_uint32_t) pd[JPEG_UNIT_SIZE * 0] << SHIFT_BITS);
 
 	  pd[JPEG_UNIT_SIZE * 1] = pd[JPEG_UNIT_SIZE * 2]
 	    = pd[JPEG_UNIT_SIZE * 3] = pd[JPEG_UNIT_SIZE * 4]
@@ -446,8 +458,8 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
 
       v4 = (t1 + t3) * CONST (0.541196100);
 
-      v0 = ((t0 + t2) << SHIFT_BITS);
-      v1 = ((t0 - t2) << SHIFT_BITS);
+      v0 = (t0 + t2) << SHIFT_BITS;
+      v1 = (t0 - t2) << SHIFT_BITS;
       v2 = v4 - t3 * CONST (1.847759065);
       v3 = v4 + t1 * CONST (0.765366865);
 
@@ -478,14 +490,14 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
       t6 = t6 * CONST (3.072711026) - v1 - v2;
       t7 = t7 * CONST (1.501321110) - v0 - v3;
 
-      pd[JPEG_UNIT_SIZE * 0] = t0 + t7;
-      pd[JPEG_UNIT_SIZE * 7] = t0 - t7;
-      pd[JPEG_UNIT_SIZE * 1] = t1 + t6;
-      pd[JPEG_UNIT_SIZE * 6] = t1 - t6;
-      pd[JPEG_UNIT_SIZE * 2] = t2 + t5;
-      pd[JPEG_UNIT_SIZE * 5] = t2 - t5;
-      pd[JPEG_UNIT_SIZE * 3] = t3 + t4;
-      pd[JPEG_UNIT_SIZE * 4] = t3 - t4;
+      pd[JPEG_UNIT_SIZE * 0] = (int) (t0 + t7);
+      pd[JPEG_UNIT_SIZE * 7] = (int) (t0 - t7);
+      pd[JPEG_UNIT_SIZE * 1] = (int) (t1 + t6);
+      pd[JPEG_UNIT_SIZE * 6] = (int) (t1 - t6);
+      pd[JPEG_UNIT_SIZE * 2] = (int) (t2 + t5);
+      pd[JPEG_UNIT_SIZE * 5] = (int) (t2 - t5);
+      pd[JPEG_UNIT_SIZE * 3] = (int) (t3 + t4);
+      pd[JPEG_UNIT_SIZE * 4] = (int) (t3 - t4);
     }
 
   pd = du;
@@ -498,12 +510,13 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
 	  continue;
 	}
 
-      v4 = (pd[2] + pd[6]) * CONST (0.541196100);
+      v4 = ((grub_uint32_t) pd[2] + (grub_uint32_t) pd[6])
+	* CONST (0.541196100);
 
-      v0 = (pd[0] + pd[4]) << SHIFT_BITS;
-      v1 = (pd[0] - pd[4]) << SHIFT_BITS;
-      v2 = v4 - pd[6] * CONST (1.847759065);
-      v3 = v4 + pd[2] * CONST (0.765366865);
+      v0 = ((grub_uint32_t) pd[0] + (grub_uint32_t) pd[4]) << SHIFT_BITS;
+      v1 = ((grub_uint32_t) pd[0] - (grub_uint32_t) pd[4]) << SHIFT_BITS;
+      v2 = v4 - (grub_uint32_t) pd[6] * CONST (1.847759065);
+      v3 = v4 + (grub_uint32_t) pd[2] * CONST (0.765366865);
 
       t0 = v0 + v3;
       t3 = v0 - v3;
@@ -532,14 +545,14 @@ grub_jpeg_idct_transform (jpeg_data_unit_t du)
       t6 = t6 * CONST (3.072711026) - v1 - v2;
       t7 = t7 * CONST (1.501321110) - v0 - v3;
 
-      pd[0] = (t0 + t7) >> (SHIFT_BITS * 2 + 3);
-      pd[7] = (t0 - t7) >> (SHIFT_BITS * 2 + 3);
-      pd[1] = (t1 + t6) >> (SHIFT_BITS * 2 + 3);
-      pd[6] = (t1 - t6) >> (SHIFT_BITS * 2 + 3);
-      pd[2] = (t2 + t5) >> (SHIFT_BITS * 2 + 3);
-      pd[5] = (t2 - t5) >> (SHIFT_BITS * 2 + 3);
-      pd[3] = (t3 + t4) >> (SHIFT_BITS * 2 + 3);
-      pd[4] = (t3 - t4) >> (SHIFT_BITS * 2 + 3);
+      pd[0] = (int) (t0 + t7) >> (SHIFT_BITS * 2 + 3);
+      pd[7] = (int) (t0 - t7) >> (SHIFT_BITS * 2 + 3);
+      pd[1] = (int) (t1 + t6) >> (SHIFT_BITS * 2 + 3);
+      pd[6] = (int) (t1 - t6) >> (SHIFT_BITS * 2 + 3);
+      pd[2] = (int) (t2 + t5) >> (SHIFT_BITS * 2 + 3);
+      pd[5] = (int) (t2 - t5) >> (SHIFT_BITS * 2 + 3);
+      pd[3] = (int) (t3 + t4) >> (SHIFT_BITS * 2 + 3);
+      pd[4] = (int) (t3 - t4) >> (SHIFT_BITS * 2 + 3);
     }
 
   for (i = 0; i < JPEG_UNIT_SIZE * JPEG_UNIT_SIZE; i++)
@@ -565,13 +578,14 @@ grub_jpeg_decode_du (struct grub_jpeg_data *data, int id, jpeg_data_unit_t du)
   h1 = data->comp_index[id][1];
   h2 = data->comp_index[id][2];
 
-  data->dc_value[id] +=
-    grub_jpeg_get_number (data, grub_jpeg_get_huff_code (data, h1));
+  data->dc_value[id] = (int) ((grub_uint32_t) data->dc_value[id] +
+                              (grub_uint32_t) grub_jpeg_get_number (data, grub_jpeg_get_huff_code (data, h1)));
 
   if (grub_errno != GRUB_ERR_NONE)
     return grub_errno;
 
-  du[0] = data->dc_value[id] * (int) data->quan_table[qt][0];
+  du[0] = (int) ((grub_uint32_t) data->dc_value[id] *
+               (grub_uint32_t) data->quan_table[qt][0]);
   pos = 1;
   while (pos < ARRAY_SIZE (data->quan_table[qt]))
     {

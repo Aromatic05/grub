@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2002-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,37 +14,31 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
 #ifndef INT_H
 # define INT_H
 
-# ifdef HAVE_CONFIG_H
-#  include <config.h>
-# endif
-
 # include <string.h>
 # include <stdlib.h>
 # include <stdio.h>
 # include <stdint.h>
-
-# ifdef HAVE_SYS_TYPES_H
-#  include <sys/types.h>
-# endif
+# include <sys/types.h>
 
 # include <libtasn1.h>
 
 # define ASN1_SMALL_VALUE_SIZE 16
 
-/* This structure is also in libtasn1.h, but then contains less
-   fields.  You cannot make any modifications to these first fields
-   without breaking ABI.  */
+struct asn1_node_array_st
+{
+  asn1_node *nodes;
+  size_t size;
+};
+
 struct asn1_node_st
 {
-  /* public fields: */
   char name[ASN1_MAX_NAME_SIZE + 1];	/* Node name */
   unsigned int name_hash;
   unsigned int type;		/* Node type */
@@ -53,8 +47,9 @@ struct asn1_node_st
   asn1_node down;		/* Pointer to the son node */
   asn1_node right;		/* Pointer to the brother node */
   asn1_node left;		/* Pointer to the next list element */
-  /* private fields: */
   unsigned char small_value[ASN1_SMALL_VALUE_SIZE];	/* For small values */
+  asn1_node parent;		/* Pointer to the parent node */
+  struct asn1_node_array_st numbered_children;	/* Array of unnamed child nodes for caching */
 
   /* values used during decoding/coding */
   int tmp_ival;
@@ -140,7 +135,7 @@ extern const tag_and_class_st _asn1_tags[];
 # define CONST_EXPLICIT    (1U<<11)
 # define CONST_IMPLICIT    (1U<<12)
 
-# define CONST_TAG         (1U<<13)	/*  Used in ASN.1 assignement  */
+# define CONST_TAG         (1U<<13)	/*  Used in ASN.1 assignment  */
 # define CONST_OPTION      (1U<<14)
 # define CONST_DEFAULT     (1U<<15)
 # define CONST_TRUE        (1U<<16)

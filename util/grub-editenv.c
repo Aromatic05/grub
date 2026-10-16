@@ -459,6 +459,8 @@ set_variables (const char *name, int argc, char *argv[])
   envblk = open_envblk_file (name);
   if (fs_envblk != NULL)
     envblk_on_block = fs_envblk->ops->open (envblk);
+  else
+    grub_envblk_delete (envblk, "env_block");
 
   while (argc)
     {
@@ -522,6 +524,8 @@ unset_variables (const char *name, int argc, char *argv[])
 
   if (fs_envblk != NULL)
     envblk_on_block = fs_envblk->ops->open (envblk);
+  else
+    grub_envblk_delete (envblk, "env_block");
 
   while (argc)
     {

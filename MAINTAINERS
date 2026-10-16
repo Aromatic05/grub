@@ -2,7 +2,8 @@ List of current GRUB maintainers and some basic information about the project
 =============================================================================
 
 Here is the list of current GRUB maintainers:
-  - Daniel Kiper <daniel.kiper@oracle.com> and <dkiper@net-space.pl>,
+  - Leo Sandoval <lsandova@redhat.com>,
+  - Marta Lewandowska <mlewando@redhat.com>,
   - Alex Burmashev <alexander.burmashev@oracle.com>,
   - Vladimir 'phcoder' Serbinenko <phcoder@gmail.com>.
 
@@ -13,10 +14,9 @@ file to get more information how to properly report this kind of bugs to
 the maintainers.
 
 The GRUB development happens on the grub-devel mailing list [1]. The latest
-GRUB source code is available at Savannah git repository [2].
+GRUB source code is available at freedesktop git repository [2].
 
-Users can ask for help on the help-grub mailing list [3].
-
+Users can also ask for help on the same grub-devel mailing list [1].
 
 List of past GRUB maintainers and people who strongly contributed to the project
 ================================================================================
@@ -25,11 +25,11 @@ Here is the list, sorted alphabetically, of past GRUB maintainers and people who
 strongly contributed to the project:
   - Andrei Borzenkov,
   - Bryan Ford,
+  - Daniel Kiper,
   - Erich Stefan Boleyn,
   - Gordon Matzigkeit,
   - Yoshinori K. Okuji.
 
 
-[1] https://lists.gnu.org/mailman/listinfo/grub-devel
-[2] https://git.savannah.gnu.org/gitweb/?p=grub.git&view=view+git+repository
-[3] https://lists.gnu.org/mailman/listinfo/help-grub
+[1] https://lists.freedesktop.org/postorius/lists/grub-devel.lists.freedesktop.org/
+[2] https://gitlab.freedesktop.org/gnu-grub/grub/

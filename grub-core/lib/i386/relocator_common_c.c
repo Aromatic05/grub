@@ -51,11 +51,7 @@ grub_size_t grub_relocator_jumper_size = 12;
 #else
 grub_size_t grub_relocator_jumper_size = 7;
 #endif
-#if defined(__x86_64__) && defined(GRUB_MACHINE_EFI)
-grub_size_t grub_relocator_align = 4096;
-#else
 grub_size_t grub_relocator_align = 1;
-#endif
 
 #if defined(__x86_64__) && defined(GRUB_MACHINE_EFI)
 
@@ -124,6 +120,9 @@ grub_cpu_relocator_preamble (void *rels)
   /* jmp $endpreamble.  */
   *p++ = 0xe9;
   *(grub_uint32_t *) p = (grub_uint8_t *) endpreamble - p - 4;
+
+  /* clear page table entries */
+  grub_memset (pt4, 0, (1 + npt3pages) << GRUB_PAGE_SHIFT);
 
   for (i = 0; i < npt3pages; i++)
     pt4[i] = ((grub_uint64_t) pt3 + (i << GRUB_PAGE_SHIFT)) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;

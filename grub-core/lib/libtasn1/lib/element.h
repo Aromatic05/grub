@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2000-2022 Free Software Foundation, Inc.
+ * Copyright (C) 2000-2026 Free Software Foundation, Inc.
  *
  * This file is part of LIBTASN1.
  *
@@ -14,9 +14,8 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA
+ * License along with this library; if not, see
+ * <https://www.gnu.org/licenses/>.
  */
 
 #ifndef _ELEMENT_H
@@ -38,5 +37,15 @@ int _asn1_convert_integer (const unsigned char *value,
 
 void _asn1_hierarchical_name (asn1_node_const node, char *name,
 			      int name_size);
+
+static inline asn1_node_const
+_asn1_node_array_get (const struct asn1_node_array_st *array, size_t position)
+{
+  return position < array->size ? array->nodes[position] : NULL;
+}
+
+int
+_asn1_node_array_set (struct asn1_node_array_st *array, size_t position,
+		      asn1_node node);
 
 #endif

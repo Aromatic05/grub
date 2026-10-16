@@ -34,6 +34,7 @@ struct grub_relocator
   grub_phys_addr_t highestaddr;
   grub_phys_addr_t highestnonpostaddr;
   grub_size_t relocators_size;
+  bool use_preamble;
 };
 
 struct grub_relocator_subchunk
@@ -110,10 +111,23 @@ grub_relocator_new (void)
     return NULL;
 
   ret->postchunks = ~(grub_phys_addr_t) 0;
-  ret->relocators_size = grub_relocator_jumper_size + grub_relocator_preamble_size;
+  ret->relocators_size = grub_relocator_jumper_size;
+  ret->use_preamble = false;
   grub_dprintf ("relocator", "relocators_size=%lu\n",
 		(unsigned long) ret->relocators_size);
   return ret;
+}
+
+void
+grub_relocator_use_preamble (struct grub_relocator *rel)
+{
+  if (rel->use_preamble || grub_relocator_preamble_size == 0)
+    return;
+
+  rel->use_preamble = true;
+  rel->relocators_size += grub_relocator_preamble_size;
+  grub_dprintf ("relocator", "use preamble, relocators_size=%lu\n",
+		(unsigned long) rel->relocators_size);
 }
 
 #define DIGITSORT_BITS 8
@@ -1540,8 +1554,9 @@ grub_relocator_prepare_relocs (struct grub_relocator *rel, grub_addr_t addr,
   grub_dprintf ("relocator", "Preparing relocs (size=%ld)\n",
 		(unsigned long) rel->relocators_size);
 
+  /* preamble page table must be 4K-aligned */
   if (!malloc_in_range (rel, 0, ~(grub_addr_t)0 - rel->relocators_size + 1,
-			grub_relocator_align,
+			rel->use_preamble ? 4096 : grub_relocator_align,
 			rel->relocators_size, &movers_chunk, 1, 1))
     return grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
   movers_chunk.srcv = rels = rels0
@@ -1605,8 +1620,11 @@ grub_relocator_prepare_relocs (struct grub_relocator *rel, grub_addr_t addr,
     grub_free (to);
   }
 
-  grub_cpu_relocator_preamble (rels);
-  rels += grub_relocator_preamble_size;
+  if (rel->use_preamble)
+    {
+      grub_cpu_relocator_preamble (rels);
+      rels += grub_relocator_preamble_size;
+    }
 
   for (j = 0; j < nchunks; j++)
     {

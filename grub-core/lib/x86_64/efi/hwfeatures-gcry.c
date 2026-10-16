@@ -35,6 +35,7 @@
 
 static grub_uint32_t hw_features = 0;
 static grub_uint64_t old_cr0, old_cr4, old_xcr0;
+static bool hwf_enabled = false;
 
 static grub_uint64_t
 read_cr0 (void)
@@ -57,7 +58,7 @@ read_cr4 (void)
 static void
 write_cr0 (grub_uint64_t val)
 {
-  asm volatile ("mov %0,%%cr4": "+r" (val) : : "memory");
+  asm volatile ("mov %0,%%cr0": "+r" (val) : : "memory");
 }
 
 static void
@@ -87,7 +88,7 @@ get_cpuid_edx (void)
 }
 
 static bool
-enable_sse (void)
+enable_sse (grub_uint64_t orig_cr0, grub_uint64_t orig_cr4)
 {
   grub_uint64_t cr0, cr4;
   grub_uint32_t edx;
@@ -98,27 +99,24 @@ enable_sse (void)
   if ((edx & (3 << 24)) != (3 << 24))
     return false;
 
-  cr0 = old_cr0 = read_cr0 ();
-  cr4 = old_cr4 = read_cr4 ();
+  cr0 = orig_cr0;
+  cr4 = orig_cr4;
 
   /* clear CR0.EM[bit 2] */
-  if ((cr0 & (1 << 2)) != 0)
-    cr0 &= ~(1 << 2);
+  cr0 &= ~(1 << 2);
 
   /* Set CR0.MP[bit 1] */
-  if ((cr0 & (1 << 1)) == 0)
-    cr0 |= (1 << 1);
+  cr0 |= (1 << 1);
 
-  grub_dprintf ("hwfeatures", "CR0: 0x%"PRIxGRUB_UINT64_T" 0x%"PRIxGRUB_UINT64_T"\n", old_cr0, cr0);
-  if (old_cr0 != cr0)
+  grub_dprintf ("hwfeatures", "CR0: 0x%"PRIxGRUB_UINT64_T" 0x%"PRIxGRUB_UINT64_T"\n", orig_cr0, cr0);
+  if (orig_cr0 != cr0)
     write_cr0 (cr0);
 
   /* Set CR4.OSFXSR[bit 9] and CR4.OSXMMEXCPT[bit 10] */
-  if ((cr4 & (3 << 9)) != (3 << 9))
-    cr4 |= (3 << 9);
+  cr4 |= (3 << 9);
 
-  grub_dprintf ("hwfeatures", "CR4: 0x%"PRIxGRUB_UINT64_T" 0x%"PRIxGRUB_UINT64_T"\n", old_cr4, cr4);
-  if (old_cr4 != cr4)
+  grub_dprintf ("hwfeatures", "CR4: 0x%"PRIxGRUB_UINT64_T" 0x%"PRIxGRUB_UINT64_T"\n", orig_cr4, cr4);
+  if (orig_cr4 != cr4)
     write_cr4 (cr4);
 
   return true;
@@ -159,7 +157,7 @@ enable_avx (void)
    *    general-protection fault (#GP).
    * - CPUID.01H:ECX.AVX[bit 28]
    */
-  grub_dprintf ("hwfeatures", "Check CPUID.01H:ECX 0x%"PRIuGRUB_UINT32_T"\n", ecx);
+  grub_dprintf ("hwfeatures", "Check CPUID.01H:ECX 0x%"PRIxGRUB_UINT32_T"\n", ecx);
   if ((ecx & (5 << 26)) != (5 << 26))
     return false;
 
@@ -195,17 +193,28 @@ enable_avx (void)
 void
 grub_enable_gcry_hwf_x86_64_efi (void)
 {
-  if (enable_sse () == true)
+  if (hwf_enabled == true)
+    return;
+
+  old_cr0 = read_cr0 ();
+  old_cr4 = read_cr4 ();
+
+  if (enable_sse (old_cr0, old_cr4) == true)
     hw_features |= HW_FEATURE_X86_64_SSE;
 
-  if (enable_avx () == true)
+  if ((hw_features & HW_FEATURE_X86_64_SSE) != 0 && enable_avx () == true)
     hw_features |= HW_FEATURE_X86_64_AVX;
+
+  hwf_enabled = true;
 }
 
 void
 grub_reset_gcry_hwf_x86_64_efi (void)
 {
   grub_uint64_t cr0, cr4, xcr0;
+
+  if (hwf_enabled == false)
+    return;
 
   if ((hw_features & HW_FEATURE_X86_64_AVX) != 0)
     {
@@ -243,4 +252,5 @@ grub_reset_gcry_hwf_x86_64_efi (void)
     }
 
   hw_features = 0;
+  hwf_enabled = false;
 }

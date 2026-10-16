@@ -1,0 +1,6 @@
+signed-off-by:
+  stage: metadata
+  script:
+    - $SCRIPT_DIR/metadata-sob.sh
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

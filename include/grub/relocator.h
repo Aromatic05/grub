@@ -29,6 +29,7 @@ struct grub_relocator_chunk;
 typedef const struct grub_relocator_chunk *grub_relocator_chunk_t;
 
 struct grub_relocator *grub_relocator_new (void);
+void grub_relocator_use_preamble (struct grub_relocator *rel);
 
 grub_err_t
 grub_relocator_alloc_chunk_addr (struct grub_relocator *rel,

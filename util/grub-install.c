@@ -878,12 +878,7 @@ main (int argc, char *argv[])
 
   if (!bootloader_id && config.grub_distributor)
     {
-      char *ptr;
       bootloader_id = xstrdup (config.grub_distributor);
-      for (ptr = bootloader_id; *ptr && *ptr != ' '; ptr++)
-	if (*ptr >= 'A' && *ptr <= 'Z')
-	  *ptr = *ptr - 'A' + 'a';
-      *ptr = '\0';
     }
   if (!bootloader_id || bootloader_id[0] == '\0')
     {
@@ -1289,6 +1284,19 @@ main (int argc, char *argv[])
 	      is_prep = 0;
 	    }
 	}
+#if defined(__powerpc__)
+     else
+       {
+         /*
+	   * As the machine has been detected as PowerPC and not a PowerMac. We need to check
+	   * whether the install_device has been mentioned while installing. If no device has been
+	   * mentioned, we need to exit and mark it as an error as the install_device is required for
+	   * PowerPC installation. An installation with no device mentioned may lead to corruptions.
+	   */
+          if (!install_device)
+            grub_util_error ("%s", _("install device isn't specified, required for PowerPC"));
+       }
+#endif /* __powerpc__ */
     }
 
   size_t ndev = 0;

@@ -2,6 +2,8 @@ AUTOMAKE_OPTIONS = subdir-objects -Wno-portability
 
 DEPDIR=.deps-core
 
+dist_platform_DATA =
+
 include $(top_srcdir)/conf/Makefile.common
 
 CC=$(TARGET_CC)

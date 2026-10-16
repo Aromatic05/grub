@@ -93,6 +93,9 @@ struct grub_menu
 
   /* The list of menu entries.  */
   grub_menu_entry_t entry_list;
+
+  /* Whether it is safe to skip authorization when exiting the menu. */
+  bool skip_exit_auth;
 };
 typedef struct grub_menu *grub_menu_t;
 

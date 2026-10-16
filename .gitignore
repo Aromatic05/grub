@@ -113,6 +113,7 @@ widthspec.bin
 /f2fs_test
 /fat_test
 /fddboot_test
+/fdt_unit_test
 /file_filter_test
 /garbage-gen
 /garbage-gen.exe
@@ -147,6 +148,7 @@ widthspec.bin
 /grub-core/symlist.c
 /grub-core/symlist.h
 /grub-core/tests/asn1/tests
+/grub-core/tests/mldsa/generate_testdata.sh
 /grub-core/trigtables.c
 /grub-core/unidata.c
 /grub-editenv
@@ -188,6 +190,7 @@ widthspec.bin
 /grub_cmd_date
 /grub_cmd_echo
 /grub_cmd_regexp
+/grub_cmd_save_env
 /grub_cmd_set_date
 /grub_cmd_sleep
 /grub_cmd_test
@@ -226,6 +229,7 @@ widthspec.bin
 /help_test
 /hfs_test
 /hfsplus_test
+/image_unit_test
 /include/grub/cpu
 /include/grub/gcrypt/g10lib.h
 /include/grub/gcrypt/gcrypt.h
@@ -235,12 +239,26 @@ widthspec.bin
 /jfs_test
 /lib/libgcrypt-grub
 /libgrub_a_init.c
+/loadenv_unit_test
 /lzocompress_test
 /luks1_test
 /luks2_test
-/m4/
+/m4/*
+!/m4/ax_check_link_flag.m4
 /minixfs_test
 /missing
+/net_bootp_fields_test
+/net_bootp_reply_test
+/net_config_roundtrip_test
+/net_dns_lookup_test
+/net_dhcp_lease_test
+/net_dhcp_tftp_integration_test
+/net_http_chunk_test
+/net_http_error_test
+/net_http_transfer_test
+/net_ip_frag_test
+/net_tftp_error_test
+/net_tftp_transfer_test
 /netboot_test
 /nilfs2_test
 /ntfs_test
@@ -262,6 +280,7 @@ widthspec.bin
 /printf_test
 /priority_queue_unit_test
 /pseries_test
+/qemu-linkup
 /reiserfs_test
 /romfs_test
 /squashfs_test

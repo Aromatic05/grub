@@ -52,7 +52,7 @@ __bzero (void *s, grub_size_t n)
 
 #endif
 
-#if GRUB_DIVISION_IN_SOFTWARE
+#if GRUB_DIVISION_IN_SOFTWARE && !defined(__mips__)
 
 grub_uint32_t
 __udivsi3 (grub_uint32_t a, grub_uint32_t b)
@@ -81,6 +81,10 @@ __modsi3 (grub_int32_t a, grub_int32_t b)
   grub_divmod64s (a, b, &ret);
   return ret;
 }
+
+#endif
+
+#if GRUB_DIVISION_IN_SOFTWARE
 
 grub_uint64_t
 __udivdi3 (grub_uint64_t a, grub_uint64_t b)
@@ -208,6 +212,10 @@ void ___chkstk_ms (void)
 }
 
 void __chkstk_ms (void)
+{
+}
+
+void _pei386_runtime_relocator (void)
 {
 }
 #endif
