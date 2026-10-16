@@ -29,6 +29,8 @@
 #include <grub/partition.h>
 #include <grub/file.h>
 #include <grub/fshelp.h>
+#include <grub/hashsum.h>
+#include <grub/crypto.h>
 #include <grub/normal.h>
 #include <grub/extcmd.h>
 #include <grub/datetime.h>
@@ -566,12 +568,31 @@ ventoy_fshelp_casefold (void)
     return g_ventoy_case_insensitive;
 }
 
+static void
+ventoy_hashsum_result (const grub_uint8_t *digest, grub_size_t size)
+{
+    static const char digits[] = "0123456789abcdef";
+    char hex[GRUB_CRYPTO_MAX_MDLEN * 2 + 1];
+    grub_size_t i;
+
+    if (size > GRUB_CRYPTO_MAX_MDLEN)
+        return;
+    for (i = 0; i < size; ++i)
+    {
+        hex[2 * i] = digits[digest[i] >> 4];
+        hex[2 * i + 1] = digits[digest[i] & 15];
+    }
+    hex[2 * size] = 0;
+    grub_env_set("VT_LAST_CHECK_SUM", hex);
+}
+
 GRUB_MOD_INIT(ventoy)
 {
     ventoy_hwinfo_init();
     ventoy_env_init();
     ventoy_arch_mode_init();
     grub_fshelp_register_casefold_hook(ventoy_fshelp_casefold);
+    grub_hashsum_register_result_hook(ventoy_hashsum_result);
     ventoy_register_all_cmd();
     ventoy_boot_cmd = grub_register_command ("ventoy", ventoy_boot_command,
                                            "[--check] [--runtime=DIR] IMAGE.iso",
@@ -580,6 +601,7 @@ GRUB_MOD_INIT(ventoy)
 
 GRUB_MOD_FINI(ventoy)
 {
+    grub_hashsum_unregister_result_hook(ventoy_hashsum_result);
     grub_fshelp_unregister_casefold_hook(ventoy_fshelp_casefold);
     grub_unregister_command (ventoy_boot_cmd);
     ventoy_unregister_all_cmd();

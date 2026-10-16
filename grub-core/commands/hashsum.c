@@ -25,8 +25,24 @@
 #include <grub/crypto.h>
 #include <grub/normal.h>
 #include <grub/i18n.h>
+#include <grub/hashsum.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
+
+static grub_hashsum_result_hook_t grub_hashsum_result_hook;
+
+void
+grub_hashsum_register_result_hook (grub_hashsum_result_hook_t hook)
+{
+  grub_hashsum_result_hook = hook;
+}
+
+void
+grub_hashsum_unregister_result_hook (grub_hashsum_result_hook_t hook)
+{
+  if (grub_hashsum_result_hook == hook)
+    grub_hashsum_result_hook = 0;
+}
 
 static const struct grub_arg_option options[] = {
   {"hash", 'h', 0, N_("Specify hash to use."), N_("HASH"), ARG_TYPE_STRING},
@@ -275,6 +291,8 @@ grub_cmd_hashsum (struct grub_extcmd_context *ctxt,
       for (j = 0; j < hash->mdlen; j++)
 	grub_printf ("%02x", ((grub_uint8_t *) result)[j]);
       grub_printf ("  %s\n", args[i]);
+      if (grub_hashsum_result_hook)
+        grub_hashsum_result_hook ((const grub_uint8_t *) result, hash->mdlen);
     }
 
   if (unread)
