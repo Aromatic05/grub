@@ -2018,6 +2018,17 @@ grub_apfs_read_omap(struct grub_apfs_data *data, grub_uint64_t paddr,
 	return GRUB_ERR_NONE;
 }
 
+static int
+grub_apfs_volname_taken(const struct grub_apfs_data *data, const char *name)
+{
+	grub_uint32_t i;
+
+	for (i = 0; i < data->nvols; i++)
+		if (grub_strcmp(data->vols[i].name, name) == 0)
+			return 1;
+	return 0;
+}
+
 static grub_err_t
 grub_apfs_add_volume(struct grub_apfs_data *data, grub_uint64_t fs_oid,
 	grub_uint8_t *blkbuf)
@@ -2078,21 +2089,32 @@ grub_apfs_add_volume(struct grub_apfs_data *data, grub_uint64_t fs_oid,
 		return grub_errno;
 	grub_memcpy(name, vsb->volname, sizeof(vsb->volname));
 	name[sizeof(vsb->volname) - 1] = '\0';
-	if (!name[0])
+	/* "." and ".." are taken by fshelp's own path handling */
+	if (!name[0] || grub_strcmp(name, ".") == 0
+		|| grub_strcmp(name, "..") == 0)
 		grub_snprintf(name, sizeof(vsb->volname), "Volume%u",
 			grub_le_to_cpu32(vsb->fs_index));
 	for (i = 0; name[i]; i++)
 		if (name[i] == '/')
 			name[i] = '_';
-	for (i = 0; i < data->nvols; i++)
-		if (grub_strcmp(data->vols[i].name, name) == 0)
-		{
-			grub_size_t l = grub_strlen(name);
+	if (grub_apfs_volname_taken(data, name))
+	{
+		/*
+		 * Try " (fs_index)" first, then " (1)", " (2)", ...  At most
+		 * nvols names are taken, so one of the nvols + 2 candidates
+		 * is free; every candidate is checked against all volumes.
+		 */
+		grub_size_t l = grub_strlen(name);
+		grub_uint32_t n = grub_le_to_cpu32(vsb->fs_index);
+		grub_uint32_t k;
 
-			grub_snprintf(name + l, 16, " (%u)",
-				grub_le_to_cpu32(vsb->fs_index));
-			break;
+		for (k = 0; k <= data->nvols + 1; k++)
+		{
+			grub_snprintf(name + l, 16, " (%u)", k ? k : n);
+			if (!grub_apfs_volname_taken(data, name))
+				break;
 		}
+	}
 	vol->name = name;
 
 	/* volume object map, then the fs tree root through it (blkbuf is
