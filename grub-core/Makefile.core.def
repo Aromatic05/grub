@@ -1897,6 +1897,13 @@ module = {
 };
 
 module = {
+  name = apfs;
+  common = fs/apfs.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/libzbitmap -I$(srcdir)/lib/lzfse';
+};
+
+module = {
   name = archelp;
   common = fs/archelp.c;
 };
