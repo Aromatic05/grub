@@ -383,6 +383,11 @@ grub_refs_load_compression_unit(struct grub_refs_data *data,
 	grub_uint32_t plain_size;
 	size_t got;
 
+	/* plain_buf/compressed_buf get overwritten below: drop the cached
+	   unit first so a failed load cannot be served from a clobbered
+	   buffer later */
+	data->cache_valid = 0;
+
 	if (range->plain_size - plain_done < data->compression_unit_size)
 		plain_size = (grub_uint32_t) (range->plain_size - plain_done);
 	else

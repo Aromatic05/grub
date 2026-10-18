@@ -1578,6 +1578,10 @@ grub_apfs_cmp_load_block(struct grub_apfs_file *f, grub_uint64_t blk)
 
 	if (cmp->cbuf_block == blk)
 		return GRUB_ERR_NONE;
+	/* cbuf is about to be overwritten: until this block is fully
+	   decoded it holds no valid block, so a failure below must not
+	   leave the previous block number pointing at clobbered data */
+	cmp->cbuf_block = ~0ULL;
 
 	bsize = GRUB_APFS_CMP_BLOCK;
 	if (cmp->size - (blk << 16) < bsize)
