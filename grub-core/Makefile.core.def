@@ -1878,6 +1878,25 @@ module = {
 };
 
 module = {
+  name = libzbitmap;
+  common = lib/libzbitmap/libzbitmap.c;
+  common = lib/libzbitmap/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/libzbitmap';
+};
+
+module = {
+  name = lzfse;
+  common = lib/lzfse/lzfse_decode.c;
+  common = lib/lzfse/lzfse_decode_base.c;
+  common = lib/lzfse/lzvn_decode_base.c;
+  common = lib/lzfse/lzfse_fse.c;
+  common = lib/lzfse/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/lzfse';
+};
+
+module = {
   name = archelp;
   common = fs/archelp.c;
 };
