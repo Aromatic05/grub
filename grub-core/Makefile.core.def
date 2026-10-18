@@ -1856,6 +1856,14 @@ module = {
 };
 
 module = {
+  name = lz4;
+  common = lib/lz4/lz4.c;
+  common = lib/lz4/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/lz4';
+};
+
+module = {
   name = btrfs;
   common = fs/btrfs.c;
   cflags = '$(CFLAGS_POSIX) -Wno-undef';
