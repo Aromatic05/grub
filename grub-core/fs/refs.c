@@ -427,9 +427,16 @@ grub_refs_load_compression_unit(struct grub_refs_data *data,
 	return GRUB_ERR_NONE;
 }
 
+/*
+ * Read file data starting at virtual cluster BLOCK + OFFSET bytes.
+ * READ_HOOK is installed on the disk only around raw data reads; data
+ * served from a compressed container has no sector mapping, so it only
+ * feeds the progress hook (as ntfscomp does) and refuses a NULL BUF.
+ */
 static grub_err_t
 grub_refs_read_data(struct grub_refs_data *data, grub_uint64_t block,
-	grub_uint64_t offset, grub_size_t len, char *buf)
+	grub_uint64_t offset, grub_size_t len, char *buf,
+	grub_disk_read_hook_t read_hook, void *read_hook_data)
 {
 	while (len)
 	{
@@ -476,6 +483,9 @@ grub_refs_read_data(struct grub_refs_data *data, grub_uint64_t block,
 				data->compression_unit_size, &rem);
 			grub_uint32_t in_unit = (grub_uint32_t) rem;
 
+			if (!buf)
+				return grub_error(GRUB_ERR_NOT_IMPLEMENTED_YET,
+					"refs: compressed data has no block map");
 			if (!data->cache_valid || data->cache_range != range_index
 				|| data->cache_unit != unit)
 				if (grub_refs_load_compression_unit(data, entry, range, range_index, unit))
@@ -486,9 +496,13 @@ grub_refs_read_data(struct grub_refs_data *data, grub_uint64_t block,
 			if (step > len)
 				step = len;
 			grub_memcpy(buf, data->plain_buf + in_unit, step);
+			if (read_hook && read_hook == grub_file_progress_hook)
+				read_hook(0, 0, (unsigned) step, buf, read_hook_data);
 		}
 		else
 		{
+			grub_err_t err;
+
 			if (entry && grub_refs_container_is_compressed(data, entry->id))
 				return grub_error(GRUB_ERR_BAD_FS, "refs: missing compressed range");
 			container_left = ((data->bpc_mask + 1
@@ -497,11 +511,17 @@ grub_refs_read_data(struct grub_refs_data *data, grub_uint64_t block,
 			step = len;
 			if (container_left < step)
 				step = (grub_size_t) container_left;
-			if (grub_disk_read(data->disk, 0,
-				(physical << data->cluster_shift) + offset, step, buf))
-				return grub_errno;
+			data->disk->read_hook = read_hook;
+			data->disk->read_hook_data = read_hook_data;
+			err = grub_disk_read(data->disk, 0,
+				(physical << data->cluster_shift) + offset, step, buf);
+			data->disk->read_hook = 0;
+			data->disk->read_hook_data = 0;
+			if (err)
+				return err;
 		}
-		buf += step;
+		if (buf)
+			buf += step;
 		len -= step;
 		offset += step;
 	}
@@ -1937,6 +1957,14 @@ grub_refs_read(grub_file_t file, char *buf, grub_size_t len)
 	{
 		grub_size_t have = 0;
 
+		/* resident data lives inside metadata: nothing to map */
+		if (!buf)
+		{
+			grub_error(GRUB_ERR_NOT_IMPLEMENTED_YET,
+				"refs: resident data has no block map");
+			return -1;
+		}
+
 		if (pos < st->resident_size)
 		{
 			have = (grub_size_t) (st->resident_size - pos);
@@ -2005,7 +2033,8 @@ grub_refs_read(grub_file_t file, char *buf, grub_size_t len)
 			if (chunk > remaining)
 				chunk = remaining;
 			step = (grub_size_t) chunk;
-			if (grub_refs_read_data(data, hit->block, pos - start, step, p))
+			if (grub_refs_read_data(data, hit->block, pos - start, step, p,
+				file->read_hook, file->read_hook_data))
 				return -1;
 		}
 		else
@@ -2021,10 +2050,12 @@ grub_refs_read(grub_file_t file, char *buf, grub_size_t len)
 			if (next_start != ~(grub_uint64_t) 0 && next_start - pos < chunk)
 				chunk = next_start - pos;
 			step = (grub_size_t) chunk;
-			grub_memset(p, 0, step);
+			if (p)
+				grub_memset(p, 0, step);
 		}
 
-		p += step;
+		if (p)
+			p += step;
 		pos += step;
 		remaining -= step;
 	}
