@@ -471,10 +471,10 @@ grub_refs_read_data(struct grub_refs_data *data, grub_uint64_t block,
 		{
 			grub_uint64_t in_range =
 				compacted_offset - range->plain_start;
-			grub_uint32_t unit = (grub_uint32_t)
-				(in_range / data->compression_unit_size);
-			grub_uint32_t in_unit = (grub_uint32_t)
-				(in_range % data->compression_unit_size);
+			grub_uint64_t rem;
+			grub_uint32_t unit = (grub_uint32_t) grub_divmod64(in_range,
+				data->compression_unit_size, &rem);
+			grub_uint32_t in_unit = (grub_uint32_t) rem;
 
 			if (!data->cache_valid || data->cache_range != range_index
 				|| data->cache_unit != unit)
@@ -936,11 +936,19 @@ grub_refs_compression_hook(struct grub_refs_data *data,
 		|| !range.unit_count || range.unit_count > 0x10000
 		|| range.plain_start > container_size
 		|| range.plain_size > container_size - range.plain_start
-		|| range.plain_start % data->compression_unit_size
-		|| range.unit_count != (range.plain_size + data->compression_unit_size - 1) / data->compression_unit_size
 		|| array_offset < 0x40 || array_offset > value_size
 		|| range.unit_count > (value_size - array_offset) / 4)
 		goto corrupt;
+	{
+		grub_uint64_t rem;
+
+		/* plain_start/plain_size are bounded by container_size above */
+		grub_divmod64(range.plain_start, data->compression_unit_size, &rem);
+		if (rem || range.unit_count != grub_divmod64(range.plain_size
+				+ data->compression_unit_size - 1,
+				data->compression_unit_size, NULL))
+			goto corrupt;
+	}
 	stored_capacity = entry->count << data->cluster_shift;
 	if (range.stored_start > stored_capacity
 		|| range.stored_size > stored_capacity - range.stored_start)

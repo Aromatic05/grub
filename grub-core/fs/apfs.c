@@ -473,6 +473,18 @@ static grub_err_t grub_apfs_dstream_read(struct grub_apfs_volume *vol,
 	grub_uint64_t ext_id, grub_uint64_t pos, grub_uint64_t len,
 	grub_uint8_t *buf, grub_file_t file);
 
+/* X mod (2^32 - 1) using only shifts and adds, so 32-bit targets do
+   not pull in libgcc's 64-bit division helpers.  */
+static grub_uint64_t
+grub_apfs_mod_u32max(grub_uint64_t x)
+{
+	x = (x & 0xFFFFFFFFULL) + (x >> 32);	/* < 2^33 */
+	x = (x & 0xFFFFFFFFULL) + (x >> 32);	/* <= 2^32 */
+	if (x >= 0xFFFFFFFFULL)
+		x -= 0xFFFFFFFFULL;
+	return x;
+}
+
 /* Fletcher-64 as used by APFS: sums the block starting after the
    8-byte checksum field */
 static int
@@ -487,10 +499,10 @@ grub_apfs_checksum_ok(const grub_uint8_t *buf, grub_size_t size)
 		a += grub_le_to_cpu32(w[i]);
 		b += a;
 	}
-	a %= 0xFFFFFFFFULL;
-	b %= 0xFFFFFFFFULL;
-	ck_lo = 0xFFFFFFFFULL - ((a + b) % 0xFFFFFFFFULL);
-	ck_hi = 0xFFFFFFFFULL - ((a + ck_lo) % 0xFFFFFFFFULL);
+	a = grub_apfs_mod_u32max(a);
+	b = grub_apfs_mod_u32max(b);
+	ck_lo = 0xFFFFFFFFULL - grub_apfs_mod_u32max(a + b);
+	ck_hi = 0xFFFFFFFFULL - grub_apfs_mod_u32max(a + ck_lo);
 	return grub_le_to_cpu64(*(const grub_uint64_t *) buf)
 		== ((ck_hi << 32) | ck_lo);
 }
@@ -2019,8 +2031,8 @@ grub_apfs_add_volume(struct grub_apfs_data *data, grub_uint64_t fs_oid,
 		& (GRUB_APFS_INCOMPAT_CASE_INSENSITIVE
 			| GRUB_APFS_INCOMPAT_NORM_INSENSITIVE)) != 0;
 	vol->dataless = (incompat & GRUB_APFS_INCOMPAT_DATALESS_SNAPS) != 0;
-	vol->mtime = (grub_int64_t) (grub_le_to_cpu64(vsb->last_mod_time)
-		/ 1000000000ULL);
+	vol->mtime = (grub_int64_t) grub_divmod64(
+		grub_le_to_cpu64(vsb->last_mod_time), 1000000000, NULL);
 
 	/* only sealed volumes keep their file extents in the fext tree */
 	fext_type = grub_le_to_cpu32(vsb->fext_tree_type);
@@ -2246,7 +2258,8 @@ grub_apfs_dir_iter(const char *filename, enum grub_fshelp_filetype filetype,
 	if (grub_apfs_load_inode(node) == GRUB_ERR_NONE)
 	{
 		info.mtimeset = 1;
-		info.mtime = (grub_int64_t) (node->mtime_ns / 1000000000ULL);
+		info.mtime = (grub_int64_t) grub_divmod64(node->mtime_ns,
+			1000000000, NULL);
 	}
 	else
 		grub_errno = GRUB_ERR_NONE;
