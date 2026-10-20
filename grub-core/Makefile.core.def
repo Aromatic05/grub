@@ -1856,10 +1856,51 @@ module = {
 };
 
 module = {
+  name = lz4;
+  common = lib/lz4/lz4.c;
+  common = lib/lz4/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/lz4';
+};
+
+module = {
+  name = refs;
+  common = fs/refs.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/lz4 -I$(srcdir)/lib/zstd';
+};
+
+module = {
   name = btrfs;
   common = fs/btrfs.c;
   cflags = '$(CFLAGS_POSIX) -Wno-undef';
   cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/minilzo -I$(srcdir)/lib/zstd -DMINILZO_HAVE_CONFIG_H';
+};
+
+module = {
+  name = libzbitmap;
+  common = lib/libzbitmap/libzbitmap.c;
+  common = lib/libzbitmap/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/libzbitmap';
+};
+
+module = {
+  name = lzfse;
+  common = lib/lzfse/lzfse_decode.c;
+  common = lib/lzfse/lzfse_decode_base.c;
+  common = lib/lzfse/lzvn_decode_base.c;
+  common = lib/lzfse/lzfse_fse.c;
+  common = lib/lzfse/module.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/lzfse';
+};
+
+module = {
+  name = apfs;
+  common = fs/apfs.c;
+  cflags = '$(CFLAGS_POSIX)';
+  cppflags = '-I$(srcdir)/lib/posix_wrap -I$(srcdir)/lib/libzbitmap -I$(srcdir)/lib/lzfse';
 };
 
 module = {
