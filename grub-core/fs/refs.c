@@ -1470,7 +1470,11 @@ grub_refs_attr_hook(struct grub_refs_data *data, int is_index,
 		else
 		{
 			/* non-resident: embedded extent list */
-			grub_uint32_t payload = refs_get32(value);
+			grub_uint32_t payload;
+
+			if (value_size < sizeof(payload))
+				return 0;
+			payload = refs_get32(value);
 
 			if (payload < 4 || payload >= value_size
 				|| value_size - payload < data->table_min + 4)
