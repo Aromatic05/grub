@@ -227,17 +227,34 @@ grub_fbfs_open(struct grub_file* file, const char* name_in)
   if (!data)
     return grub_errno;
 
-  err = grub_archelp_open(data, &arcops, name_in);
-  if (err)
+  /* FBFS file lookup has historically been case-insensitive.  The
+     generic archelp_open uses strcmp, so retain FBFS matching here. */
+  while (*name_in == '/')
+    name_in++;
+  grub_fbfs_rewind(data);
+  while (1)
   {
-    grub_free(data);
+    char *entry = NULL;
+    grub_int32_t mtime;
+    grub_archelp_mode_t mode;
+
+    err = grub_fbfs_find_file(data, &entry, &mtime, &mode);
+    if (err || mode == GRUB_ARCHELP_ATTR_END)
+    {
+      grub_free(entry);
+      grub_free(data);
+      return err ? err : grub_error(GRUB_ERR_FILE_NOT_FOUND,
+                                    "file not found");
+    }
+    if (grub_strcasecmp(name_in, entry) == 0)
+    {
+      grub_free(entry);
+      file->data = data;
+      file->size = grub_le_to_cpu32(data->p->data_size);
+      return GRUB_ERR_NONE;
+    }
+    grub_free(entry);
   }
-  else
-  {
-    file->data = data;
-    file->size = data->p->data_size;
-  }
-  return err;
 }
 
 static grub_ssize_t
@@ -294,6 +311,14 @@ grub_fbfs_close(grub_file_t file)
   return GRUB_ERR_NONE;
 }
 
+static grub_err_t
+grub_fbfs_label(grub_device_t device __attribute__((unused)),
+                char **label)
+{
+  *label = NULL;
+  return GRUB_ERR_NONE;
+}
+
 static struct grub_fs grub_fb_fs =
 {
   .name = "fbfs",
@@ -301,6 +326,7 @@ static struct grub_fs grub_fb_fs =
   .fs_open = grub_fbfs_open,
   .fs_read = grub_fbfs_read,
   .fs_close = grub_fbfs_close,
+  .fs_label = grub_fbfs_label,
   .next = 0
 };
 
