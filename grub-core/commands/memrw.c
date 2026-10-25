@@ -24,6 +24,7 @@
 #include <grub/i18n.h>
 #include <grub/file.h>
 #include <grub/bind.h>
+#include <grub/lockdown.h>
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/api.h>
 #include <grub/efi/efi.h>
@@ -182,6 +183,10 @@ grub_cmd_loadfile (grub_extcmd_context_t ctxt, int argc, char **argv)
 
   if (argc != 1)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("file name required"));
+  if (state[LOADFILE_ADDR].set &&
+      grub_is_lockdown () == GRUB_LOCKDOWN_ENABLED)
+    return grub_error (GRUB_ERR_ACCESS_DENIED,
+                       "fixed-address loads disabled during lockdown");
 
   if (state[LOADFILE_SKIP].set)
     skip = grub_strtoull (state[LOADFILE_SKIP].arg, NULL, 0);
@@ -275,8 +280,7 @@ static grub_dl_t memrw_module;
                     struct grub_bind_value *results, grub_size_t *nout) \
   {                                                                    \
     grub_uint64_t addr = args[0].value.u64;                             \
-    if ((grub_uint64_t) (grub_addr_t) addr != addr ||                    \
-        (addr & (sizeof (ctype) - 1)))                                    \
+    if ((grub_uint64_t) (grub_addr_t) addr != addr)                      \
       return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid memory address"); \
     results[0].type = GRUB_BIND_U64;                                    \
     results[0].value.u64 = *(volatile ctype *) (grub_addr_t) addr;       \
@@ -290,9 +294,11 @@ static grub_dl_t memrw_module;
                      grub_size_t *nout)                                 \
   {                                                                    \
     grub_uint64_t addr = args[0].value.u64;                             \
-    if ((grub_uint64_t) (grub_addr_t) addr != addr ||                    \
-        (addr & (sizeof (ctype) - 1)))                                    \
+    if ((grub_uint64_t) (grub_addr_t) addr != addr)                      \
       return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid memory address"); \
+    if (grub_is_lockdown () == GRUB_LOCKDOWN_ENABLED)                   \
+      return grub_error (GRUB_ERR_ACCESS_DENIED,                        \
+                         "physical memory writes disabled during lockdown"); \
     if (args[1].value.u64 > (grub_uint64_t) ((ctype) ~0u))         \
       return grub_error (GRUB_ERR_OUT_OF_RANGE,                        \
                          "memory write value exceeds type width");    \
@@ -336,19 +342,19 @@ GRUB_MOD_INIT(memrw)
 			  N_("Read 32-bit value from ADDR."),
 			  options);
   cmd_write_byte =
-    grub_register_command ("write_byte", grub_cmd_write,
+    grub_register_command_lockdown ("write_byte", grub_cmd_write,
 			   N_("ADDR VALUE [MASK]"),
 			   N_("Write 8-bit VALUE to ADDR."));
   cmd_write_word =
-    grub_register_command ("write_word", grub_cmd_write,
+    grub_register_command_lockdown ("write_word", grub_cmd_write,
 			   N_("ADDR VALUE [MASK]"),
 			   N_("Write 16-bit VALUE to ADDR."));
   cmd_write_dword =
-    grub_register_command ("write_dword", grub_cmd_write,
+    grub_register_command_lockdown ("write_dword", grub_cmd_write,
 			   N_("ADDR VALUE [MASK]"),
 			   N_("Write 32-bit VALUE to ADDR."));
   cmd_write_bytes =
-    grub_register_command ("write_bytes", grub_cmd_write_bytes,
+    grub_register_command_lockdown ("write_bytes", grub_cmd_write_bytes,
 			   N_("ADDR VALUE1 [VALUE2 [VALUE3 ...]]"),
 			   N_("Write 8-bit VALUE sequence to ADDR."));
   cmd_loadfile =
@@ -357,7 +363,8 @@ GRUB_MOD_INIT(memrw)
 			  N_("Load file content into memory."),
 			  options_loadfile);
   memrw_module = mod;
-  grub_bind_register (mod, mem_exports, 6);
+  if (grub_bind_register (mod, mem_exports, 6))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(memrw)
