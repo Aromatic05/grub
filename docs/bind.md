@@ -70,6 +70,13 @@ unregister its exports during finalization. Native implementations return
 GRUB error codes; they must not call a language runtime or longjmp through
 `grub_bind_invoke`.
 
+A binding group is registered atomically. Native modules report duplicate
+or out-of-memory registration failures through GRUB diagnostics rather than
+silently pretending Lua exports exist; independent native commands continue
+to operate. Lua synchronizes the original `grub_errno` and `grub_errmsg`
+globals on successful and failed native invocations, including calls
+whose exceptions are caught with `pcall()`.
+
 The descriptor and callback example above is illustrative. In a complete
 module, retain `mod` in a module-local variable for use in the FINI function.
 
@@ -164,7 +171,8 @@ references `lua.mod`. The original GRUB commands keep their existing names.
   low-level block/memory operations**, not filesystem writes. They remain
   available only when their dedicated native modules are loaded. These
   operations are *not* subject to WriteFS mount gating, exactly as before.
-  This is a distinct unsafe subsystem; do not conflate it with WriteFS.
+  Their write entrypoints are separately disabled by GRUB Secure Boot
+  Lockdown. Raw read operations remain independent of WriteFS.
 - No general-purpose C symbol loader, arbitrary memory mapping interface,
   or implicit filesystem write access is introduced.
 

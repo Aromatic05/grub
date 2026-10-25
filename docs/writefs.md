@@ -24,8 +24,12 @@ Writable backends currently support FAT12, FAT16, FAT32 and exFAT through
 `fatfs.mod`, and NTFS through `ntfs3g.mod`. Listing support does not mean
 a particular volume is safe to mount: mount-time disk checks remain enforced.
 
-A volume must be explicitly mounted into slots 1 to 9. File operations accept
-only paths like `1:/example.txt`; normal GRUB paths such as
+A volume must be explicitly mounted into slots 1 to 9. During GRUB
+Secure Boot Lockdown, new writable mounts and all mutating WriteFS
+operations (including Lua calls) are denied by Core; ordinary read-only VFS
+operations remain available. An existing mount may be unmounted to clean up.
+
+File operations accept only paths like `1:/example.txt`; normal GRUB paths such as
 `(hd0,gpt2)/example.txt` remain read-only. CLI file-copy commands may
 explicitly copy from read-only GRUB paths to already-mounted WriteFS paths.
 
@@ -44,7 +48,8 @@ grub_writefs_umount(1);
 
 Public operations include `open`, `read`, `write`, `seek`, `truncate`,
 `close`, `mkdir`, `unlink`, `rename`, `touch`, explicit `mount`/`umount`,
-and `iterate_filesystems`. For new files use the
+mounted-volume metadata (`get_device`, `get_label`, `set_label`), and
+`iterate_filesystems`. For new files use the
 `GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE` flags. The caller provides
 `struct grub_writefs_file` storage; after a successful open it must call
 `grub_writefs_close` exactly once, even if subsequent operations fail.
@@ -55,7 +60,15 @@ does not share the WriteFS handle namespace.
 
 `grub_writefs_iterate_filesystems` takes a callback receiving a filesystem
 type string, backend module name and whether the module is already loaded.
-It does not load the driver.
+It merges installed types with dynamically registered drivers, deduplicates
+filesystem names, and reports manifest I/O errors. Enumeration does not
+load a driver or mount a volume.
+
+`grub_writefs_get_device` returns an allocated device identity such as
+`(hd0,gpt2)`. `grub_writefs_get_label` returns an allocated UTF-8 label.
+The caller frees these output strings. `grub_writefs_set_label` mutates the
+mounted volume and is denied during Lockdown. Both FAT/exFAT and NTFS
+implement the label operations.
 
 ## Lua API
 
@@ -77,8 +90,17 @@ writefs.umount(1)
 ```
 
 The following functions are exposed: `supported`, `mount`, `umount`,
-`open`, `close`, `read`, `write`, `seek`, `tell`, `size`, `eof`,
-`truncate`, `mkdir`, `unlink`, `rename`, `touch`.
+`disk_status`, `get_label`, `set_label`, `open`, `close`, `read`, `write`,
+`seek`, `tell`, `size`, `eof`, `truncate`, `mkdir`, `unlink`, `rename`,
+`touch`. `disk_status(number)` returns a device identity string or nil
+for an unmounted slot, instead of the retired `fat.disk_status` raw pointer.
+
+This Lua build uses 32-bit numbers. To seek past 2 GiB, pass an exact
+unsigned decimal string: `writefs.seek(file, "2147483648")`. `tell` and
+`size` return a number within 32-bit signed range or an exact decimal
+string beyond it. `write` returns a byte count only on complete success;
+incomplete writes raise a Lua error, and close may independently report
+a delayed filesystem flush error.
 
 `writefs.open` takes a `N:/path` and a numeric flag mask: READ=1,
 WRITE=2, CREATE=4. Its return value is typed Lua userdata, not a raw
