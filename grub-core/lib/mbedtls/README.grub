@@ -1,0 +1,10 @@
+Mbed TLS 3.6.7 (upstream library, dual Apache-2.0 OR GPL-2.0-or-later).
+Source: https://github.com/Mbed-TLS/mbedtls/tree/mbedtls-3.6.7
+License: see LICENSE in this directory.
+
+Vendored upstream library sources are not a GRUB TLS implementation. The
+GRUB transport, its public API and language-neutral bindings are maintained
+separately in grub-core/net/tls.c and include/grub/tls.h.
+
+Only the client TLS 1.2 modules enumerated in Makefile.core.def are linked.
+No system libc, shared library, Lua runtime or TLS certificate bypass is used.
