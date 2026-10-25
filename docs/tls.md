@@ -39,9 +39,9 @@ separate tls_lua or netlua module.
   upstream GPL-compatible source distribution. See
   grub-core/lib/mbedtls/README.grub for attribution and licensing.
 
-The transport supports TLS 1.2, not TLS 1.3. HTTPS URL handling and the
-(https,host)/path native file protocol are separate, higher-level work.
-The existing (http,host)/path protocol is unaffected.
+The transport supports TLS 1.2, not TLS 1.3. HTTP/1.1 is implemented by
+`http.mod` and includes both `(http,host)/path` and `(https,host)/path`,
+plus the shared native/Binding HTTP request APIs (see [HTTP](http.md)).
 
 ## Native command
 

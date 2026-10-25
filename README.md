@@ -49,6 +49,8 @@ WriteFS currently has FAT/exFAT and NTFS write backends.
   adapters, revocable function references and managed resource handles.
 - **TLS transport:** Standalone verified TLS 1.2 over GRUB TCP, with native
   commands and common script bindings; no TLS-specific Lua module.
+- **HTTP(S):** Shared streaming HTTP/1.1 client for `http(s).request` and
+  `(http,host)/path`, `(https,host)/path` native files.
 - **INI and command extensions:** Configuration parsing and additional
   commands for interactive use and boot automation.
 
@@ -121,6 +123,7 @@ noncritical media before relying on them for important systems.
 - [a1ive GRUB reference documentation (Chinese)](docs/alive/README.md)
 - [GRUB native binding ABI](docs/bind.md)
 - [GRUB TLS client transport](docs/tls.md)
+- [GRUB HTTP/HTTPS files and request API](docs/http.md)
 - [WriteFS QEMU regression suite](tests/writefs_qemu.sh)
 - [ntfs-3g upstream findings](tests/ntfs3g/README.md)
 - [Migration history and compatibility notes](docs/porting/MIGRATION_PROGRESS.md)
