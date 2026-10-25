@@ -267,6 +267,23 @@ truncate -s 32M "$work/fat.img"
 mkfs.fat -F 16 -n WFFAT "$work/fat.img" >> "$work/mkfs.log" 2>&1
 truncate -s 64M "$work/exfat.img"
 mkfs.exfat -L WFEXFAT "$work/exfat.img" >> "$work/mkfs.log" 2>&1
+# FatFs sector units are taken from the BPB, not GRUB's 512-byte disk
+# address units. Test both 4K FAT32 and 4K exFAT on actual QEMU storage.
+# A 4K-sector FAT32 volume needs at least 65525 clusters.  64 MiB
+# produces an invalid FAT32 layout; 320 MiB with 1 sector/cluster does not.
+truncate -s 320M "$work/fat4k.img"
+mkfs.fat -F 32 -S 4096 -s 1 -n WFFAT4K "$work/fat4k.img" >> "$work/mkfs.log" 2>&1
+truncate -s 64M "$work/exfat4k.img"
+mkfs.exfat -s 4096 -L WFEXFAT4K "$work/exfat4k.img" >> "$work/mkfs.log" 2>&1
+python3 - "$work/fat4k.img" "$work/exfat4k.img" <<'PY4KBPB'
+from pathlib import Path
+import sys
+fat = Path(sys.argv[1]).read_bytes()[:512]
+exfat = Path(sys.argv[2]).read_bytes()[:512]
+assert int.from_bytes(fat[11:13], 'little') == 4096
+assert exfat[3:11] == b'EXFAT   ' and exfat[108] == 12
+assert fat[510:512] == b'\x55\xaa' and exfat[510:512] == b'\x55\xaa'
+PY4KBPB
 truncate -s 128M "$work/ntfs.img"
 mkntfs -F -Q -L WFNTFS "$work/ntfs.img" >> "$work/mkfs.log" 2>&1
 cp "$work/ntfs.img" "$work/hiber.img"
@@ -335,7 +352,7 @@ ok('mount filesystems', 'FILESYSTEMS_CLI')
 ok('insmod fat', 'FAT_READER')
 ok('insmod ntfs', 'NTFS_READER')
 ok('insmod exfat', 'EXFAT_READER')
-for label, var in [('WFESP','esp'),('WFFAT','fat'),('WFEXFAT','exfat'),('WFNTFS','ntfs'),('WFFULL','full'),('WFNTFS4K','ntfs4k'),('WFHIBER','hiber'),('WFDIRTY','dirty'),('WFREADONLY','readonly'),('WFNTFSFULL','ntfsfull'),('WFBADUPCASE','badupcase')]:
+for label, var in [('WFESP','esp'),('WFFAT','fat'),('WFEXFAT','exfat'),('WFNTFS','ntfs'),('WFFULL','full'),('WFNTFS4K','ntfs4k'),('WFFAT4K','fat4k'),('WFEXFAT4K','exfat4k'),('WFHIBER','hiber'),('WFDIRTY','dirty'),('WFREADONLY','readonly'),('WFNTFSFULL','ntfsfull'),('WFBADUPCASE','badupcase')]:
     ok(f'search --no-floppy --label --set={var} {label}', f'FIND_{var}')
 ok('insmod getkey', 'BIND_INPUT_PRELOAD')
 ok('lua ($esp)/supported.lua', 'FILESYSTEMS_LUA')
@@ -404,6 +421,8 @@ bad('mount ($hiber) 5', 'HIBERNATION')
 bad('mount ($dirty) 5', 'DIRTY')
 bad('mount ($badupcase) 5', 'INVALID_UPCASE')
 bad('mount ($badupcase) 5', 'INVALID_UPCASE_REPEAT')
+ok('mount ($fat4k) 5', 'MOUNT_FAT4K')
+ok('mount ($exfat4k) 9', 'MOUNT_EXFAT4K')
 ok('mount ($readonly) 7', 'MOUNT_READONLY_TARGET')
 ok('mount ($ntfsfull) 8', 'MOUNT_NTFSFULL')
 for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT')]:
@@ -420,6 +439,14 @@ for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT')]:
     ok(f'mv {num}:/test/renamed {num}:/other/moved', f'{kind}_SAME_MOVE')
     ok(f'rm {num}:/other/moved', f'{kind}_REMOVE_FILE')
     ok(f'rm {num}:/other', f'{kind}_REMOVE_DIR')
+for num, kind in [(5,'FAT4K'), (9,'EXFAT4K')]:
+    ok(f'mkdir {num}:/test', f'{kind}_MKDIR')
+    ok(f'cp ($esp)/payload.bin {num}:/test/big.bin', f'{kind}_COPY_BIG')
+    ok(f'cp ($esp)/short.txt {num}:/test/gap.bin', f'{kind}_COPY_SMALL')
+    ok(f'write_file {num}:/test/gap.bin END 4096', f'{kind}_WRITE_GAP')
+    ok(f'touch {num}:/test/empty 2024 2 29 12 34 56', f'{kind}_TOUCH')
+    ok(f'rename {num}:/test/empty {num}:/test/renamed', f'{kind}_RENAME')
+    ok(f'rm {num}:/test/renamed', f'{kind}_REMOVE')
 ok('lua ($esp)/read.lua', 'LUA_WRITEFS_READ')
 ok('lua ($esp)/large-offset.lua', 'LUA_U64_OFFSET')
 bad('umount 1', 'LUA_OPEN_PREVENTS_UNMOUNT')
@@ -459,11 +486,15 @@ ok('lua ($esp)/full-write.lua', 'LUA_SHORT_WRITE_ERROR')
 ok('cp 2:/test/big.bin 1:/source-survived.bin', 'FULL_MOVE_SOURCE_SURVIVES')
 bad('rename 1:/test/gap.bin 2:/wrong', 'CROSS_RENAME')
 bad('mv 2:/test 2:/test/child', 'MOVE_INTO_SELF')
-for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT'),(4,'FULL')]:
+for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT'),(4,'FULL'),(5,'FAT4K'),(9,'EXFAT4K')]:
     ok(f'umount {num}', f'{kind}_UNMOUNT')
 ok('cmp ($esp)/payload.bin ($fat)/test/big.bin', 'FAT_BIG_CONTENT')
 ok('cmp ($esp)/payload.bin ($ntfs)/test/big.bin', 'NTFS_BIG_CONTENT')
 ok('cmp ($esp)/payload.bin ($exfat)/test/big.bin', 'EXFAT_BIG_CONTENT')
+ok('cmp ($esp)/payload.bin ($fat4k)/test/big.bin', 'FAT4K_BIG_CONTENT')
+ok('cmp ($esp)/payload.bin ($exfat4k)/test/big.bin', 'EXFAT4K_BIG_CONTENT')
+ok('cmp ($esp)/gap.bin ($fat4k)/test/gap.bin', 'FAT4K_GAP_CONTENT')
+ok('cmp ($esp)/gap.bin ($exfat4k)/test/gap.bin', 'EXFAT4K_GAP_CONTENT')
 for var in ['fat','ntfs','exfat']:
     ok(f'cmp ($esp)/gap.bin (${var})/test/gap.bin', f'{var}_GAP_CONTENT')
 for var, path in [('ntfs','from-fat.bin'),('exfat','from-ntfs.bin'),('fat','from-exfat.bin'),('fat','source-survived.bin')]:
@@ -512,6 +543,10 @@ timeout 95s qemu-system-x86_64 -machine q35,accel=tcg -cpu qemu64 -m 512M \
   -drive "if=virtio,format=raw,file=$work/full.img" \
   -drive "if=none,id=ntfs4k,format=raw,file=$work/ntfs4k.img" \
   -device virtio-blk-pci,drive=ntfs4k,logical_block_size=$logical_sector,physical_block_size=4096 \
+  -drive "if=none,id=fat4k,format=raw,file=$work/fat4k.img" \
+  -device virtio-blk-pci,drive=fat4k,logical_block_size=$logical_sector,physical_block_size=4096 \
+  -drive "if=none,id=exfat4k,format=raw,file=$work/exfat4k.img" \
+  -device virtio-blk-pci,drive=exfat4k,logical_block_size=$logical_sector,physical_block_size=4096 \
   -drive "if=virtio,format=raw,readonly=on,file=$work/readonly.img" \
   -drive "if=virtio,format=raw,file=$work/dirty.img" \
   -drive "if=virtio,format=raw,file=$work/ntfsfull.img" \
@@ -547,6 +582,12 @@ ntfscat "$work/ntfs.img" /overwrite.bin > "$work/ntfs-short.txt"
 cmp "$work/short.txt" "$work/ntfs-short.txt"
 fsck.fat -n "$work/fat.img" > "$work/fat-check.log" 2>&1
 fsck.exfat -n "$work/exfat.img" > "$work/exfat-check.log" 2>&1
+fsck.fat -n "$work/fat4k.img" > "$work/fat4k-check.log" 2>&1
+fsck.exfat -n "$work/exfat4k.img" > "$work/exfat4k-check.log" 2>&1
+mcopy -i "$work/fat4k.img" ::/test/big.bin "$work/fat4k-readback.bin"
+cmp "$work/payload.bin" "$work/fat4k-readback.bin"
+mcopy -i "$work/fat4k.img" ::/test/gap.bin "$work/fat4k-gap-readback.bin"
+cmp "$work/gap.bin" "$work/fat4k-gap-readback.bin"
 ntfsfix -n "$work/ntfs.img" > "$work/ntfs-check.log" 2>&1
 sha256sum "$work/hiber.img" | cut -d ' ' -f 1 > "$work/hiber.after"
 cmp "$work/hiber.before" "$work/hiber.after"
@@ -556,4 +597,4 @@ sha256sum "$work/badupcase.img" | cut -d ' ' -f 1 > "$work/badupcase.after"
 cmp "$work/badupcase.before" "$work/badupcase.after"
 ntfsfix -n "$work/ntfsfull.img" > "$work/ntfsfull-check.log" 2>&1
 passed=1
-echo 'PASS: independent host readback, FAT/exFAT checks, NTFS metadata check, hibernated image unchanged'
+echo 'PASS: host FAT4K payload readback, 4K FAT/exFAT fsck, existing NTFS metadata and hibernated image unchanged'
