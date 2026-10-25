@@ -293,6 +293,9 @@ static grub_dl_t memrw_module;
     if ((grub_uint64_t) (grub_addr_t) addr != addr ||                    \
         (addr & (sizeof (ctype) - 1)))                                    \
       return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid memory address"); \
+    if (args[1].value.u64 > (grub_uint64_t) ((ctype) ~0u))         \
+      return grub_error (GRUB_ERR_OUT_OF_RANGE,                        \
+                         "memory write value exceeds type width");    \
     *(volatile ctype *) (grub_addr_t) addr = (ctype) args[1].value.u64;  \
     *nout = 0;                                                         \
     return GRUB_ERR_NONE;                                              \
