@@ -23,6 +23,8 @@
 
 #ifndef GRUB_LUA
 
+#define LUA_GLOBALSINDEX (-10002)
+
 #define LUA_API extern
 #define LUALIB_API    LUA_API
 

@@ -67,7 +67,8 @@ DRESULT disk_read (BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
     return RES_NOTRDY;
   if (!fat_stat[pdrv].disk)
     return RES_NOTRDY;
-  if (sector > fat_stat[pdrv].total_sectors)
+  if (!count || sector >= fat_stat[pdrv].total_sectors ||
+      count > fat_stat[pdrv].total_sectors - sector)
     return RES_ERROR;
 
   errno = grub_disk_read (fat_stat[pdrv].disk, sector, 0, size, buff);
@@ -94,7 +95,8 @@ DRESULT disk_write (BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
     return RES_ERROR;
   if (!fat_stat[pdrv].disk)
     return RES_ERROR;
-  if (sector > fat_stat[pdrv].total_sectors)
+  if (!count || sector >= fat_stat[pdrv].total_sectors ||
+      count > fat_stat[pdrv].total_sectors - sector)
     return RES_ERROR;
 
   errno = grub_disk_write (fat_stat[pdrv].disk, sector, 0, size, buff);

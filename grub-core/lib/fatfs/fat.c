@@ -16,479 +16,198 @@
  *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <grub/dl.h>
+#include <grub/writefs.h>
 #include <grub/err.h>
 #include <grub/misc.h>
-#include <grub/normal.h>
-#include <grub/command.h>
-#include <grub/i18n.h>
-#include <grub/disk.h>
-#include <grub/file.h>
-#include <grub/partition.h>
-#include <grub/datetime.h>
 #include <grub/lua.h>
-
 #include "ff.h"
 #include "diskio.h"
 
 GRUB_MOD_LICENSE ("GPLv3+");
+static FATFS fatfs_list[GRUB_WRITEFS_DRIVES];
+static struct grub_writefs_driver fat_driver;
 
-static inline int
-label_isdigit (int c)
+static int
+fat_backend_probe (grub_disk_t disk __attribute__ ((unused)),
+                   const grub_uint8_t *boot)
 {
-  return (c >= '1' && c <= '9');
+  if (grub_memcmp (boot + 3, "EXFAT   ", 8) == 0)
+    return 1;
+  /* FAT boot sector BPB: exclude other jump-based formats such as NTFS. */
+  return (boot[0] == 0xeb || boot[0] == 0xe9 || boot[0] == 0xe8)
+    && boot[510] == 0x55 && boot[511] == 0xaa
+    && boot[11] == 0 && (boot[12] == 2 || boot[12] == 4 ||
+                          boot[12] == 8 || boot[12] == 16)
+    && boot[13] && !(boot[13] & (boot[13] - 1))
+    && (boot[14] || boot[15]);
 }
 
-static grub_err_t
-grub_cmd_mount (grub_command_t cmd __attribute__ ((unused)),
-                int argc, char **args)
-
+static grub_err_t fat_error (FRESULT res)
 {
-  unsigned int num = 0;
-  int namelen;
-  grub_disk_t disk = 0;
-  if (argc == 1 && grub_strcmp (args[0], "status") == 0)
-  {
-    int i;
-    for (i = 1; i < 10; i++)
+  if (!res) return GRUB_ERR_NONE;
+  return grub_error (res == FR_NO_FILE || res == FR_NO_PATH ? GRUB_ERR_FILE_NOT_FOUND :
+                     res == FR_NO_FILESYSTEM ? GRUB_ERR_BAD_FS :
+                     res == FR_NOT_ENOUGH_CORE ? GRUB_ERR_OUT_OF_MEMORY : GRUB_ERR_WRITE_ERROR,
+                     "FatFs error %u", (unsigned) res);
+}
+static grub_err_t fat_backend_mount (struct grub_writefs_mount *mount)
+{
+  char dev[3];
+  FRESULT res;
+  unsigned n = mount->num;
+  grub_snprintf (dev, sizeof (dev), "%u:", n);
+  fat_stat[n].present = 1;
+  fat_stat[n].disk = mount->disk;
+  fat_stat[n].total_sectors = grub_disk_native_sectors (mount->disk);
+  grub_snprintf (fat_stat[n].name, sizeof (fat_stat[n].name), "%u", n);
+  res = f_mount (&fatfs_list[n], dev, 1);
+  if (res)
     {
-      if (!fat_stat[i].disk)
-        continue;
-      if (!fat_stat[i].disk->partition)
-        grub_printf ("%s -> %s:\n", fat_stat[i].disk->name, fat_stat[i].name);
-      else
-        grub_printf ("%s,%d -> %s:\n", fat_stat[i].disk->name,
-                     fat_stat[i].disk->partition->number + 1,
-                     fat_stat[i].name);
+      f_mount (NULL, dev, 0);
+      grub_memset (&fat_stat[n], 0, sizeof (fat_stat[n]));
+      return fat_error (res);
     }
-    return GRUB_ERR_NONE;
-  }
-  if (argc != 2)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  num = grub_strtoul (args[1], NULL, 10);
-  if (num > 9 || num == 0)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid number");
-  namelen = grub_strlen (args[0]);
-  if ((args[0][0] == '(') && (args[0][namelen - 1] == ')'))
-  {
-    args[0][namelen - 1] = 0;
-    disk = grub_disk_open (&args[0][1]);
-  }
+  mount->data = &fatfs_list[n];
+  return GRUB_ERR_NONE;
+}
+static grub_err_t fat_backend_umount (struct grub_writefs_mount *mount)
+{
+  char dev[3];
+  FRESULT res;
+  grub_snprintf (dev, sizeof (dev), "%u:", mount->num);
+  res = f_mount (NULL, dev, 0);
+  grub_memset (&fat_stat[mount->num], 0, sizeof (fat_stat[mount->num]));
+  grub_memset (&fatfs_list[mount->num], 0, sizeof (FATFS));
+  return fat_error (res);
+}
+static grub_err_t fat_backend_open (struct grub_writefs_file *file, const char *path, unsigned flags)
+{
+  FIL *fp = grub_zalloc (sizeof (*fp));
+  FRESULT res;
+  BYTE mode = (flags & GRUB_WRITEFS_WRITE) ? FA_WRITE : FA_READ;
+  if (!fp) return grub_errno;
+  if (flags & GRUB_WRITEFS_CREATE) mode |= FA_OPEN_ALWAYS;
+  res = f_open (fp, path, mode);
+  if (res) { grub_free (fp); return fat_error (res); }
+  file->data = fp;
+  file->size = f_size (fp);
+  if (fp->obj.fs->fs_type == FS_EXFAT)
+    file->id = ((grub_uint64_t) fp->obj.c_scl << 32) | fp->obj.c_ofs;
   else
-    disk = grub_disk_open (args[0]);
-  if (!disk)
-    return grub_errno;
-
-  if (fat_stat[num].disk)
-  {
-    grub_disk_close (disk);
-    return grub_error (GRUB_ERR_BAD_DEVICE, "disk number in use");
-  }
-  fat_stat[num].present = 1;
-  grub_snprintf (fat_stat[num].name, 2, "%u", num);
-  fat_stat[num].disk = disk;
-  fat_stat[num].total_sectors = disk->total_sectors;
-
+    file->id = (fp->dir_sect << 9) + (fp->dir_ptr - fp->obj.fs->win);
   return GRUB_ERR_NONE;
 }
-
-static grub_err_t
-grub_cmd_umount (grub_command_t cmd __attribute__ ((unused)),
-                int argc, char **args)
-
+static grub_ssize_t fat_backend_read (struct grub_writefs_file *file, void *buf, grub_size_t len)
 {
-  unsigned int num = 0;
-
-  if (argc != 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  num = grub_strtoul (args[0], NULL, 10);
-  if (num > 9 || num == 0)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid number");
-
-  if (fat_stat[num].disk)
-    grub_disk_close (fat_stat[num].disk);
-  fat_stat[num].disk = 0;
-  fat_stat[num].present = 0;
-  fat_stat[num].total_sectors = 0;
-
-  return GRUB_ERR_NONE;
+  FIL *fp = file->data;
+  UINT n;
+  FRESULT res = f_lseek (fp, file->offset);
+  if (!res) res = f_read (fp, buf, len, &n);
+  if (res) { fat_error (res); return -1; }
+  file->offset += n;
+  return n;
 }
-
-static grub_err_t
-grub_cmd_mkdir (grub_command_t cmd __attribute__ ((unused)),
-                int argc, char **args)
-
+static grub_ssize_t fat_backend_write (struct grub_writefs_file *file, const void *buf, grub_size_t len)
 {
-  char dev[3] = "1:";
-  FATFS fs;
+  FIL *fp = file->data;
+  UINT n;
   FRESULT res;
-  if (argc != 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  if (label_isdigit (args[0][0]))
-    dev[0] = args[0][0];
-
-  f_mount (&fs, dev, 0);
-  res = f_mkdir (args[0]);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "mkdir failed %d", res);
-  f_mount(0, dev, 0);
-  return GRUB_ERR_NONE;
+  /* FatFs leaves an expanded seek gap undefined. Make it deterministic. */
+  if (file->offset > f_size (fp))
+    {
+      grub_uint8_t zero[512] = { 0 };
+      res = f_lseek (fp, f_size (fp));
+      if (res) { fat_error (res); return -1; }
+      while (f_tell (fp) < file->offset)
+        {
+          UINT chunk = file->offset - f_tell (fp) > sizeof (zero) ? sizeof (zero) : file->offset - f_tell (fp);
+          res = f_write (fp, zero, chunk, &n);
+          if (res || n != chunk)
+            { if (res) fat_error (res); else grub_error (GRUB_ERR_WRITE_ERROR, "FatFs disk full"); return -1; }
+        }
+    }
+  res = f_lseek (fp, file->offset);
+  if (res || f_tell (fp) != file->offset)
+    { if (res) fat_error (res); else grub_error (GRUB_ERR_OUT_OF_RANGE, "FatFs offset out of range"); return -1; }
+  res = f_write (fp, buf, len, &n);
+  if (res) { fat_error (res); return -1; }
+  file->offset += n;
+  file->size = f_size (fp);
+  if (n != len) grub_error (GRUB_ERR_WRITE_ERROR, "FatFs disk full");
+  return n;
 }
-
-static FRESULT
-copy_file (char *in_name, char *out_name)
+static grub_err_t fat_backend_truncate (struct grub_writefs_file *file)
 {
-  FRESULT res;
-  BYTE buffer[4096];
-  UINT br, bw;
-  FIL in, out;
-  res = f_open (&in, in_name, FA_READ);
-  if (res)
-  {
-    grub_error (GRUB_ERR_BAD_FILENAME, "src open failed %d", res);
-    goto fail;
-  }
-  res = f_open (&out, out_name, FA_WRITE | FA_CREATE_ALWAYS);
-  if (res)
-  {
-    grub_error (GRUB_ERR_BAD_FILENAME, "dst open failed %d", res);
-    goto fail;
-  }
-
-  for (;;)
-  {
-    res = f_read (&in, buffer, sizeof (buffer), &br);
-    if (res || br == 0)
-      break; /* error or eof */
-    res = f_write (&out, buffer, br, &bw);
-    if (res || bw < br)
-      break; /* error or disk full */
-  }
-  f_close(&in);
-  f_close(&out);
-fail:
-  return res;
+  FIL *fp = file->data;
+  FRESULT res = f_lseek (fp, file->offset);
+  if (!res) res = f_truncate (fp);
+  file->size = f_size (fp);
+  return fat_error (res);
 }
-
-static FRESULT
-copy_grub_file (char *in_name, char *out_name)
+static grub_err_t fat_backend_close (struct grub_writefs_file *file)
 {
-  FRESULT res;
-  BYTE buffer[4096];
-  UINT br, bw;
-  FIL out;
-  grub_file_t file = 0;
-  file = grub_file_open (in_name, GRUB_FILE_TYPE_HEXCAT
-                         | GRUB_FILE_TYPE_NO_DECOMPRESS);
-  if (!file)
-  {
-    grub_error (GRUB_ERR_BAD_FILENAME, "src open failed");
-    return FR_NO_FILE;
-  }
-  res = f_open (&out, out_name, FA_WRITE | FA_CREATE_ALWAYS);
-  if (res)
-  {
-    grub_error (GRUB_ERR_BAD_FILENAME, "dst open failed %d", res);
-    return res;
-  }
-  br = sizeof (buffer);
-  for (;;)
-  {
-    if (file->offset >= file->size)
-      break; /* eof */
-    if (file->offset + br > file->size)
-      br = file->size - file->offset;
-    grub_file_read (file, buffer, br);
-    res = f_write (&out, buffer, br, &bw);
-    if (res || bw < br)
-      break; /* error or disk full */
-  }
-  grub_file_close (file);
-  f_close(&out);
-
-  return res;
+  FRESULT res = f_close (file->data);
+  grub_free (file->data);
+  return fat_error (res);
 }
-
-static grub_err_t
-grub_cmd_cp (grub_command_t cmd __attribute__ ((unused)),
-             int argc, char **args)
-
+static grub_err_t fat_backend_mkdir (struct grub_writefs_mount *mount __attribute__((unused)), const char *path)
+{ return fat_error (f_mkdir (path)); }
+static grub_err_t fat_backend_unlink (struct grub_writefs_mount *mount __attribute__((unused)), const char *path)
+{ return fat_error (f_unlink (path)); }
+static grub_err_t fat_backend_rename (struct grub_writefs_mount *mount __attribute__((unused)), const char *a, const char *b)
+{ return fat_error (f_rename (a, b)); }
+static grub_err_t fat_backend_touch (struct grub_writefs_mount *mount __attribute__((unused)), const char *path, const struct grub_datetime *values, unsigned count)
 {
-  char in_dev[3] = "1:";
-  char out_dev[3] = "1:";
-  FATFS in_fs, out_fs;
-  FRESULT res;
-
-  if (argc != 2)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-
-  if (label_isdigit (args[0][0]))
-    in_dev[0] = args[0][0];
-  if (label_isdigit (args[1][0]))
-    out_dev[0] = args[1][0];
-
-  if (label_isdigit (args[0][0]))
-    f_mount (&in_fs, in_dev, 0);
-  f_mount (&out_fs, out_dev, 0);
-
-  if (label_isdigit (args[0][0]))
-    res = copy_file (args[0], args[1]);
-  else
-    res = copy_grub_file (args[0], args[1]);
-
-  if (label_isdigit (args[0][0]))
-    f_mount(0, in_dev, 0);
-  f_mount(0, out_dev, 0);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "copy failed %d", res);
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-grub_cmd_rename (grub_command_t cmd __attribute__ ((unused)),
-                 int argc, char **args)
-
-{
-  char dev[3] = "1:";
-  FATFS fs;
-  FRESULT res;
-  if (argc != 2)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  if (label_isdigit (args[0][0]))
-    dev[0] = args[0][0];
-  if (label_isdigit (args[1][0]) && args[1][0] != dev[0])
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "dst drive error");
-
-  f_mount (&fs, dev, 0);
-  res = f_rename (args[0], args[1]);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "rename failed %d", res);
-  f_mount(0, dev, 0);
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-grub_cmd_rm (grub_command_t cmd __attribute__ ((unused)),
-             int argc, char **args)
-
-{
-  char dev[3] = "1:";
-  FATFS fs;
-  FRESULT res;
-  if (argc != 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  if (label_isdigit (args[0][0]))
-    dev[0] = args[0][0];
-
-  f_mount (&fs, dev, 0);
-  res = f_unlink (args[0]);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "unlink failed %d", res);
-  f_mount(0, dev, 0);
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-grub_cmd_mv (grub_command_t cmd __attribute__ ((unused)),
-             int argc, char **args)
-
-{
-  char in_dev[3] = "1:";
-  char out_dev[3] = "1:";
-  FATFS in_fs, out_fs;
-  FRESULT res;
-
-  if (argc != 2)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-
-  if (label_isdigit (args[0][0]))
-    in_dev[0] = args[0][0];
-  if (label_isdigit (args[1][0]))
-    out_dev[0] = args[1][0];
-
-  f_mount (&in_fs, in_dev, 0);
-  if (in_dev[0] == out_dev[0])
-  {
-    /* rename */
-    res = f_rename (args[0], args[1]);
-    if (res)
-      return grub_error (GRUB_ERR_WRITE_ERROR, "mv failed %d", res);
-    f_mount(0, in_dev, 0);
-    return GRUB_ERR_NONE;
-  }
-
-  f_mount (&out_fs, out_dev, 0);
-  res = copy_file (args[0], args[1]);
-  if (res)
-    grub_error (GRUB_ERR_WRITE_ERROR, "copy failed %d", res);
-  else
-    res = f_unlink (args[0]);
-
-  f_mount(0, in_dev, 0);
-  f_mount(0, out_dev, 0);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "rm failed %d", res);
-  return GRUB_ERR_NONE;
-}
-
-static FRESULT
-set_timestamp (char *name, struct grub_datetime *tm)
-{
-    FILINFO info;
-    info.fdate = (WORD)(((tm->year - 1980) * 512U) | tm->month * 32U | tm->day);
-    info.ftime = (WORD)(tm->hour * 2048U | tm->minute * 32U | tm->second / 2U);
-    return f_utime(name, &info);
-}
-
-static grub_err_t
-grub_cmd_touch (grub_command_t cmd __attribute__ ((unused)),
-                int argc, char **args)
-
-{
-  char dev[3] = "1:";
-  struct grub_datetime tm = { 2020, 1, 1, 0, 0, 0};
-  FATFS fs;
-  FRESULT res;
+  struct grub_datetime resolved;
+  const struct grub_datetime *dt = &resolved;
   FILINFO info;
   FIL file;
-  if (argc < 1)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-
-  grub_get_datetime (&tm);
-  if (argc > 1)
-    tm.year = grub_strtol (args[1], NULL, 10);
-  if (argc > 2)
-    tm.month = grub_strtol (args[2], NULL, 10);
-  if (argc > 3)
-    tm.day = grub_strtol (args[3], NULL, 10);
-  if (argc > 4)
-    tm.hour = grub_strtol (args[4], NULL, 10);
-  if (argc > 5)
-    tm.minute = grub_strtol (args[5], NULL, 10);
-  if (argc > 6)
-    tm.second = grub_strtol (args[6], NULL, 10);
-
-  if (label_isdigit (args[0][0]))
-    dev[0] = args[0][0];
-
-  f_mount (&fs, dev, 0);
-  res = f_stat (args[0], &info);
-  switch (res)
-  {
-    case FR_OK:
-      res = set_timestamp (args[0], &tm);
-      break;
-    case FR_NO_FILE:
-      res = f_open (&file, args[0], FA_WRITE | FA_CREATE_ALWAYS);
-      if (res)
-        grub_error (GRUB_ERR_WRITE_ERROR, "file create failed %d", res);
-      else
-      {
-        f_close(&file);
-        res = set_timestamp (args[0], &tm);
-      }
-      break;
-    default:
-      grub_error (GRUB_ERR_BAD_FILENAME, "stat failed %d", res);
-  }
-  f_mount(0, dev, 0);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "utime failed %d", res);
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-grub_cmd_write_file (grub_command_t cmd __attribute__ ((unused)),
-                     int argc, char **args)
-
-{
-  char dev[3] = "1:";
-  FATFS fs;
   FRESULT res;
-  FIL file;
-  FSIZE_t offset = 0;
-  UINT bw;
-  if (argc < 2)
-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "bad argument");
-  if (argc == 3)
-    offset = grub_strtoul (args[2], NULL, 0);
-  bw = grub_strlen (args[1]);
-
-  if (label_isdigit (args[0][0]))
-    dev[0] = args[0][0];
-
-  f_mount (&fs, dev, 0);
-  res = f_open (&file, args[0], FA_WRITE | FA_OPEN_EXISTING);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "file open failed %d", res);
-  res = f_lseek (&file, offset);
-  if (!res)
-    res = f_write (&file, args[1], bw, &bw);
-
-  f_close(&file);
-  f_mount(0, dev, 0);
-  if (res)
-    return grub_error (GRUB_ERR_WRITE_ERROR, "write failed %d", res);
-  return GRUB_ERR_NONE;
+  if (grub_writefs_touch_datetime (values, count, &resolved))
+    return grub_errno;
+  if (dt->year < 1980 || dt->year > 2107)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "FAT timestamps require year 1980-2107");
+  res = f_stat (path, &info);
+  if (res == FR_NO_FILE)
+    {
+      res = f_open (&file, path, FA_WRITE | FA_CREATE_NEW);
+      if (!res) res = f_close (&file);
+    }
+  if (res) return fat_error (res);
+  info.fdate = ((dt->year - 1980) << 9) | (dt->month << 5) | dt->day;
+  info.ftime = (dt->hour << 11) | (dt->minute << 5) | (dt->second >> 1);
+  return fat_error (f_utime (path, &info));
 }
-
-
-static grub_command_t cmd_mount, cmd_umount, cmd_mkdir;
-static grub_command_t cmd_cp, cmd_rename, cmd_rm;
-static grub_command_t cmd_mv, cmd_touch, cmd_write;
-
-static FATFS fatfs_list[10];
+static struct grub_writefs_driver fat_driver = {
+  .name = "fatfs", .probe = fat_backend_probe,
+  .mount = fat_backend_mount, .umount = fat_backend_umount,
+  .open = fat_backend_open, .read = fat_backend_read, .write = fat_backend_write,
+  .truncate = fat_backend_truncate, .close = fat_backend_close,
+  .mkdir = fat_backend_mkdir, .unlink = fat_backend_unlink,
+  .rename = fat_backend_rename, .touch = fat_backend_touch
+};
 
 /* fat.mount hdx,y disknum */
 static int
 fat_mount (lua_State *state)
 {
-  int num = 0;
-  char dev[3] = "1:";
-  grub_disk_t disk = 0;
-  const char *name = NULL;
-
-  name = luaL_checkstring (state, 1);
-  num = luaL_checkinteger (state, 2);
-  if (num > 9 || num <= 0)
-    return 0;
-  disk = grub_disk_open (name);
-  if (!disk)
-    return 0;
-  if (fat_stat[num].disk)
-  {
-    grub_disk_close (disk);
-    grub_printf ("disk number in use\n");
-    return 0;
-  }
-  fat_stat[num].present = 1;
-  grub_snprintf (fat_stat[num].name, 2, "%d", num);
-  fat_stat[num].disk = disk;
-  fat_stat[num].total_sectors = disk->total_sectors;
-  /* f_mount */
-  grub_snprintf (dev, 3, "%d:", num);
-  f_mount (&fatfs_list[num], dev, 0);
+  const char *name = luaL_checkstring (state, 1);
+  int num = luaL_checkinteger (state, 2);
+  struct grub_writefs_mount *mount;
+  if (grub_writefs_mount (name, num)) return luaL_error (state, "fat.mount failed");
+  mount = grub_writefs_get (num);
+  if (mount->driver != &fat_driver)
+    { grub_writefs_umount (num); return luaL_error (state, "expected FAT/exFAT volume"); }
   return 0;
 }
-
-/* fat.umount disknum */
 static int
 fat_umount (lua_State *state)
 {
-  int num = 0;
-  char dev[3] = "1:";
-  num = luaL_checkinteger (state, 1);
-  if (num > 9 || num <= 0)
-    return 0;
-  if (fat_stat[num].disk)
-    grub_disk_close (fat_stat[num].disk);
-  fat_stat[num].disk = 0;
-  fat_stat[num].present = 0;
-  fat_stat[num].total_sectors = 0;
-  /* f_mount */
-  grub_snprintf (dev, 3, "%d:", num);
-  f_mount(0, dev, 0);
-  grub_memset (&fatfs_list[num], 0, sizeof (FATFS));
+  unsigned num = luaL_checkinteger (state, 1);
+  struct grub_writefs_mount *mount = grub_writefs_get (num);
+  if (!mount || mount->driver != &fat_driver)
+    return luaL_error (state, "expected mounted FAT/exFAT volume");
+  if (grub_writefs_umount (num)) return luaL_error (state, "fat.umount failed");
   return 0;
 }
 
@@ -584,7 +303,12 @@ fat_open (lua_State *state)
     return 0;
   name = luaL_checkstring (state, 1);
   flag = (lua_gettop (state) > 1) ? luaL_checkinteger (state, 2) : 0;
-  f_open (file, name, flag);
+  if (name[0] < '1' || name[0] > '9' || name[1] != ':' || name[2] != '/' ||
+      !fat_stat[name[0] - '0'].disk)
+    { grub_free (file); return luaL_error (state, "expected mounted FAT/exFAT path"); }
+  if (f_open (file, name, flag))
+    { grub_free (file); return luaL_error (state, "fat.open failed"); }
+  grub_writefs_get (name[0] - '0')->open_files++;
   lua_pushlightuserdata (state, file);
   return 1;
 }
@@ -597,8 +321,16 @@ fat_close (lua_State *state)
 
   luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
   file = lua_touserdata (state, 1);
-  f_close (file);
-  grub_free (file);
+  {
+    unsigned num;
+    FRESULT res;
+    for (num = 1; num < GRUB_WRITEFS_DRIVES; num++)
+      if (file->obj.fs == &fatfs_list[num]) break;
+    res = f_close (file);
+    if (num < GRUB_WRITEFS_DRIVES) grub_writefs_get (num)->open_files--;
+    grub_free (file);
+    if (res) return luaL_error (state, "fat.close failed");
+  }
   return 0;
 }
 
@@ -735,52 +467,21 @@ static luaL_Reg fatlib[] =
   {0, 0}
 };
 
+
 GRUB_MOD_INIT(fatfs)
 {
-  cmd_mount = grub_register_command ("mount", grub_cmd_mount,
-                                      N_("status | DISK NUM[1-9]"),
-                                      N_("Mount FAT partition."));
-  cmd_umount = grub_register_command ("umount", grub_cmd_umount,
-                                      N_("NUM[1-9]"),
-                                      N_("Unmount FAT partition."));
-  cmd_mkdir = grub_register_command ("mkdir", grub_cmd_mkdir,
-                                      N_("PATH"),
-                                      N_("Create new directory."));
-  cmd_cp = grub_register_command ("cp", grub_cmd_cp,
-                                      N_("FILE1 FILE2"),
-                                      N_("Copy file."));
-  cmd_rename = grub_register_command ("rename", grub_cmd_rename,
-                        N_("FILE FILE_NAME"),
-                        N_("Rename file/directory or move to other directory"));
-  cmd_rm = grub_register_command ("rm", grub_cmd_rm,
-                        N_("FILE | DIR"),
-                        N_("Remove a file or empty directory."));
-  cmd_mv = grub_register_command ("mv", grub_cmd_mv,
-                        N_("FILE1 FILE2"),
-                        N_("Move or rename file."));
-  cmd_touch = grub_register_command ("touch", grub_cmd_touch,
-                        N_("FILE [YEAR MONTH DAY HOUR MINUTE SECOND]"),
-                        N_("Change the timestamp of a file or directory."));
-  cmd_write = grub_register_command ("write_file", grub_cmd_write_file,
-                        N_("FILE STRING [OFFSET]"),
-                        N_("Write strings to file."));
+  fat_driver.mod = mod;
+  grub_writefs_register (&fat_driver);
   if (grub_lua_global_state)
-  {
-    lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-    luaL_register (grub_lua_global_state, "fat", fatlib);
-    lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-  }
+    {
+      lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
+      luaL_register (grub_lua_global_state, "fat", fatlib);
+      lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
+    }
 }
-
 GRUB_MOD_FINI(fatfs)
 {
-  grub_unregister_command (cmd_mount);
-  grub_unregister_command (cmd_umount);
-  grub_unregister_command (cmd_mkdir);
-  grub_unregister_command (cmd_cp);
-  grub_unregister_command (cmd_rename);
-  grub_unregister_command (cmd_rm);
-  grub_unregister_command (cmd_mv);
-  grub_unregister_command (cmd_touch);
-  grub_unregister_command (cmd_write);
+  grub_writefs_unregister (&fat_driver);
+  if (grub_lua_global_state)
+    { lua_pushnil (grub_lua_global_state); lua_setglobal (grub_lua_global_state, "fat"); }
 }

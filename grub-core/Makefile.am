@@ -82,6 +82,7 @@ KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/err.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/file.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/fileview.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/fs.h
+KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/writefs.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/i18n.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/kernel.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/list.h
@@ -395,6 +396,16 @@ fs.lst: $(MARKER_FILES)
 	done) | sort -u > $@
 platform_DATA += fs.lst
 CLEANFILES += fs.lst
+
+writefs.lst: $(MARKER_FILES)
+	(for pp in $^; do \
+	  b=`basename $$pp .marker`; \
+	  if grep 'WRITEFS_DRIVER_LIST_MARKER' $$pp >/dev/null 2>&1; then \
+	    echo $$b; \
+	  fi; \
+	done) | sort -u > $@
+platform_DATA += writefs.lst
+CLEANFILES += writefs.lst
 
 command.lst: $(MARKER_FILES)
 	(for pp in $^; do \

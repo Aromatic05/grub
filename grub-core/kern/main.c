@@ -28,6 +28,7 @@
 #include <grub/env.h>
 #include <grub/mm.h>
 #include <grub/command.h>
+#include <grub/writefs.h>
 #include <grub/reader.h>
 #include <grub/parser.h>
 #include <grub/verify.h>
@@ -357,6 +358,7 @@ grub_main (void)
   grub_boot_time ("After reclaiming module space.");
 
   grub_register_core_commands ();
+  grub_writefs_init ();
 
   grub_boot_time ("Before execution of embedded config.");
 

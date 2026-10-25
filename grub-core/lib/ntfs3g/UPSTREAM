@@ -1,0 +1,5 @@
+Source: https://github.com/pbatard/ntfs-3g
+Commit: 68c1da7ec35cfa3289bfbe3999fb31474494abce
+
+GRUB adaptation: replace firmware conditionals and config include; use GRUB
+device operations, runtime wrappers and logging. No EFI/FUSE dependencies.
