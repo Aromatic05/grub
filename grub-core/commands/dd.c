@@ -36,7 +36,7 @@
 #include <grub/extcmd.h>
 #include <grub/normal.h>
 #include <grub/i18n.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 #include <grub/port_write.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
@@ -237,252 +237,289 @@ fail:
 
 static grub_extcmd_t cmd;
 
-static int
-lua_disk_open (lua_State *state)
-{
-  grub_disk_t disk = 0;
-  const char *name;
-  char *str = NULL;
+/* Native disk I/O is deliberately independent of WriteFS.  This is an
+   explicit raw block-device API, not a file-system write entry point. */
+static grub_dl_t disk_module;
 
-  name = luaL_checkstring (state, 1);
-  str = grub_strdup (name);
-  if (!str)
-    return 0;
-  if (str[0] == '(')
-  {
-    str[grub_strlen (str) - 1] = 0;
-    disk = grub_disk_open (&str[1]);
-  }
-  else
-    disk = grub_disk_open (str);
-  save_errno (state);
-  grub_free (str);
+static void
+disk_handle_destroy (void *data)
+{
+  grub_disk_close (data);
+}
+
+static grub_disk_t
+disk_from_value (const struct grub_bind_value *value)
+{
+  return grub_bind_handle_data (value->value.handle, "disk");
+}
+
+static void
+disk_bind_string (struct grub_bind_value *result, const char *value, int owned)
+{
+  result->type = GRUB_BIND_STRING;
+  result->owned = owned;
+  result->value.bytes.data = value ? value : "";
+  result->value.bytes.size = grub_strlen (value ? value : "");
+}
+
+static grub_err_t
+bind_disk_open (grub_size_t argc __attribute__ ((unused)),
+                const struct grub_bind_value *args,
+                struct grub_bind_value *results, grub_size_t *nresults)
+{
+  const char *name = args[0].value.bytes.data;
+  grub_disk_t disk;
+  struct grub_bind_handle *handle;
+  char *bare = NULL;
+  grub_size_t len = args[0].value.bytes.size;
+
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  if (len >= 2 && name[0] == '(' && name[len - 1] == ')')
+    {
+      bare = grub_strndup (name + 1, len - 2);
+      if (!bare) return grub_errno;
+      name = bare;
+    }
+  disk = grub_disk_open (name);
+  grub_free (bare);
   if (!disk)
-    return 0;
-  lua_pushlightuserdata (state, disk);
-  return 1;
-}
-
-static int
-lua_disk_close (lua_State *state)
-{
-  grub_disk_t disk;
-
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  grub_disk_close (disk);
-
-  return push_result (state);
-}
-
-/* disk, sector, offset, len */
-static int
-lua_disk_read (lua_State *state)
-{
-  grub_disk_t disk;
-  char *b = NULL;
-  int len, sec, ofs;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  sec = luaL_checkinteger (state, 2);
-  ofs = luaL_checkinteger (state, 3);
-  len = luaL_checkinteger (state, 4);
-  b = grub_malloc (len);
-  if (! b)
-    return 0;
-  grub_disk_read (disk, sec, ofs, len, b);
-  save_errno (state);
-  lua_pushstring (state, b);
-  grub_free (b);
-  return 1;
-}
-
-/* disk, sector, offset, size, buf */
-static int
-lua_disk_write (lua_State *state)
-{
-  grub_disk_t disk;
-  const char *buf = NULL;
-  int len, sec, ofs;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  sec = luaL_checkinteger (state, 2);
-  ofs = luaL_checkinteger (state, 3);
-  len = luaL_checkinteger (state, 4);
-  buf = luaL_checkstring (state, 5);
-  grub_disk_write (disk, sec, ofs, len, buf);
-  save_errno (state);
-  return 0;
-}
-
-static int
-lua_disk_partmap (lua_State *state)
-{
-  grub_disk_t disk;
-  const char *buf = "none";
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  if (disk->partition && disk->partition->partmap)
-    buf = disk->partition->partmap->name;
-  lua_pushstring (state, buf);
-  return 1;
-}
-
-static int
-lua_disk_driver (lua_State *state)
-{
-  grub_disk_t disk;
-  const char *buf = "none";
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  if (disk->dev)
-    buf = disk->dev->name;
-  lua_pushstring (state, buf);
-  return 1;
-}
-
-static int
-lua_disk_fs (lua_State *state)
-{
-  grub_disk_t disk;
-  struct grub_device dev = {NULL, NULL};
-  grub_fs_t fs;
-  const char *buf = "none";
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  dev.disk = disk;
-  fs = grub_fs_probe (&dev);
-  if (fs)
-    buf = fs->name;
-  lua_pushstring (state, buf);
-  return 1;
-}
-
-static int
-lua_disk_fsuuid (lua_State *state)
-{
-  grub_disk_t disk;
-  struct grub_device dev = {NULL, NULL};
-  grub_fs_t fs;
-  char *buf = NULL;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  dev.disk = disk;
-  fs = grub_fs_probe (&dev);
-  if (fs && fs->fs_uuid)
-    fs->fs_uuid (&dev, &buf);
-  if (buf)
-  {
-    lua_pushstring (state, buf);
-    grub_free (buf);
-  }
-  else
-    lua_pushstring (state, "");
-  return 1;
-}
-
-static int
-lua_disk_label (lua_State *state)
-{
-  grub_disk_t disk;
-  struct grub_device dev = {NULL, NULL};
-  grub_fs_t fs;
-  char *buf = NULL;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  dev.disk = disk;
-  fs = grub_fs_probe (&dev);
-  if (fs && fs->fs_label)
-    fs->fs_label (&dev, &buf);
-  if (buf)
-  {
-    lua_pushstring (state, buf);
-    grub_free (buf);
-  }
-  else
-    lua_pushstring (state, "");
-  return 1;
-}
-
-static int
-lua_disk_size (lua_State *state)
-{
-  grub_disk_t disk;
-  char buf[32];
-  unsigned long long size;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  size = grub_disk_native_sectors (disk) << GRUB_DISK_SECTOR_BITS;
-  if (lua_gettop (state) > 1)
-    grub_snprintf (buf, 32, "%s", grub_get_human_size (size, GRUB_HUMAN_SIZE_SHORT));
-  else
-    grub_snprintf (buf, 32, "%llu", size);
-  lua_pushstring (state, buf);
-  return 1;
-}
-
-static int
-lua_disk_bootable (lua_State *state)
-{
-  grub_disk_t disk;
-  grub_partition_t p;
-  int boot = 0;
-
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  p = disk ? disk->partition : 0;
-
-  if (p && p->partmap && grub_strcmp (p->partmap->name, "msdos") == 0)
     {
-      struct grub_msdos_partition_mbr mbr;
-      if (p->index >= 0 && p->index < 4
-          && grub_disk_read (disk, p->offset, 0, sizeof (mbr), &mbr) == 0)
-        boot = (mbr.entries[p->index].flag & 0x80) ? 1 : 0;
+      /* Legacy disk.open returns nil for disks that cannot be opened. */
       grub_errno = GRUB_ERR_NONE;
+      return GRUB_ERR_NONE;
     }
-  else if (p && p->partmap && grub_strcmp (p->partmap->name, "gpt") == 0)
+  handle = grub_bind_handle_create (disk_module, "disk", disk,
+                                   disk_handle_destroy);
+  if (!handle)
     {
-      struct grub_gpt_partentry entry;
-      grub_packed_guid_t efi_guid = GRUB_GPT_PARTITION_TYPE_EFI_SYSTEM;
-      if (grub_disk_read (disk, p->offset, p->index, sizeof (entry), &entry) == 0
-          && grub_memcmp (&entry.type, &efi_guid, sizeof (efi_guid)) == 0)
-        boot = 1;
-      grub_errno = GRUB_ERR_NONE;
+      grub_disk_close (disk);
+      return grub_errno;
     }
-
-  lua_pushboolean (state, boot);
-  return 1;
+  results[0].type = GRUB_BIND_HANDLE;
+  results[0].value.handle = handle;
+  return GRUB_ERR_NONE;
 }
 
-static luaL_Reg disklib[] =
+static grub_err_t
+bind_disk_close (grub_size_t argc __attribute__ ((unused)),
+                 const struct grub_bind_value *args,
+                 struct grub_bind_value *results __attribute__ ((unused)),
+                 grub_size_t *nresults)
 {
-  {"open", lua_disk_open},
-  {"close", lua_disk_close},
-  {"read", lua_disk_read},
-  {"write", lua_disk_write},
-  {"partmap", lua_disk_partmap},
-  {"driver", lua_disk_driver},
-  {"fs", lua_disk_fs},
-  {"fsuuid", lua_disk_fsuuid},
-  {"label", lua_disk_label},
-  {"size", lua_disk_size},
-  {"bootable", lua_disk_bootable},
-  {0, 0}
+  *nresults = 0;
+  if (!disk_from_value (&args[0])) return grub_errno;
+  return grub_bind_handle_close (args[0].value.handle);
+}
+
+static grub_err_t
+bind_disk_read (grub_size_t argc __attribute__ ((unused)),
+                const struct grub_bind_value *args,
+                struct grub_bind_value *results, grub_size_t *nresults)
+{
+  grub_disk_t disk = disk_from_value (&args[0]);
+  grub_uint64_t length = args[3].value.u64;
+  grub_uint64_t offset = args[2].value.u64;
+  void *buffer;
+  grub_err_t err;
+  if (!disk) return grub_errno;
+  if ((grub_size_t) length != length || offset > 0x7fffffffffffffffULL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "raw disk read range too large");
+  if (!length)
+    buffer = NULL;
+  else
+    {
+      buffer = grub_malloc ((grub_size_t) length);
+      if (!buffer) return grub_errno;
+      err = grub_disk_read (disk, args[1].value.u64, offset, length, buffer);
+      if (err)
+        {
+          grub_free (buffer);
+          return err;
+        }
+    }
+  results[0].type = GRUB_BIND_BYTES;
+  results[0].owned = buffer != NULL;
+  results[0].value.bytes.data = buffer ? buffer : "";
+  results[0].value.bytes.size = length;
+  *nresults = 1;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+bind_disk_write (grub_size_t argc __attribute__ ((unused)),
+                 const struct grub_bind_value *args,
+                 struct grub_bind_value *results __attribute__ ((unused)),
+                 grub_size_t *nresults)
+{
+  grub_disk_t disk = disk_from_value (&args[0]);
+  grub_uint64_t length = args[3].value.u64;
+  grub_uint64_t offset = args[2].value.u64;
+  if (!disk) return grub_errno;
+  if (length > args[4].value.bytes.size ||
+      (grub_size_t) length != length || offset > 0x7fffffffffffffffULL)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid raw disk write size");
+  *nresults = 0;
+  if (!length) return GRUB_ERR_NONE;
+  return grub_disk_write (disk, args[1].value.u64, offset, length,
+                          args[4].value.bytes.data);
+}
+
+enum disk_query
+{
+  DISK_PARTMAP, DISK_DRIVER, DISK_FS, DISK_UUID, DISK_LABEL, DISK_SIZE,
+  DISK_BOOTABLE
+};
+
+static grub_err_t
+bind_disk_query (const struct grub_bind_value *args,
+                 struct grub_bind_value *results, grub_size_t *nresults,
+                 enum disk_query query, int human)
+{
+  grub_disk_t disk = disk_from_value (&args[0]);
+  struct grub_device dev = { NULL, NULL };
+  grub_fs_t fs;
+  char *value = NULL;
+  const char *text = "";
+  int owned = 0, bootable = 0;
+  if (!disk) return grub_errno;
+  dev.disk = disk;
+  switch (query)
+    {
+    case DISK_PARTMAP:
+      text = disk->partition && disk->partition->partmap ?
+        disk->partition->partmap->name : "none";
+      break;
+    case DISK_DRIVER:
+      text = disk->dev ? disk->dev->name : "none";
+      break;
+    case DISK_FS:
+    case DISK_UUID:
+    case DISK_LABEL:
+      fs = grub_fs_probe (&dev);
+      if (query == DISK_FS)
+        text = fs ? fs->name : "none";
+      else if (fs)
+        {
+          if (query == DISK_UUID && fs->fs_uuid)
+            fs->fs_uuid (&dev, &value);
+          if (query == DISK_LABEL && fs->fs_label)
+            fs->fs_label (&dev, &value);
+          text = value ? value : "";
+          owned = value != NULL;
+        }
+      /* A disk without a recognized filesystem is not a script error. */
+      grub_errno = GRUB_ERR_NONE;
+      break;
+    case DISK_SIZE:
+      {
+        grub_uint64_t size = grub_disk_native_sectors (disk) <<
+                             GRUB_DISK_SECTOR_BITS;
+        char buf[40];
+        const char *formatted;
+        if (human)
+          formatted = grub_get_human_size (size, GRUB_HUMAN_SIZE_SHORT);
+        else
+          {
+            grub_snprintf (buf, sizeof (buf), "%llu",
+                           (unsigned long long) size);
+            formatted = buf;
+          }
+        value = grub_strdup (formatted);
+        if (!value) return grub_errno;
+        text = value;
+        owned = 1;
+      }
+      break;
+    case DISK_BOOTABLE:
+      {
+        grub_partition_t p = disk->partition;
+        if (p && p->partmap && !grub_strcmp (p->partmap->name, "msdos"))
+          {
+            struct grub_msdos_partition_mbr mbr;
+            if (p->index >= 0 && p->index < 4 &&
+                !grub_disk_read (disk, p->offset, 0, sizeof (mbr), &mbr))
+              bootable = !!(mbr.entries[p->index].flag & 0x80);
+            grub_errno = GRUB_ERR_NONE;
+          }
+        else if (p && p->partmap && !grub_strcmp (p->partmap->name, "gpt"))
+          {
+            struct grub_gpt_partentry entry;
+            grub_packed_guid_t efi_guid = GRUB_GPT_PARTITION_TYPE_EFI_SYSTEM;
+            if (!grub_disk_read (disk, p->offset, p->index,
+                                 sizeof (entry), &entry) &&
+                !grub_memcmp (&entry.type, &efi_guid, sizeof (efi_guid)))
+              bootable = 1;
+            grub_errno = GRUB_ERR_NONE;
+          }
+        results[0].type = GRUB_BIND_BOOL;
+        results[0].value.boolean = bootable;
+        *nresults = 1;
+        return GRUB_ERR_NONE;
+      }
+    }
+  disk_bind_string (&results[0], text, owned);
+  *nresults = 1;
+  return GRUB_ERR_NONE;
+}
+
+#define DISK_QUERY_CALLBACK(name, kind) \
+  static grub_err_t \
+  bind_disk_##name (grub_size_t argc __attribute__ ((unused)), \
+                    const struct grub_bind_value *args, \
+                    struct grub_bind_value *results, grub_size_t *nresults) \
+  { return bind_disk_query (args, results, nresults, kind, 0); }
+
+DISK_QUERY_CALLBACK(partmap, DISK_PARTMAP)
+DISK_QUERY_CALLBACK(driver, DISK_DRIVER)
+DISK_QUERY_CALLBACK(fs, DISK_FS)
+DISK_QUERY_CALLBACK(fsuuid, DISK_UUID)
+DISK_QUERY_CALLBACK(label, DISK_LABEL)
+DISK_QUERY_CALLBACK(bootable, DISK_BOOTABLE)
+
+static grub_err_t
+bind_disk_size (grub_size_t argc, const struct grub_bind_value *args,
+                struct grub_bind_value *results, grub_size_t *nresults)
+{
+  return bind_disk_query (args, results, nresults, DISK_SIZE,
+                          argc > 1);
+}
+
+static const enum grub_bind_type disk_open_args[] = { GRUB_BIND_STRING };
+static const enum grub_bind_type disk_handle_args[] = { GRUB_BIND_HANDLE };
+static const enum grub_bind_type disk_read_args[] =
+  { GRUB_BIND_HANDLE, GRUB_BIND_U64, GRUB_BIND_U64, GRUB_BIND_U64 };
+static const enum grub_bind_type disk_write_args[] =
+  { GRUB_BIND_HANDLE, GRUB_BIND_U64, GRUB_BIND_U64, GRUB_BIND_U64,
+    GRUB_BIND_BYTES };
+static const enum grub_bind_type disk_size_args[] =
+  { GRUB_BIND_HANDLE, GRUB_BIND_BOOL };
+static const struct grub_bind_export disk_exports[] =
+{
+  { "disk", "open",     disk_open_args,   1, 1, bind_disk_open },
+  { "disk", "close",    disk_handle_args, 1, 1, bind_disk_close },
+  { "disk", "read",     disk_read_args,   4, 4, bind_disk_read },
+  { "disk", "write",    disk_write_args,  5, 5, bind_disk_write },
+  { "disk", "partmap",  disk_handle_args, 1, 1, bind_disk_partmap },
+  { "disk", "driver",   disk_handle_args, 1, 1, bind_disk_driver },
+  { "disk", "fs",       disk_handle_args, 1, 1, bind_disk_fs },
+  { "disk", "fsuuid",   disk_handle_args, 1, 1, bind_disk_fsuuid },
+  { "disk", "label",    disk_handle_args, 1, 1, bind_disk_label },
+  { "disk", "size",     disk_size_args,   1, 2, bind_disk_size },
+  { "disk", "bootable", disk_handle_args, 1, 1, bind_disk_bootable }
 };
 
 GRUB_MOD_INIT(dd)
 {
   cmd = grub_register_extcmd ("dd", grub_cmd_dd, 0,
                               N_("[OPTIONS]"), N_("Copy data."), options);
-  if (grub_lua_global_state)
-  {
-    lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-    luaL_register (grub_lua_global_state, "disk", disklib);
-    lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-  }
+  disk_module = mod;
+  grub_bind_register (mod, disk_exports, 11);
 }
 
 GRUB_MOD_FINI(dd)
 {
+  grub_bind_unregister (disk_module);
+  disk_module = NULL;
   grub_unregister_extcmd (cmd);
 }
