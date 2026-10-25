@@ -73,6 +73,89 @@ p.joinpath('bind-ini-close.lua').write_text(
 p.joinpath('bind-ini-stale.lua').write_text(
     'assert(not pcall(bind_saved_ini, nil, "section", "key"))\n'
     'assert(ini.get == nil)\n')
+p.joinpath('bind-disk.lua').write_text(
+    'bind_disk = disk.open("(" .. grub.getenv("fat") .. ")")\n'
+    'assert(type(bind_disk) == "userdata")\n'
+    'assert(type(disk.partmap(bind_disk)) == "string")\n'
+    'assert(type(disk.driver(bind_disk)) == "string")\n'
+    'assert(type(disk.fs(bind_disk)) == "string")\n'
+    'assert(type(disk.fsuuid(bind_disk)) == "string")\n'
+    'assert(type(disk.label(bind_disk)) == "string")\n'
+    'assert(type(disk.size(bind_disk)) == "string")\n'
+    'assert(type(disk.size(bind_disk, true)) == "string")\n'
+    'assert(type(disk.bootable(bind_disk)) == "boolean")\n'
+    'local original = disk.read(bind_disk, 0, 0, 64)\n'
+    'assert(#original == 64 and original:find(string.char(0), 1, true))\n'
+    'assert(disk.write(bind_disk, 0, 0, #original, original) == nil)\n'
+    'assert(disk.read(bind_disk, 0, 0, 64) == original)\n'
+    'assert(not pcall(disk.write, bind_disk, 0, 0, 128, original))\n'
+    'assert(not pcall(disk.read, bind_disk, -1, 0, 1))\n'
+    'bind_disk_saved = disk.read\n')
+p.joinpath('bind-disk-close.lua').write_text(
+    'disk.close(bind_disk)\n'
+    'assert(not pcall(disk.close, bind_disk))\n'
+    'assert(not pcall(disk.read, bind_disk, 0, 0, 1))\n'
+    'bind_disk = nil\n'
+    'collectgarbage("collect")\n')
+p.joinpath('bind-disk-stale.lua').write_text(
+    'assert(not pcall(bind_disk_saved, nil, 0, 0, 1))\n'
+    'assert(disk.read == nil)\n')
+p.joinpath('bind-memory.lua').write_text(
+    'assert(type(memrw.read_byte) == "function")\n'
+    'assert(type(memrw.read_word) == "function")\n'
+    'assert(type(memrw.read_dword) == "function")\n'
+    'assert(type(memrw.write_byte) == "function")\n'
+    'assert(type(memrw.write_word) == "function")\n'
+    'assert(type(memrw.write_dword) == "function")\n'
+    'assert(not pcall(memrw.read_byte, {}))\n'
+    'assert(not pcall(memrw.write_byte, {}, 1))\n'
+    'assert(not pcall(memrw.write_dword, -1, 1))\n'
+    'assert(not pcall(memrw.read_byte, "18446744073709551616"))\n'
+    'bind_mem_saved = memrw.read_byte\n')
+p.joinpath('bind-memory-stale.lua').write_text(
+    'assert(not pcall(bind_mem_saved, 0))\n'
+    'assert(memrw.read_byte == nil)\n')
+p.joinpath('bind-efi-open.lua').write_text(
+    'assert(type(efi.vendor()) == "string")\n'
+    'assert(type(efi.version()) == "string")\n'
+    'bind_efi_path = efi.getdp(bind_disk)\n'
+    'assert(type(bind_efi_path) == "userdata")\n'
+    'assert(type(efi.dptostr(bind_efi_path)) == "string")\n'
+    'assert(not pcall(efi.dptostr, bind_disk))\n')
+p.joinpath('bind-efi-after-disk.lua').write_text(
+    'assert(type(efi.dptostr(bind_efi_path)) == "string")\n'
+    'bind_efi_path = nil\n'
+    'collectgarbage("collect")\n')
+p.joinpath('bind-video.lua').write_text(
+    'local w, h = video.get_info()\n'
+    'assert(type(w) == "number" and type(h) == "number")\n'
+    'assert(not pcall(video.draw_pixel, {r="bad",g=0,b=0}, 0, 0))\n'
+    'local bitmap = video.bitmap_load("(" .. grub.getenv("esp") .. ")/bind.bmp")\n'
+    'assert(type(bitmap) == "userdata")\n'
+    'local bw, bh = video.bitmap_info(bitmap)\n'
+    'assert(bw == 2 and bh == 2)\n'
+    'local scaled = video.bitmap_rescale(bitmap, 4, 4)\n'
+    'assert(type(scaled) == "userdata")\n'
+    'local sw, sh = video.bitmap_info(scaled)\n'
+    'assert(sw == 4 and sh == 4)\n'
+    'bind_video_bitmap = bitmap\n'
+    'bind_video_scaled = scaled\n'
+    'bind_video_saved = video.bitmap_info\n')
+p.joinpath('bind-video-close.lua').write_text(
+    'video.bitmap_close(bind_video_bitmap)\n'
+    'assert(not pcall(video.bitmap_info, bind_video_bitmap))\n'
+    'assert(not pcall(video.bitmap_close, bind_video_bitmap))\n'
+    'video.bitmap_close(bind_video_scaled)\n'
+    'bind_video_bitmap = nil\n'
+    'bind_video_scaled = nil\n'
+    'collectgarbage("collect")\n')
+p.joinpath('bind-video-stale.lua').write_text(
+    'assert(not pcall(bind_video_saved, nil))\n'
+    'assert(video.bitmap_info == nil)\n')
+p.joinpath('bind.bmp').write_bytes(
+    __import__('struct').pack('<2sIHHI', b'BM', 70, 0, 0, 54) +
+    __import__('struct').pack('<IiiHHIIiiII', 40, 2, 2, 1, 24, 0, 16, 0, 0, 0, 0) +
+    bytes([0,0,255, 0,255,0, 0,0, 255,0,0, 255,255,255, 0,0]))
 p.joinpath('bind-ini-reload.lua').write_text(
     'local h = ini.load("(" .. grub.getenv("esp") .. ")/bind.ini")\n'
     'assert(h ~= nil)\n'
@@ -125,7 +208,7 @@ PY
 truncate -s 64M "$work/esp.img"
 mkfs.fat -F 16 -n WFESP "$work/esp.img" > "$work/mkfs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT
-for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua bind.ini; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
+for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua bind.ini bind.bmp; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
 for file in "$work"/bind-*.lua; do mcopy -i "$work/esp.img" "$file" "::/$(basename "$file")"; done
 truncate -s 32M "$work/fat.img"
 mkfs.fat -F 16 -n WFFAT "$work/fat.img" >> "$work/mkfs.log" 2>&1
@@ -186,7 +269,7 @@ import sys
 Path(sys.argv[1]).write_bytes(bytes(4000 * 1024))
 PY
 mcopy -i "$work/full.img" "$work/filler" ::/filler
-python3 - "$work/grub.cfg" <<'PY'
+python3 - "$work/grub.cfg" "$platform" <<'PY'
 from pathlib import Path
 import sys
 lines = ['serial --speed=115200', 'terminal_input serial', 'terminal_output serial', 'set pager=0', 'echo WF_BEGIN']
@@ -226,6 +309,30 @@ ok('lua ($esp)/bind-runtime-reload.lua', 'BIND_LUA_REATTACH')
 ok('insmod wimboot', 'BIND_WIM_LOAD')
 ok('lua ($esp)/bind-wim.lua', 'BIND_WIM_CALL')
 ok('rmmod wimboot', 'BIND_WIM_UNLOAD')
+ok('insmod dd', 'BIND_DISK_LOAD')
+ok('lua ($esp)/bind-disk.lua', 'BIND_DISK_READ_WRITE')
+bad('rmmod dd', 'BIND_DISK_PINNED')
+if sys.argv[2] == 'x86_64-efi':
+    ok('insmod dp', 'BIND_EFI_LOAD')
+    ok('lua ($esp)/bind-efi-open.lua', 'BIND_EFI_COPY')
+    bad('rmmod dp', 'BIND_EFI_PINNED')
+ok('lua ($esp)/bind-disk-close.lua', 'BIND_DISK_CLOSE')
+ok('rmmod dd', 'BIND_DISK_UNLOAD')
+ok('lua ($esp)/bind-disk-stale.lua', 'BIND_DISK_STALE')
+if sys.argv[2] == 'x86_64-efi':
+    ok('lua ($esp)/bind-efi-after-disk.lua', 'BIND_EFI_SURVIVES_DISK_CLOSE')
+    ok('rmmod dp', 'BIND_EFI_UNLOAD')
+ok('insmod memrw', 'BIND_MEMORY_LOAD')
+ok('lua ($esp)/bind-memory.lua', 'BIND_MEMORY_TYPES')
+ok('rmmod memrw', 'BIND_MEMORY_UNLOAD')
+ok('lua ($esp)/bind-memory-stale.lua', 'BIND_MEMORY_STALE')
+ok('insmod videoinfo', 'BIND_VIDEO_LOAD')
+ok('insmod bmp', 'BIND_BMP_READER')
+ok('lua ($esp)/bind-video.lua', 'BIND_VIDEO_BITMAP')
+bad('rmmod videoinfo', 'BIND_VIDEO_PINNED')
+ok('lua ($esp)/bind-video-close.lua', 'BIND_VIDEO_CLOSE')
+ok('rmmod videoinfo', 'BIND_VIDEO_UNLOAD')
+ok('lua ($esp)/bind-video-stale.lua', 'BIND_VIDEO_STALE')
 ok('mount ($fat) 1', 'MOUNT_FAT')
 ok('mount ($ntfs) 2', 'MOUNT_NTFS')
 ok('mount ($exfat) 3', 'MOUNT_EXFAT')
@@ -315,7 +422,8 @@ ok('umount 2', 'NTFS_REUNMOUNT')
 lines.extend(['echo WF_DONE','halt'])
 Path(sys.argv[1]).write_text('\n'.join(lines)+'\n')
 PY
-mods='serial terminal normal echo test halt fat exfat ntfs ntfscomp part_msdos part_gpt search search_label cmp fatfs ntfs3g lua conv ini getkey wimboot minicmd'
+mods='serial terminal normal echo test halt fat exfat ntfs ntfscomp part_msdos part_gpt search search_label cmp fatfs ntfs3g lua conv ini getkey wimboot dd memrw videoinfo bmp bitmap bitmap_scale video font gfxmenu minicmd'
+if test "$platform" = x86_64-efi; then mods="$mods dp"; fi
 case "$platform" in
   x86_64-efi)
     "$build/grub-mkstandalone" -O x86_64-efi -d "$build/grub-core" \
