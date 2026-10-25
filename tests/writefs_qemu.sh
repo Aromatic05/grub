@@ -26,6 +26,59 @@ p.joinpath('huge.bin').write_bytes(bytes(range(256)) * 32768)
 p.joinpath('gap.bin').write_bytes(b'hello' + bytes(4091) + b'END')
 p.joinpath('hiberfil.sys').write_bytes(b'hibr' + bytes(4092))
 p.joinpath('invalid-upcase').write_bytes(b'X')
+p.joinpath('bind.ini').write_text('[section]\nkey=hello\n')
+p.joinpath('bind-runtime-reload.lua').write_text(
+    'assert(gbk.toutf8("Hello") == "Hello")\n'
+    'assert(type(ini.get) == "function")\n'
+    'assert(type(input.getkey_noblock) == "function")\n'
+    'assert(type(writefs.supported) == "function")\n')
+p.joinpath('bind-input.lua').write_text(
+    'local a, b = input.getkey_noblock()\n'
+    'assert(type(a) == "number" and type(b) == "number")\n'
+    'assert(a >= 0 and a <= 255 and b >= 0 and b <= 255)\n')
+p.joinpath('bind-wim.lua').write_text(
+    'assert(wim.file_exist("(missing)/not-a-wim", "/Windows") == false)\n'
+    'assert(wim.is64("(missing)/not-a-wim") == false)\n'
+    'assert(wim.image_count("(missing)/not-a-wim") == 0)\n'
+    'assert(wim.boot_index("(missing)/not-a-wim") == 0)\n')
+p.joinpath('bind-before.lua').write_text(
+    'assert(gbk == nil)\n'
+    'assert(ini == nil)\n'
+    'assert(writefs ~= nil)\n')
+p.joinpath('bind-conv.lua').write_text(
+    'assert(gbk.fromutf8("Hello") == "Hello")\n'
+    'assert(gbk.toutf8("Hello") == "Hello")\n'
+    'assert(gbk.tosimp("Hello") == "Hello")\n'
+    'assert(not pcall(gbk.toutf8, 42))\n'
+    'bind_saved_gbk = gbk.toutf8\n')
+p.joinpath('bind-stale-conv.lua').write_text(
+    'assert(not pcall(bind_saved_gbk, "Hello"))\n'
+    'assert(gbk.toutf8 == nil)\n')
+p.joinpath('bind-reload-conv.lua').write_text(
+    'assert(gbk.toutf8("Hello") == "Hello")\n'
+    'assert(not pcall(bind_saved_gbk, "Hello"))\n')
+p.joinpath('bind-ini-open.lua').write_text(
+    'bind_ini_handle = ini.load("(" .. grub.getenv("esp") .. ")/bind.ini")\n'
+    'assert(type(bind_ini_handle) == "userdata")\n'
+    'assert(ini.get(bind_ini_handle, "section", "key") == "hello")\n'
+    'bind_saved_ini = ini.get\n')
+p.joinpath('bind-ini-pinned.lua').write_text(
+    'assert(ini.get(bind_ini_handle, "section", "key") == "hello")\n')
+p.joinpath('bind-ini-close.lua').write_text(
+    'ini.free(bind_ini_handle)\n'
+    'assert(not pcall(ini.free, bind_ini_handle))\n'
+    'assert(not pcall(ini.get, bind_ini_handle, "section", "key"))\n'
+    'bind_ini_handle = nil\n'
+    'collectgarbage("collect")\n')
+p.joinpath('bind-ini-stale.lua').write_text(
+    'assert(not pcall(bind_saved_ini, nil, "section", "key"))\n'
+    'assert(ini.get == nil)\n')
+p.joinpath('bind-ini-reload.lua').write_text(
+    'local h = ini.load("(" .. grub.getenv("esp") .. ")/bind.ini")\n'
+    'assert(h ~= nil)\n'
+    'assert(ini.get(h, "section", "key") == "hello")\n'
+    'assert(not pcall(bind_saved_ini, h, "section", "key"))\n'
+    'ini.free(h)\n')
 p.joinpath('supported.lua').write_text(
     'assert(fat == nil)\n'
     'local expected = {fat12=true, fat16=true, fat32=true, exfat=true, ntfs=true}\n'
@@ -72,7 +125,8 @@ PY
 truncate -s 64M "$work/esp.img"
 mkfs.fat -F 16 -n WFESP "$work/esp.img" > "$work/mkfs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT
-for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
+for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua bind.ini; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
+for file in "$work"/bind-*.lua; do mcopy -i "$work/esp.img" "$file" "::/$(basename "$file")"; done
 truncate -s 32M "$work/fat.img"
 mkfs.fat -F 16 -n WFFAT "$work/fat.img" >> "$work/mkfs.log" 2>&1
 truncate -s 64M "$work/exfat.img"
@@ -147,7 +201,31 @@ ok('insmod ntfs', 'NTFS_READER')
 ok('insmod exfat', 'EXFAT_READER')
 for label, var in [('WFESP','esp'),('WFFAT','fat'),('WFEXFAT','exfat'),('WFNTFS','ntfs'),('WFFULL','full'),('WFNTFS4K','ntfs4k'),('WFHIBER','hiber'),('WFDIRTY','dirty'),('WFREADONLY','readonly'),('WFNTFSFULL','ntfsfull'),('WFBADUPCASE','badupcase')]:
     ok(f'search --no-floppy --label --set={var} {label}', f'FIND_{var}')
+ok('insmod getkey', 'BIND_INPUT_PRELOAD')
 ok('lua ($esp)/supported.lua', 'FILESYSTEMS_LUA')
+ok('lua ($esp)/bind-input.lua', 'BIND_INPUT_CALL')
+ok('lua ($esp)/bind-before.lua', 'BIND_BEFORE')
+ok('insmod conv', 'BIND_CONV_LOAD')
+ok('lua ($esp)/bind-conv.lua', 'BIND_CONV_CALL')
+ok('rmmod conv', 'BIND_CONV_UNLOAD')
+ok('lua ($esp)/bind-stale-conv.lua', 'BIND_CONV_STALE')
+ok('insmod conv', 'BIND_CONV_RELOAD')
+ok('lua ($esp)/bind-reload-conv.lua', 'BIND_CONV_FRESH')
+ok('insmod ini', 'BIND_INI_LOAD')
+ok('lua ($esp)/bind-ini-open.lua', 'BIND_INI_OPEN')
+bad('rmmod ini', 'BIND_INI_PINNED_BLOCKS_UNLOAD')
+ok('lua ($esp)/bind-ini-pinned.lua', 'BIND_INI_PIN_VALID')
+ok('lua ($esp)/bind-ini-close.lua', 'BIND_INI_CLOSE')
+ok('rmmod ini', 'BIND_INI_UNLOAD')
+ok('lua ($esp)/bind-ini-stale.lua', 'BIND_INI_STALE')
+ok('insmod ini', 'BIND_INI_RELOAD')
+ok('lua ($esp)/bind-ini-reload.lua', 'BIND_INI_FRESH')
+ok('rmmod lua', 'BIND_LUA_UNLOAD')
+ok('insmod lua', 'BIND_LUA_RELOAD')
+ok('lua ($esp)/bind-runtime-reload.lua', 'BIND_LUA_REATTACH')
+ok('insmod wimboot', 'BIND_WIM_LOAD')
+ok('lua ($esp)/bind-wim.lua', 'BIND_WIM_CALL')
+ok('rmmod wimboot', 'BIND_WIM_UNLOAD')
 ok('mount ($fat) 1', 'MOUNT_FAT')
 ok('mount ($ntfs) 2', 'MOUNT_NTFS')
 ok('mount ($exfat) 3', 'MOUNT_EXFAT')
@@ -237,7 +315,7 @@ ok('umount 2', 'NTFS_REUNMOUNT')
 lines.extend(['echo WF_DONE','halt'])
 Path(sys.argv[1]).write_text('\n'.join(lines)+'\n')
 PY
-mods='serial terminal normal echo test halt fat exfat ntfs ntfscomp part_msdos part_gpt search search_label cmp fatfs ntfs3g lua minicmd'
+mods='serial terminal normal echo test halt fat exfat ntfs ntfscomp part_msdos part_gpt search search_label cmp fatfs ntfs3g lua conv ini getkey wimboot minicmd'
 case "$platform" in
   x86_64-efi)
     "$build/grub-mkstandalone" -O x86_64-efi -d "$build/grub-core" \
