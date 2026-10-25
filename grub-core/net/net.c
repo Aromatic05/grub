@@ -1476,6 +1476,12 @@ grub_net_open_real (const char *name)
 	{
 	  protnamelen = comma - name;
 	  server = comma + 1;
+	  /* (http,)/path and (https,)/path mean the default network server,
+	     just like the already supported (http)/path spelling. */
+	  if (!*server &&
+	      ((comma - name == 4 && !grub_memcmp (name, "http", 4)) ||
+	       (comma - name == 5 && !grub_memcmp (name, "https", 5))))
+	    server = grub_net_default_server;
 	  protname = name;
 	}
       else
@@ -1636,8 +1642,10 @@ grub_net_open_real (const char *name)
 	  if (skip)
 	    continue;
 
-	  if (sizeof ("http") - 1 == protnamelen
-	      && grub_memcmp ("http", protname, protnamelen) == 0)
+	  if ((sizeof ("http") - 1 == protnamelen
+	       && grub_memcmp ("http", protname, protnamelen) == 0)
+	      || (sizeof ("https") - 1 == protnamelen
+	          && grub_memcmp ("https", protname, protnamelen) == 0))
 	    {
 	      grub_dl_load ("http");
 	      grub_errno = GRUB_ERR_NONE;
@@ -1733,8 +1741,10 @@ grub_net_fs_close (grub_file_t file)
       grub_netbuff_free (file->device->net->packs.first->nb);
       grub_net_remove_packet (file->device->net->packs.first);
     }
-  if (!file->device->net->broken)
-    file->device->net->protocol->close (file);
+  /* A broken network transfer still owns its protocol state, sockets and
+     module references. Closing only successful streams leaked these
+     resources, especially when HTTPS parsing or certificate I/O failed. */
+  file->device->net->protocol->close (file);
   grub_free (file->device->net->name);
   return GRUB_ERR_NONE;
 }
@@ -1866,6 +1876,7 @@ grub_net_fs_read_real (grub_file_t file, char *buf, grub_size_t len)
   char *ptr = buf;
   grub_size_t amount, total = 0;
   int try = 0;
+  grub_err_t err;
 
   while (try <= GRUB_NET_TRIES)
     {
@@ -1897,12 +1908,19 @@ grub_net_fs_read_real (grub_file_t file, char *buf, grub_size_t len)
 	  if (!len)
 	    {
 	      if (net->protocol->packets_pulled)
-		net->protocol->packets_pulled (file);
+		{
+		  err = net->protocol->packets_pulled (file);
+		  if (err && !total) return -1;
+		}
 	      return total;
 	    }
 	}
       if (net->protocol->packets_pulled)
-	net->protocol->packets_pulled (file);
+	{
+	  err = net->protocol->packets_pulled (file);
+	  if (err)
+	    return total ? (grub_ssize_t) total : -1;
+	}
 
       if (!net->eof)
 	{
