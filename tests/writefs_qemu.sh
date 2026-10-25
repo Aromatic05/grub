@@ -180,6 +180,53 @@ p.joinpath('supported.lua').write_text(
     '  count = count + 1\n'
     'end\n'
     'assert(count == 5)\n')
+p.joinpath('discovery.lua').write_text(
+    'local original = grub.getenv("prefix")\n'
+    'assert(type(original) == "string")\n'
+    'local installed = writefs.supported()\n'
+    'local present = {}\n'
+    'for _, fs in ipairs(installed) do\n'
+    '  assert(not present[fs.name], "duplicate manifest entry")\n'
+    '  present[fs.name] = fs.loaded\n'
+    'end\n'
+    'assert(#installed == 5)\n'
+    'grub.setenv("prefix", "(invalid-writefs-manifest)")\n'
+    'local ok, loaded = pcall(writefs.supported)\n'
+    'grub.setenv("prefix", original)\n'
+    'assert(ok and #loaded == 5)\n'
+    'for _, fs in ipairs(loaded) do\n'
+    '  assert(present[fs.name] == true and fs.loaded)\n'
+    'end\n')
+p.joinpath('volumes.lua').write_text(
+    'assert(writefs.disk_status(9) == nil)\n'
+    'for _, entry in ipairs({{1,"WFFAT"},{2,"WFNTFS"},{3,"WFEXFAT"}}) do\n'
+    '  local n, old_label = entry[1], entry[2]\n'
+    '  assert(type(writefs.disk_status(n)) == "string")\n'
+    '  assert(writefs.get_label(n) == old_label, old_label)\n'
+    '  writefs.set_label(n, "WFCHANGE")\n'
+    '  assert(writefs.get_label(n) == "WFCHANGE")\n'
+    '  writefs.set_label(n, old_label)\n'
+    '  assert(writefs.get_label(n) == old_label)\n'
+    'end\n')
+p.joinpath('large-offset.lua').write_text(
+    'local h = writefs.open("1:/test/big.bin", 1)\n'
+    'writefs.seek(h, "2147483648")\n'
+    'assert(writefs.tell(h) == "2147483648")\n'
+    'assert(writefs.eof(h))\n'
+    'writefs.seek(h, 0)\n'
+    'local s = writefs.read(h, 9000)\n'
+    'assert(#s == 9000 and s:byte(1) == 0 and s:byte(9000) == 39)\n'
+    'writefs.close(h)\n')
+p.joinpath('full-write.lua').write_text(
+    'local h = writefs.open("4:/incomplete-write", 6)\n'
+    'local ok = pcall(writefs.write, h, string.rep("X", 262144))\n'
+    'assert(not ok, "short disk write must report failure")\n'
+    'pcall(writefs.close, h)\n')
+p.joinpath('bind-error-state.lua').write_text(
+    'local ok = pcall(memrw.write_byte, 0, 256)\n'
+    'assert(not ok and grub_errno ~= 0 and type(grub_errmsg) == "string")\n'
+    'input.getkey_noblock()\n'
+    'assert(grub_errno == 0 and grub_errmsg == nil)\n')
 p.joinpath('read.lua').write_text(
     'wf_handle = writefs.open("1:/test/big.bin", 1)\n'
     'assert(writefs.read(wf_handle, 4) == string.char(0, 1, 2, 3))\n'
@@ -214,7 +261,7 @@ PY
 truncate -s 64M "$work/esp.img"
 mkfs.fat -F 16 -n WFESP "$work/esp.img" > "$work/mkfs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT
-for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua bind.ini bind.bmp; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
+for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua bind.ini bind.bmp volumes.lua discovery.lua large-offset.lua full-write.lua; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
 for file in "$work"/bind-*.lua; do mcopy -i "$work/esp.img" "$file" "::/$(basename "$file")"; done
 truncate -s 32M "$work/fat.img"
 mkfs.fat -F 16 -n WFFAT "$work/fat.img" >> "$work/mkfs.log" 2>&1
@@ -330,6 +377,7 @@ if sys.argv[2] == 'x86_64-efi':
     ok('rmmod dp', 'BIND_EFI_UNLOAD')
 ok('insmod memrw', 'BIND_MEMORY_LOAD')
 ok('lua ($esp)/bind-memory.lua', 'BIND_MEMORY_TYPES')
+ok('lua ($esp)/bind-error-state.lua', 'BIND_ERROR_GLOBALS')
 ok('rmmod memrw', 'BIND_MEMORY_UNLOAD')
 ok('lua ($esp)/bind-memory-stale.lua', 'BIND_MEMORY_STALE')
 ok('insmod videoinfo', 'BIND_VIDEO_LOAD')
@@ -342,6 +390,8 @@ ok('lua ($esp)/bind-video-stale.lua', 'BIND_VIDEO_STALE')
 ok('mount ($fat) 1', 'MOUNT_FAT')
 ok('mount ($ntfs) 2', 'MOUNT_NTFS')
 ok('mount ($exfat) 3', 'MOUNT_EXFAT')
+ok('lua ($esp)/volumes.lua', 'LUA_VOLUME_METADATA')
+ok('lua ($esp)/discovery.lua', 'RUNTIME_DRIVER_DISCOVERY')
 ok('mount ($full) 4', 'MOUNT_FULL')
 ok('mount ($ntfs4k) 6', 'MOUNT_NTFS4K')
 lines.append('mount status')
@@ -371,6 +421,7 @@ for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT')]:
     ok(f'rm {num}:/other/moved', f'{kind}_REMOVE_FILE')
     ok(f'rm {num}:/other', f'{kind}_REMOVE_DIR')
 ok('lua ($esp)/read.lua', 'LUA_WRITEFS_READ')
+ok('lua ($esp)/large-offset.lua', 'LUA_U64_OFFSET')
 bad('umount 1', 'LUA_OPEN_PREVENTS_UNMOUNT')
 ok('lua ($esp)/close.lua', 'LUA_WRITEFS_CLOSE')
 ok('lua ($esp)/write.lua', 'LUA_WRITEFS_MULTIFS')
@@ -404,6 +455,7 @@ ok('umount 8', 'NTFSFULL_UNMOUNT')
 ok('mv 1:/move-source 2:/moved-cross', 'CROSS_MOVE')
 bad('write_file 1:/move-source missing', 'MOVE_REMOVED_SOURCE')
 bad('mv 2:/test/big.bin 4:/too-big.bin', 'FULL_MOVE_FAILS')
+ok('lua ($esp)/full-write.lua', 'LUA_SHORT_WRITE_ERROR')
 ok('cp 2:/test/big.bin 1:/source-survived.bin', 'FULL_MOVE_SOURCE_SURVIVES')
 bad('rename 1:/test/gap.bin 2:/wrong', 'CROSS_RENAME')
 bad('mv 2:/test 2:/test/child', 'MOVE_INTO_SELF')
