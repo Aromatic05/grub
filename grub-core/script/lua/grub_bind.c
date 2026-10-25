@@ -43,7 +43,8 @@ lua_bind_handle_gc (lua_State *state)
 
 static int
 bind_argument (lua_State *state, int index, enum grub_bind_type type,
-               struct grub_bind_value *out, struct grub_bind_field *fields)
+               struct grub_bind_value *out, struct grub_bind_field *fields,
+               struct grub_bind_field *nested)
 {
   const char *str, *end;
   grub_uint64_t u;
@@ -105,6 +106,7 @@ bind_argument (lua_State *state, int index, enum grub_bind_type type,
     case GRUB_BIND_RECORD:
       {
         grub_size_t count = 0;
+        int has_nested = 0;
         if (lua_type (state, index) != LUA_TTABLE)
           return luaL_error (state, "table expected");
         lua_pushnil (state);
@@ -131,6 +133,35 @@ bind_argument (lua_State *state, int index, enum grub_bind_type type,
                 field->type = GRUB_BIND_STRING;
                 field->value.bytes.data =
                   lua_tolstring (state, -1, &field->value.bytes.size);
+                break;
+              case LUA_TTABLE:
+                {
+                  grub_size_t inner = 0;
+                  if (has_nested)
+                    return luaL_error (state,
+                      "only one nested record per native argument");
+                  has_nested = 1;
+                  lua_pushnil (state);
+                  while (lua_next (state, -2) != 0)
+                    {
+                      if (inner == GRUB_BIND_MAX_RECORD_FIELDS ||
+                          lua_type (state, -2) != LUA_TSTRING ||
+                          lua_type (state, -1) != LUA_TSTRING)
+                        return luaL_error (state,
+                                          "nested record must be a string map");
+                      nested[inner].name = lua_tostring (state, -2);
+                      nested[inner].value.type = GRUB_BIND_STRING;
+                      nested[inner].value.owned = 0;
+                      nested[inner].value.value.bytes.data =
+                        lua_tolstring (state, -1,
+                           &nested[inner].value.value.bytes.size);
+                      inner++;
+                      lua_pop (state, 1);
+                    }
+                  field->type = GRUB_BIND_RECORD;
+                  field->value.record.fields = nested;
+                  field->value.record.count = inner;
+                }
                 break;
               default:
                 return luaL_error (state, "unsupported native record value");
@@ -233,6 +264,7 @@ lua_bind_call (lua_State *state)
   unsigned min_args, max_args;
   struct grub_bind_value args[GRUB_BIND_MAX_ARGS];
   struct grub_bind_field fields[GRUB_BIND_MAX_ARGS][GRUB_BIND_MAX_RECORD_FIELDS];
+  struct grub_bind_field nested[GRUB_BIND_MAX_ARGS][GRUB_BIND_MAX_RECORD_FIELDS];
   struct grub_bind_value results[GRUB_BIND_MAX_RESULTS];
   grub_size_t argc = lua_gettop (state), nresults = 0, i;
   grub_err_t err;
@@ -250,7 +282,8 @@ lua_bind_call (lua_State *state)
   grub_memset (args, 0, sizeof (args));
   grub_memset (results, 0, sizeof (results));
   for (i = 0; i < argc; i++)
-    bind_argument (state, i + 1, param_types[i], &args[i], fields[i]);
+    bind_argument (state, i + 1, param_types[i], &args[i],
+                   fields[i], nested[i]);
   err = grub_bind_invoke (id, args, argc, results, &nresults);
   if (err)
     {
