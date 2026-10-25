@@ -33,7 +33,8 @@ independent fork, not an official GNU GRUB or Ventoy release.
   `write_file`.
 - **Modular write drivers:** FAT/exFAT via `fatfs.mod` and NTFS via
   `ntfs3g.mod`. Drivers register their own probe and file-operation
-  callbacks; the build generates `writefs.lst` for automatic discovery.
+  callbacks; the build generates `writefs.lst` for automatic discovery and
+  `writefs-types.lst` for filesystem-type enumeration without loading drivers.
   Additional write drivers can use the same interface.
 
 The additional filesystem readers are **not** automatically writable.
@@ -72,13 +73,29 @@ but does not boot the guest OS. See the
 ### Filesystem writes
 
 WriteFS commands are provided by GRUB Core; there is no separate
-`writefs.mod`. The appropriate driver is discovered when mounting a
-supported writable volume. For example, `mount status` lists active mounts.
+`writefs.mod`. The appropriate driver is discovered **only when explicitly
+mounting** a writable volume. `mount filesystems` lists installed writable filesystem
+types without mounting or loading the corresponding modules; `mount status`
+shows active mounts. WriteFS uses a separate `N:/path` namespace and does
+not grant write access through GRUB's read-only `grub_file_open()`.
+
+```grub
+mount filesystems
+mount (hd0,gpt2) 1
+cp (hd0,gpt1)/boot.cfg 1:/boot.cfg
+umount 1
+```
+
+Lua exposes the filesystem-independent `writefs.*` API (including
+`writefs.supported()`, `open`, `read`, `write`, `close`, and directory
+operations). The former FatFs-specific `fat.*` Lua API has been retired;
+native FatFs functions remain internal to its driver. See
+[WriteFS API documentation](docs/writefs.md).
 Use disposable test volumes when trying write operations.
 
 ## Testing and compatibility
 
-- **x86_64 UEFI and BIOS:** The WriteFS QEMU suite passes 128 assertions on
+- **x86_64 UEFI and BIOS:** The WriteFS QEMU suite passes 131 assertions on
   each platform, including FAT/exFAT/NTFS persistence and independent
   host-side checks. See [tests/writefs_qemu.sh](tests/writefs_qemu.sh).
 - **ISO boot:** Arch Linux and Windows/WinPE direct-boot paths have been

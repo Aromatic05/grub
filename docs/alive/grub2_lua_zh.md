@@ -260,7 +260,11 @@
 
   判断分区是否有可启动标识。
 
-## fatfs 函数库
+## fatfs 函数库（历史接口，已退役）
+
+以下是 a1ive 旧版 Lua API。当前分支采用统一的 `writefs.*` API，
+不再暴露 `fat.*`；参见 [WriteFS API](../writefs.md)。
+
 
 - fat.mount
 - fat.umount
