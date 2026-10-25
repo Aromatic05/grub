@@ -57,6 +57,48 @@ lua_writefs_umount (lua_State *state)
   return 0;
 }
 
+/* Unlike the old fat.disk_status lightuserdata, expose a device identity
+   string; scripting cannot accidentally bypass the mounted writer API. */
+static int
+lua_writefs_disk_status (lua_State *state)
+{
+  int num = luaL_checkinteger (state, 1);
+  char *device = NULL;
+  if (num < 1 || num >= GRUB_WRITEFS_DRIVES)
+    { lua_pushnil (state); return 1; }
+  if (grub_writefs_get_device (num, &device))
+    {
+      if (grub_errno == GRUB_ERR_BAD_DEVICE)
+        { grub_errno = GRUB_ERR_NONE; lua_pushnil (state); return 1; }
+      return writefs_error (state);
+    }
+  lua_pushstring (state, device);
+  grub_free (device);
+  return 1;
+}
+
+static int
+lua_writefs_get_label (lua_State *state)
+{
+  int num = luaL_checkinteger (state, 1);
+  char *label = NULL;
+  if (grub_writefs_get_label (num, &label))
+    return writefs_error (state);
+  lua_pushstring (state, label);
+  grub_free (label);
+  return 1;
+}
+
+static int
+lua_writefs_set_label (lua_State *state)
+{
+  int num = luaL_checkinteger (state, 1);
+  const char *label = luaL_checkstring (state, 2);
+  if (grub_writefs_set_label (num, label))
+    return writefs_error (state);
+  return 0;
+}
+
 static int
 lua_writefs_open (lua_State *state)
 {
@@ -122,19 +164,74 @@ lua_writefs_write (lua_State *state)
   struct grub_writefs_file *file = check_file (state);
   grub_size_t len;
   const char *data = luaL_checklstring (state, 2, &len);
-  grub_ssize_t nw = grub_writefs_write (file, data, len);
-  if (nw < 0) return writefs_error (state);
+  grub_ssize_t nw;
+  /* A previous caught GRUB error must not turn a complete write into an
+     apparent failure; inspect only errors from this operation. */
+  grub_errno = GRUB_ERR_NONE;
+  nw = grub_writefs_write (file, data, len);
+  if (nw < 0 || (grub_size_t) nw != len || grub_errno)
+    {
+      if (!grub_errno)
+        grub_error (GRUB_ERR_WRITE_ERROR, "incomplete WriteFS write");
+      return writefs_error (state);
+    }
   lua_pushinteger (state, nw);
   return 1;
+}
+
+/* This Lua build stores numbers as 32-bit ints.  Strings carry exact
+   decimal 64-bit offsets, matching the native Binding ABI convention. */
+static grub_uint64_t
+check_offset (lua_State *state, int arg)
+{
+  if (lua_type (state, arg) == LUA_TSTRING)
+    {
+      const char *text = lua_tostring (state, arg), *end;
+      grub_uint64_t offset;
+      if (!*text)
+        luaL_error (state, "empty WriteFS offset");
+      /* grub_strtoull accepts signs and whitespace; a file offset does not. */
+      for (end = text; *end; end++)
+        if (*end < '0' || *end > '9')
+          luaL_error (state, "WriteFS offset must be decimal digits");
+      grub_errno = GRUB_ERR_NONE;
+      offset = grub_strtoull (text, &end, 10);
+      if (grub_errno || *end || offset > 0x7fffffffffffffffULL)
+        {
+          grub_errno = GRUB_ERR_NONE;
+          luaL_error (state, "WriteFS offset is out of range");
+        }
+      return offset;
+    }
+  else
+    {
+      lua_Integer n = luaL_checkinteger (state, arg);
+      if (n < 0) luaL_error (state, "negative WriteFS offset");
+      return (grub_uint64_t) n;
+    }
+}
+
+static void
+push_offset (lua_State *state, grub_uint64_t offset)
+{
+  if (offset <= 2147483647ULL)
+    lua_pushinteger (state, (lua_Integer) offset);
+  else
+    {
+      char text[32];
+      grub_snprintf (text, sizeof (text), "%llu",
+                     (unsigned long long) offset);
+      lua_pushstring (state, text);
+    }
 }
 
 static int
 lua_writefs_seek (lua_State *state)
 {
   struct grub_writefs_file *file = check_file (state);
-  lua_Integer offset = luaL_checkinteger (state, 2);
-  if (offset < 0 || grub_writefs_seek (file, offset))
-    return luaL_error (state, "invalid WriteFS offset");
+  grub_uint64_t offset = check_offset (state, 2);
+  if (grub_writefs_seek (file, offset))
+    return writefs_error (state);
   return 0;
 }
 
@@ -142,7 +239,7 @@ static int
 lua_writefs_tell (lua_State *state)
 {
   struct grub_writefs_file *file = check_file (state);
-  lua_pushinteger (state, file->offset);
+  push_offset (state, file->offset);
   return 1;
 }
 
@@ -150,7 +247,7 @@ static int
 lua_writefs_size (lua_State *state)
 {
   struct grub_writefs_file *file = check_file (state);
-  lua_pushinteger (state, file->size);
+  push_offset (state, file->size);
   return 1;
 }
 
@@ -257,6 +354,9 @@ static const luaL_Reg writefs_lib[] =
   {"mount", lua_writefs_mount},
   {"umount", lua_writefs_umount},
   {"supported", lua_writefs_supported},
+  {"disk_status", lua_writefs_disk_status},
+  {"get_label", lua_writefs_get_label},
+  {"set_label", lua_writefs_set_label},
   {"open", lua_writefs_open},
   {"close", lua_writefs_close},
   {"read", lua_writefs_read},
