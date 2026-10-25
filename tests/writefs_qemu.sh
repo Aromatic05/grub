@@ -110,6 +110,9 @@ p.joinpath('bind-memory.lua').write_text(
     'assert(not pcall(memrw.read_byte, {}))\n'
     'assert(not pcall(memrw.write_byte, {}, 1))\n'
     'assert(not pcall(memrw.write_dword, -1, 1))\n'
+    'assert(not pcall(memrw.write_byte, 0, 256))\n'
+    'assert(not pcall(memrw.write_word, 0, 65536))\n'
+    'assert(not pcall(memrw.write_dword, 0, "4294967296"))\n'
     'assert(not pcall(memrw.read_byte, "18446744073709551616"))\n'
     'bind_mem_saved = memrw.read_byte\n')
 p.joinpath('bind-memory-stale.lua').write_text(
@@ -130,6 +133,8 @@ p.joinpath('bind-video.lua').write_text(
     'local w, h = video.get_info()\n'
     'assert(type(w) == "number" and type(h) == "number")\n'
     'assert(not pcall(video.draw_pixel, {r="bad",g=0,b=0}, 0, 0))\n'
+    'assert(not pcall(video.draw_pixel, {r=0,g=0,b=0}, "2147483648", 0))\n'
+    'assert(not pcall(video.fill_rect, {r=0,g=0,b=0}, 0, 0, "4294967296", 1))\n'
     'local bitmap = video.bitmap_load("(" .. grub.getenv("esp") .. ")/bind.bmp")\n'
     'assert(type(bitmap) == "userdata")\n'
     'local bw, bh = video.bitmap_info(bitmap)\n'
@@ -138,6 +143,7 @@ p.joinpath('bind-video.lua').write_text(
     'assert(type(scaled) == "userdata")\n'
     'local sw, sh = video.bitmap_info(scaled)\n'
     'assert(sw == 4 and sh == 4)\n'
+    'assert(not pcall(video.bitmap_blit, bitmap, 0, 0, 0, 0, "4294967296", 1))\n'
     'bind_video_bitmap = bitmap\n'
     'bind_video_scaled = scaled\n'
     'bind_video_saved = video.bitmap_info\n')
