@@ -22,7 +22,7 @@
 #include <grub/env.h>
 #include <grub/extcmd.h>
 #include <grub/i18n.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 #include <grub/normal.h>
 #include <grub/read.h>
 
@@ -60,49 +60,64 @@ grub_cmd_getkey (grub_extcmd_context_t ctxt, int argc, char **args)
 
 static grub_extcmd_t cmd;
 
-static int
-lua_input_read (lua_State *state)
+static grub_dl_t input_module;
+
+static grub_err_t
+bind_input_read (grub_size_t argc, const struct grub_bind_value *args,
+                 struct grub_bind_value *results, grub_size_t *nresults)
 {
+  int hide = argc ? (int) args[0].value.i64 : 0;
   char *line;
-  int hide = (lua_gettop (state) > 0) ? luaL_checkinteger (state, 1) : 0;
-
-  /* The a1ive API accepts 0 (visible), 1 (asterisks), or 2 (silent).
-     Reuse read's input path so editing and masking stay consistent. */
+  if (hide < 0 || hide > 2)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "input.read expects hide 0-2");
   line = grub_getline (hide);
-  if (! line)
-    lua_pushnil(state);
-  else
-    lua_pushstring (state, line);
-
-  grub_free (line);
+  results[0].type = GRUB_BIND_NIL;
+  if (line)
+    {
+      results[0].type = GRUB_BIND_STRING;
+      results[0].owned = 1;
+      results[0].value.bytes.data = line;
+      results[0].value.bytes.size = grub_strlen (line);
+    }
   grub_printf ("\n");
-  return 1;
+  *nresults = 1;
+  return GRUB_ERR_NONE;
 }
 
-/* Lua function: input.getkey() : returns { ASCII char, scan code }.  */
-static int
-lua_input_getkey (lua_State *state)
+static grub_err_t
+bind_input_getkey (grub_size_t argc __attribute__ ((unused)),
+                   const struct grub_bind_value *args __attribute__ ((unused)),
+                   struct grub_bind_value *results, grub_size_t *nresults)
 {
-  int c = grub_getkey();
-  lua_pushinteger (state, c & 0xFF);          /* Push ASCII character code.  */
-  lua_pushinteger (state, (c >> 8) & 0xFF);   /* Push the scan code.  */
-  return 2;
+  int c = grub_getkey ();
+  results[0].type = GRUB_BIND_I64;
+  results[0].value.i64 = c & 0xff;
+  results[1].type = GRUB_BIND_I64;
+  results[1].value.i64 = (c >> 8) & 0xff;
+  *nresults = 2;
+  return GRUB_ERR_NONE;
 }
-static int
-lua_input_getkey_noblock (lua_State *state __attribute__ ((unused)))
+
+static grub_err_t
+bind_input_getkey_noblock (grub_size_t argc __attribute__ ((unused)),
+                           const struct grub_bind_value *args __attribute__ ((unused)),
+                           struct grub_bind_value *results, grub_size_t *nresults)
 {
   int c = grub_getkey_noblock ();
-  lua_pushinteger (state, c & 0xFF);          /* Push ASCII character code.  */
-  lua_pushinteger (state, (c >> 8) & 0xFF);   /* Push the scan code.  */
-  return 2;
+  results[0].type = GRUB_BIND_I64;
+  results[0].value.i64 = c & 0xff;
+  results[1].type = GRUB_BIND_I64;
+  results[1].value.i64 = (c >> 8) & 0xff;
+  *nresults = 2;
+  return GRUB_ERR_NONE;
 }
 
-static luaL_Reg inputlib[] =
+static const enum grub_bind_type input_args[] = { GRUB_BIND_I64 };
+static const struct grub_bind_export input_exports[] =
 {
-  {"getkey", lua_input_getkey},
-  {"getkey_noblock", lua_input_getkey_noblock},
-  {"read", lua_input_read},
-  {0, 0}
+  { "input", "read",           input_args, 0, 1, bind_input_read },
+  { "input", "getkey",         NULL,       0, 0, bind_input_getkey },
+  { "input", "getkey_noblock", NULL,       0, 0, bind_input_getkey_noblock }
 };
 
 GRUB_MOD_INIT(getkey)
@@ -111,15 +126,13 @@ GRUB_MOD_INIT(getkey)
                               N_("[-n] [VARNAME]"),
                               N_("Return the value of the pressed key. "),
                               options);
-  if (grub_lua_global_state)
-  {
-    lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-    luaL_register (grub_lua_global_state, "input", inputlib);
-    lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-  }
+  input_module = mod;
+  grub_bind_register (mod, input_exports, 3);
 }
 
 GRUB_MOD_FINI(getkey)
 {
+  grub_bind_unregister (input_module);
+  input_module = NULL;
   grub_unregister_extcmd (cmd);
 }
