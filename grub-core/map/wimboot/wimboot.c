@@ -29,7 +29,7 @@
 #include <grub/types.h>
 #include <grub/term.h>
 #include <grub/wimtools.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 #ifdef GRUB_MACHINE_MULTIBOOT
 #include <grub/machine/kernel.h>
 #endif
@@ -243,97 +243,87 @@ grub_cmd_wimtools (grub_extcmd_context_t ctxt, int argc, char *argv[])
 
 static grub_extcmd_t cmd_wimtools;
 
-static int
-wim_file_exist (lua_State *state)
+static grub_dl_t wim_module;
+
+/* WIM operations use the original read-only GRUB VFS.  No write mount
+   or script-runtime pointer is involved. */
+static grub_err_t
+bind_wim (grub_size_t argc, const struct grub_bind_value *args,
+          struct grub_bind_value *results, grub_size_t *nresults,
+          unsigned operation)
 {
-  const char *wim;
-  const char *path;
-  unsigned int index = 0;
-  grub_file_t file = 0;
+  const char *path = args[0].value.bytes.data;
+  grub_uint64_t index = 0;
+  grub_file_t file;
+  int value = 0;
 
-  wim = luaL_checkstring (state, 1);
-  path = luaL_checkstring (state, 2);
-  if (lua_gettop (state) > 2)
-    index = luaL_checkinteger (state, 3);
+  if (operation == 0 && argc == 3)
+    index = args[2].value.u64;
+  else if (operation == 1 && argc == 2)
+    index = args[1].value.u64;
+  if (index > 0xffffffffULL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "WIM image index too large");
 
-  file = grub_file_open (wim, GRUB_FILE_TYPE_LOOPBACK);
+  file = grub_file_open (path, GRUB_FILE_TYPE_LOOPBACK);
   if (file)
-  {
-    lua_pushboolean (state, grub_wim_file_exist (file, index, path));
-    grub_file_close (file);
-  }
+    {
+      switch (operation)
+        {
+        case 0:
+          value = grub_wim_file_exist (file, index, args[1].value.bytes.data);
+          break;
+        case 1:
+          value = grub_wim_is64 (file, index);
+          break;
+        case 2:
+          value = grub_wim_image_count (file);
+          break;
+        case 3:
+          value = grub_wim_boot_index (file);
+          break;
+        }
+      grub_file_close (file);
+    }
   else
-    lua_pushboolean (state, 0);
-  return 1;
+    /* The previous WIM Lua API returned false/zero for missing files. */
+    grub_errno = GRUB_ERR_NONE;
+  results[0].type = (operation < 2) ? GRUB_BIND_BOOL : GRUB_BIND_U64;
+  if (operation < 2)
+    results[0].value.boolean = !!value;
+  else
+    results[0].value.u64 = (unsigned) value;
+  *nresults = 1;
+  return GRUB_ERR_NONE;
 }
 
-static int
-wim_is64 (lua_State *state)
+static grub_err_t
+bind_wim_file_exist (grub_size_t argc, const struct grub_bind_value *args,
+                     struct grub_bind_value *results, grub_size_t *nout)
+{ return bind_wim (argc, args, results, nout, 0); }
+static grub_err_t
+bind_wim_is64 (grub_size_t argc, const struct grub_bind_value *args,
+               struct grub_bind_value *results, grub_size_t *nout)
+{ return bind_wim (argc, args, results, nout, 1); }
+static grub_err_t
+bind_wim_image_count (grub_size_t argc, const struct grub_bind_value *args,
+                      struct grub_bind_value *results, grub_size_t *nout)
+{ return bind_wim (argc, args, results, nout, 2); }
+static grub_err_t
+bind_wim_boot_index (grub_size_t argc, const struct grub_bind_value *args,
+                     struct grub_bind_value *results, grub_size_t *nout)
+{ return bind_wim (argc, args, results, nout, 3); }
+
+static const enum grub_bind_type wim_file_exist_args[] =
+  { GRUB_BIND_STRING, GRUB_BIND_STRING, GRUB_BIND_U64 };
+static const enum grub_bind_type wim_is64_args[] =
+  { GRUB_BIND_STRING, GRUB_BIND_U64 };
+static const enum grub_bind_type wim_file_args[] = { GRUB_BIND_STRING };
+static const struct grub_bind_export wim_exports[] =
 {
-  const char *wim;
-  unsigned int index = 0;
-  grub_file_t file = 0;
-
-  wim = luaL_checkstring (state, 1);
-  if (lua_gettop (state) > 1)
-    index = luaL_checkinteger (state, 2);
-
-  file = grub_file_open (wim, GRUB_FILE_TYPE_LOOPBACK);
-  if (file)
-  {
-    lua_pushboolean (state, grub_wim_is64 (file, index));
-    grub_file_close (file);
-  }
-  else
-    lua_pushboolean (state, 0);
-  return 1;
-}
-
-static int
-wim_image_count (lua_State *state)
-{
-  const char *wim;
-  grub_file_t file = 0;
-
-  wim = luaL_checkstring (state, 1);
-
-  file = grub_file_open (wim, GRUB_FILE_TYPE_LOOPBACK);
-  if (file)
-  {
-    lua_pushinteger (state, grub_wim_image_count (file));
-    grub_file_close (file);
-  }
-  else
-    lua_pushinteger (state, 0);
-  return 1;
-}
-
-static int
-wim_boot_index (lua_State *state)
-{
-  const char *wim;
-  grub_file_t file = 0;
-
-  wim = luaL_checkstring (state, 1);
-
-  file = grub_file_open (wim, GRUB_FILE_TYPE_LOOPBACK);
-  if (file)
-  {
-    lua_pushinteger (state, grub_wim_boot_index (file));
-    grub_file_close (file);
-  }
-  else
-    lua_pushinteger (state, 0);
-  return 1;
-}
-
-static luaL_Reg wimlib[] =
-{
-  {"file_exist", wim_file_exist},
-  {"is64", wim_is64},
-  {"image_count", wim_image_count},
-  {"boot_index", wim_boot_index},
-  {0, 0}
+  { "wim", "file_exist",   wim_file_exist_args, 2, 3, bind_wim_file_exist },
+  { "wim", "is64",         wim_is64_args,       1, 2, bind_wim_is64 },
+  { "wim", "image_count",  wim_file_args,       1, 1, bind_wim_image_count },
+  { "wim", "boot_index",   wim_file_args,       1, 1, bind_wim_boot_index }
 };
 
 GRUB_MOD_INIT(wimboot)
@@ -350,12 +340,8 @@ GRUB_MOD_INIT(wimboot)
   cmd_wimtools = grub_register_extcmd ("wimtools", grub_cmd_wimtools, 0,
                     N_("[--index=n] [OPTIONS] FILE [PATH]"),
                     N_("WIM Tools"), options_wimtools);
-  if (grub_lua_global_state)
-  {
-    lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-    luaL_register (grub_lua_global_state, "wim", wimlib);
-    lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-  }
+  wim_module = mod;
+  grub_bind_register (mod, wim_exports, 4);
 }
 
 GRUB_MOD_FINI(wimboot)
@@ -364,6 +350,8 @@ GRUB_MOD_FINI(wimboot)
   if (!grub_mb_check_bios_int (0x13))
     return;
 #endif
+  grub_bind_unregister (wim_module);
+  wim_module = NULL;
   grub_unload_bcd ();
   grub_unload_bootsdi ();
   grub_unregister_extcmd (cmd_wimboot);
