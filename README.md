@@ -45,6 +45,8 @@ WriteFS currently has FAT/exFAT and NTFS write backends.
 - **GRUB File Manager (`grubfm`):** Device and file browsing with configurable
   file handling and text/hex viewing.
 - **Lua:** An embedded scripting runtime with GRUB-specific APIs.
+- **Native binding ABI:** Language-neutral typed exports with lazy Lua
+  adapters, revocable function references and managed resource handles.
 - **INI and command extensions:** Configuration parsing and additional
   commands for interactive use and boot automation.
 
@@ -115,6 +117,7 @@ noncritical media before relying on them for important systems.
 - [Ventoy direct boot](docs/ventoy/DIRECT_BOOT.md)
 - [Ventoy quick start (Chinese)](docs/ventoy/quickstart_zh.md)
 - [a1ive GRUB reference documentation (Chinese)](docs/alive/README.md)
+- [GRUB native binding ABI](docs/bind.md)
 - [WriteFS QEMU regression suite](tests/writefs_qemu.sh)
 - [ntfs-3g upstream findings](tests/ntfs3g/README.md)
 - [Migration history and compatibility notes](docs/porting/MIGRATION_PROGRESS.md)
