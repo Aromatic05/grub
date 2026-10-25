@@ -17,10 +17,12 @@ enum grub_bind_type
   GRUB_BIND_U64,
   GRUB_BIND_STRING,
   GRUB_BIND_BYTES,
+  GRUB_BIND_RECORD,
   GRUB_BIND_HANDLE
 };
 
 struct grub_bind_handle;
+struct grub_bind_field;
 
 struct grub_bind_value
 {
@@ -33,8 +35,17 @@ struct grub_bind_value
     grub_int64_t i64;
     grub_uint64_t u64;
     struct { const void *data; grub_size_t size; } bytes;
+    struct { const struct grub_bind_field *fields; grub_size_t count; } record;
     struct grub_bind_handle *handle;
   } value;
+};
+
+/* A record carries named, typed fields.  Strings/field names are borrowed
+   for the invocation; a returned record can own its field array and values. */
+struct grub_bind_field
+{
+  const char *name;
+  struct grub_bind_value value;
 };
 
 /* Functions never receive or return a language-runtime object.  Result
@@ -55,6 +66,7 @@ struct grub_bind_export
 
 #define GRUB_BIND_MAX_ARGS 16
 #define GRUB_BIND_MAX_RESULTS 8
+#define GRUB_BIND_MAX_RECORD_FIELDS 8
 
 /* Registration is per native module; unregister before the module's code
    and descriptors are unloaded.  IDs are never reused after unloading. */

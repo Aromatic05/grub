@@ -40,7 +40,7 @@ lua_bind_handle_gc (lua_State *state)
 
 static int
 bind_argument (lua_State *state, int index, enum grub_bind_type type,
-               struct grub_bind_value *out)
+               struct grub_bind_value *out, struct grub_bind_field *fields)
 {
   const char *str, *end;
   grub_uint64_t u;
@@ -99,6 +99,46 @@ bind_argument (lua_State *state, int index, enum grub_bind_type type,
       else
         out->value.u64 = u;
       break;
+    case GRUB_BIND_RECORD:
+      {
+        grub_size_t count = 0;
+        if (lua_type (state, index) != LUA_TTABLE)
+          return luaL_error (state, "table expected");
+        lua_pushnil (state);
+        while (lua_next (state, index) != 0)
+          {
+            struct grub_bind_value *field;
+            if (count == GRUB_BIND_MAX_RECORD_FIELDS ||
+                lua_type (state, -2) != LUA_TSTRING)
+              return luaL_error (state, "invalid native record fields");
+            fields[count].name = lua_tostring (state, -2);
+            field = &fields[count].value;
+            grub_memset (field, 0, sizeof (*field));
+            switch (lua_type (state, -1))
+              {
+              case LUA_TNUMBER:
+                field->type = GRUB_BIND_I64;
+                field->value.i64 = lua_tointeger (state, -1);
+                break;
+              case LUA_TBOOLEAN:
+                field->type = GRUB_BIND_BOOL;
+                field->value.boolean = lua_toboolean (state, -1);
+                break;
+              case LUA_TSTRING:
+                field->type = GRUB_BIND_STRING;
+                field->value.bytes.data =
+                  lua_tolstring (state, -1, &field->value.bytes.size);
+                break;
+              default:
+                return luaL_error (state, "unsupported native record value");
+              }
+            count++;
+            lua_pop (state, 1);
+          }
+        out->value.record.fields = fields;
+        out->value.record.count = count;
+      }
+      break;
     case GRUB_BIND_HANDLE:
       {
         struct grub_bind_handle **handle =
@@ -153,6 +193,19 @@ push_result (lua_State *state, struct grub_bind_value *value)
                       value->value.bytes.data : "",
                       value->value.bytes.size);
       break;
+    case GRUB_BIND_RECORD:
+      {
+        grub_size_t i;
+        lua_newtable (state);
+        for (i = 0; i < value->value.record.count; i++)
+          {
+            const struct grub_bind_field *field = &value->value.record.fields[i];
+            lua_pushstring (state, field->name);
+            push_result (state, (struct grub_bind_value *) &field->value);
+            lua_rawset (state, -3);
+          }
+      }
+      break;
     case GRUB_BIND_HANDLE:
       {
         struct grub_bind_handle **slot =
@@ -176,6 +229,7 @@ lua_bind_call (lua_State *state)
   enum grub_bind_type param_types[GRUB_BIND_MAX_ARGS];
   unsigned min_args, max_args;
   struct grub_bind_value args[GRUB_BIND_MAX_ARGS];
+  struct grub_bind_field fields[GRUB_BIND_MAX_ARGS][GRUB_BIND_MAX_RECORD_FIELDS];
   struct grub_bind_value results[GRUB_BIND_MAX_RESULTS];
   grub_size_t argc = lua_gettop (state), nresults = 0, i;
   grub_err_t err;
@@ -193,7 +247,7 @@ lua_bind_call (lua_State *state)
   grub_memset (args, 0, sizeof (args));
   grub_memset (results, 0, sizeof (results));
   for (i = 0; i < argc; i++)
-    bind_argument (state, i + 1, param_types[i], &args[i]);
+    bind_argument (state, i + 1, param_types[i], &args[i], fields[i]);
   err = grub_bind_invoke (id, args, argc, results, &nresults);
   if (err)
     {

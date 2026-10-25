@@ -209,6 +209,15 @@ grub_bind_value_dispose (struct grub_bind_value *value)
   if (!value) return;
   if (value->type == GRUB_BIND_HANDLE && value->value.handle)
     grub_bind_handle_release (value->value.handle);
+  else if (value->owned && value->type == GRUB_BIND_RECORD)
+    {
+      grub_size_t i;
+      struct grub_bind_field *fields =
+        (struct grub_bind_field *) value->value.record.fields;
+      for (i = 0; i < value->value.record.count; i++)
+        grub_bind_value_dispose (&fields[i].value);
+      grub_free (fields);
+    }
   else if (value->owned &&
            (value->type == GRUB_BIND_STRING || value->type == GRUB_BIND_BYTES))
     grub_free ((void *) value->value.bytes.data);
