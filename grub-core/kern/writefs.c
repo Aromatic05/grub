@@ -5,9 +5,21 @@
 #include <grub/env.h>
 #include <grub/partition.h>
 #include <grub/misc.h>
+#include <grub/lockdown.h>
 
 static struct grub_writefs_driver *drivers;
 static struct grub_writefs_mount mounts[GRUB_WRITEFS_DRIVES];
+
+/* Writable mounts are an explicit capability, and lockdown revokes it.
+   Keep this check in Core: a Lua binding must not bypass command policy. */
+static grub_err_t
+require_writable (void)
+{
+  return grub_is_lockdown () == GRUB_LOCKDOWN_ENABLED
+    ? grub_error (GRUB_ERR_ACCESS_DENIED,
+                  "WriteFS modification is disabled during lockdown")
+    : GRUB_ERR_NONE;
+}
 
 void grub_writefs_register (struct grub_writefs_driver *driver,
                             const char *types)
@@ -28,6 +40,49 @@ struct grub_writefs_mount *grub_writefs_get (unsigned num)
     { grub_error (GRUB_ERR_BAD_DEVICE, "drive is not mounted"); return NULL; }
   return &mounts[num];
 }
+grub_err_t
+grub_writefs_get_device (unsigned num, char **out)
+{
+  struct grub_writefs_mount *mount;
+  char *part;
+  if (!out) return grub_error (GRUB_ERR_BAD_ARGUMENT, "null device output");
+  *out = NULL;
+  mount = grub_writefs_get (num);
+  if (!mount) return grub_errno;
+  part = grub_partition_get_name (mount->disk->partition);
+  if (!part) return grub_errno;
+  *out = grub_xasprintf ("(%s%s%s)", mount->disk->name,
+                         *part ? "," : "", part);
+  grub_free (part);
+  return *out ? GRUB_ERR_NONE : grub_errno;
+}
+
+grub_err_t
+grub_writefs_get_label (unsigned num, char **out)
+{
+  struct grub_writefs_mount *mount;
+  if (!out) return grub_error (GRUB_ERR_BAD_ARGUMENT, "null label output");
+  *out = NULL;
+  mount = grub_writefs_get (num);
+  if (!mount) return grub_errno;
+  if (!mount->driver->get_label)
+    return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET, "volume labels not supported");
+  return mount->driver->get_label (mount, out);
+}
+
+grub_err_t
+grub_writefs_set_label (unsigned num, const char *label)
+{
+  struct grub_writefs_mount *mount;
+  if (require_writable ()) return grub_errno;
+  if (!label) return grub_error (GRUB_ERR_BAD_ARGUMENT, "null volume label");
+  mount = grub_writefs_get (num);
+  if (!mount) return grub_errno;
+  if (!mount->driver->set_label)
+    return grub_error (GRUB_ERR_NOT_IMPLEMENTED_YET, "volume labels not supported");
+  return mount->driver->set_label (mount, label);
+}
+
 static int same_disk (grub_disk_t a, grub_disk_t b)
 {
   return a->dev->id == b->dev->id && a->id == b->id &&
@@ -114,6 +169,7 @@ grub_err_t grub_writefs_mount (const char *name, unsigned num)
   char *device;
   unsigned i;
   grub_err_t err;
+  if (require_writable ()) return grub_errno;
   if (!num || num >= GRUB_WRITEFS_DRIVES)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid drive number");
   if (mounts[num].disk)
@@ -178,6 +234,9 @@ grub_err_t grub_writefs_open (struct grub_writefs_file *file, const char *path, 
   if (!file)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "null WriteFS file");
   grub_memset (file, 0, sizeof (*file));
+  if ((flags & (GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE)) &&
+      require_writable ())
+    return grub_errno;
   if (!(flags & (GRUB_WRITEFS_READ | GRUB_WRITEFS_WRITE)) ||
       (flags & ~(GRUB_WRITEFS_READ | GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE)) ||
       ((flags & GRUB_WRITEFS_CREATE) && !(flags & GRUB_WRITEFS_WRITE)))
@@ -213,6 +272,7 @@ grub_writefs_write (struct grub_writefs_file *file, const void *buf, grub_size_t
 {
   if (!file || !file->mount || !(file->flags & GRUB_WRITEFS_WRITE) || (!buf && len))
     { grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file not open for writing"); return -1; }
+  if (require_writable ()) return -1;
   return len ? file->mount->driver->write (file, buf, len) : 0;
 }
 
@@ -232,12 +292,14 @@ grub_writefs_truncate (struct grub_writefs_file *file)
 {
   if (!file || !file->mount || !(file->flags & GRUB_WRITEFS_WRITE))
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file not open for writing");
+  if (require_writable ()) return grub_errno;
   return file->mount->driver->truncate (file);
 }
 
 grub_err_t
 grub_writefs_mkdir (const char *path)
 {
+  if (require_writable ()) return grub_errno;
   struct grub_writefs_mount *mount = path_mount (path);
   return mount ? mount->driver->mkdir (mount, path) : grub_errno;
 }
@@ -245,6 +307,7 @@ grub_writefs_mkdir (const char *path)
 grub_err_t
 grub_writefs_unlink (const char *path)
 {
+  if (require_writable ()) return grub_errno;
   struct grub_writefs_mount *mount = path_mount (path);
   return mount ? mount->driver->unlink (mount, path) : grub_errno;
 }
@@ -253,12 +316,78 @@ grub_err_t
 grub_writefs_touch (const char *path, const struct grub_datetime *dt,
                     unsigned count)
 {
+  if (require_writable ()) return grub_errno;
   struct grub_writefs_mount *mount = path_mount (path);
   return mount ? mount->driver->touch (mount, path, dt, count) : grub_errno;
 }
 
-/* Enumerate filesystem types from the installed platform manifest.
-   No writable backend is loaded and no volume is mounted by this query. */
+/* Merge the installed manifest with dynamically registered backends.
+   Enumeration never loads a writer and never mounts a volume. */
+struct writefs_type
+{
+  struct writefs_type *next;
+  char *type, *driver;
+  int loaded;
+};
+
+struct writefs_types
+{
+  struct writefs_type *first, *last;
+  grub_err_t err;
+};
+
+static int
+collect_type (const char *type, const char *driver, int loaded, void *data)
+{
+  struct writefs_types *types = data;
+  struct writefs_type *item;
+  for (item = types->first; item; item = item->next)
+    if (!grub_strcmp (item->type, type))
+      {
+        /* A loaded driver wins over the on-disk manifest's module hint. */
+        if (loaded && !item->loaded)
+          {
+            char *name = grub_strdup (driver);
+            if (!name) { types->err = grub_errno; return 1; }
+            grub_free (item->driver);
+            item->driver = name;
+          }
+        item->loaded |= loaded;
+        return 0;
+      }
+
+  item = grub_zalloc (sizeof (*item));
+  if (!item) { types->err = grub_errno; return 1; }
+  item->type = grub_strdup (type);
+  item->driver = grub_strdup (driver);
+  if (!item->type || !item->driver)
+    {
+      types->err = grub_errno;
+      grub_free (item->type);
+      grub_free (item->driver);
+      grub_free (item);
+      return 1;
+    }
+  item->loaded = loaded;
+  if (types->last) types->last->next = item;
+  else types->first = item;
+  types->last = item;
+  return 0;
+}
+
+static void
+free_types (struct writefs_type *item)
+{
+  while (item)
+    {
+      struct writefs_type *next = item->next;
+      grub_free (item->type);
+      grub_free (item->driver);
+      grub_free (item);
+      item = next;
+    }
+}
+
 static int
 report_types (const char *types, const char *driver, int loaded,
               grub_writefs_fs_hook_t hook, void *data)
@@ -287,11 +416,13 @@ grub_writefs_iterate_filesystems (grub_writefs_fs_hook_t hook, void *data)
 {
   const char *prefix = grub_env_get ("prefix");
   struct grub_writefs_driver *driver;
+  struct writefs_types types = { 0 };
+  struct writefs_type *entry;
   grub_file_t file = NULL;
   char *filename;
   char line[160], c;
   grub_size_t len = 0;
-  grub_ssize_t n;
+  grub_ssize_t n = 0;
   int overflow = 0;
 
   if (!hook)
@@ -312,7 +443,7 @@ grub_writefs_iterate_filesystems (grub_writefs_fs_hook_t hook, void *data)
           n = grub_file_read (file, &c, 1);
           if (n != 1 || c == '\n')
             {
-              if (len && !overflow)
+              if (len && !overflow && n >= 0)
                 {
                   char *sep;
                   line[len] = 0;
@@ -320,7 +451,8 @@ grub_writefs_iterate_filesystems (grub_writefs_fs_hook_t hook, void *data)
                   if (sep && sep[1])
                     {
                       *sep++ = 0;
-                      if (hook (line, sep, grub_dl_get (sep) != NULL, data))
+                      if (collect_type (line, sep,
+                                        grub_dl_get (sep) != NULL, &types))
                         break;
                     }
                 }
@@ -334,17 +466,32 @@ grub_writefs_iterate_filesystems (grub_writefs_fs_hook_t hook, void *data)
             }
         }
       while (n == 1);
-      grub_file_close (file);
-      grub_errno = GRUB_ERR_NONE;
-      return GRUB_ERR_NONE;
+      if (n < 0 && !types.err)
+        types.err = grub_errno ? grub_errno
+                   : grub_error (GRUB_ERR_FILE_READ_ERROR,
+                                 "failed reading WriteFS manifest");
+      {
+        grub_err_t close_err = grub_file_close (file);
+        if (!types.err) types.err = close_err;
+      }
     }
-  /* Built-in drivers work even when there is no installed module directory. */
-  for (driver = drivers; driver; driver = driver->next)
-    if (report_types (driver->types, driver->name, 1, hook, data))
-      break;
-  return GRUB_ERR_NONE;
-}
 
+  if (!types.err)
+    for (driver = drivers; driver; driver = driver->next)
+      if (report_types (driver->types, driver->name, 1,
+                        collect_type, &types))
+        break;
+
+  if (!types.err)
+    for (entry = types.first; entry; entry = entry->next)
+      if (hook (entry->type, entry->driver, entry->loaded, data))
+        break;
+  {
+    grub_err_t err = types.err;
+    free_types (types.first);
+    return err;
+  }
+}
 static grub_err_t parse_num (const char *s, unsigned *num)
 {
   if (s[0] < '1' || s[0] > '9' || s[1])
@@ -397,7 +544,9 @@ static grub_err_t cmd_path (grub_command_t cmd, int argc, char **args)
 }
 grub_err_t grub_writefs_rename (const char *src, const char *dst)
 {
-  struct grub_writefs_mount *a = path_mount (src), *b;
+  struct grub_writefs_mount *a, *b;
+  if (require_writable ()) return grub_errno;
+  a = path_mount (src);
   if (!a) return grub_errno;
   b = path_mount (dst);
   if (!b) return grub_errno;

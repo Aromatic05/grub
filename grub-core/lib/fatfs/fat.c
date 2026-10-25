@@ -178,13 +178,37 @@ static grub_err_t fat_backend_touch (struct grub_writefs_mount *mount __attribut
   info.ftime = (dt->hour << 11) | (dt->minute << 5) | (dt->second >> 1);
   return fat_error (f_utime (path, &info));
 }
+static grub_err_t
+fat_backend_get_label (struct grub_writefs_mount *mount, char **out)
+{
+  char device[3], label[64];
+  FRESULT res;
+  grub_snprintf (device, sizeof (device), "%u:", mount->num);
+  res = f_getlabel (device, label, NULL);
+  if (res) return fat_error (res);
+  *out = grub_strdup (label);
+  return *out ? GRUB_ERR_NONE : grub_errno;
+}
+
+static grub_err_t
+fat_backend_set_label (struct grub_writefs_mount *mount, const char *label)
+{
+  char *with_drive = grub_xasprintf ("%u:%s", mount->num, label);
+  FRESULT res;
+  if (!with_drive) return grub_errno;
+  res = f_setlabel (with_drive);
+  grub_free (with_drive);
+  return fat_error (res);
+}
+
 static struct grub_writefs_driver fat_driver = {
   .name = "fatfs", .probe = fat_backend_probe,
   .mount = fat_backend_mount, .umount = fat_backend_umount,
   .open = fat_backend_open, .read = fat_backend_read, .write = fat_backend_write,
   .truncate = fat_backend_truncate, .close = fat_backend_close,
   .mkdir = fat_backend_mkdir, .unlink = fat_backend_unlink,
-  .rename = fat_backend_rename, .touch = fat_backend_touch
+  .rename = fat_backend_rename, .touch = fat_backend_touch,
+  .get_label = fat_backend_get_label, .set_label = fat_backend_set_label
 };
 
 GRUB_MOD_INIT(fatfs)

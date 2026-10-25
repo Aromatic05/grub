@@ -300,13 +300,35 @@ static grub_err_t backend_touch (struct grub_writefs_mount *mount, const char *p
   NInoFileNameSetDirty (ni);
   return ntfs_inode_close (ni) ? ntfs_error ("touch close") : GRUB_ERR_NONE;
 }
+static grub_err_t
+backend_get_label (struct grub_writefs_mount *mount, char **out)
+{
+  struct ntfs_mount *state = mount->data;
+  *out = grub_strdup (state->vol->vol_name ? state->vol->vol_name : "");
+  return *out ? GRUB_ERR_NONE : grub_errno;
+}
+
+static grub_err_t
+backend_set_label (struct grub_writefs_mount *mount, const char *label)
+{
+  struct ntfs_mount *state = mount->data;
+  ntfschar *unicode = NULL;
+  int len = ntfs_mbstoucs (label, &unicode);
+  int res;
+  if (len < 0) return ntfs_error ("label encoding");
+  res = ntfs_volume_rename (state->vol, unicode, len + 1);
+  free (unicode);
+  return res ? ntfs_error ("set label") : GRUB_ERR_NONE;
+}
+
 static struct grub_writefs_driver driver = {
   .name = "ntfs3g", .probe = backend_probe,
   .mount = backend_mount, .umount = backend_umount,
   .open = backend_open, .read = backend_read, .write = backend_write,
   .truncate = backend_truncate, .close = backend_close,
   .mkdir = backend_mkdir, .unlink = backend_unlink,
-  .rename = backend_rename, .touch = backend_touch
+  .rename = backend_rename, .touch = backend_touch,
+  .get_label = backend_get_label, .set_label = backend_set_label
 };
 GRUB_MOD_INIT(ntfs3g)
 {

@@ -37,6 +37,9 @@ struct grub_writefs_driver
   grub_err_t (*rename) (struct grub_writefs_mount *, const char *, const char *);
   grub_err_t (*touch) (struct grub_writefs_mount *, const char *,
                        const struct grub_datetime *, unsigned);
+  /* A successful get_label returns an owned UTF-8 allocation. */
+  grub_err_t (*get_label) (struct grub_writefs_mount *, char **);
+  grub_err_t (*set_label) (struct grub_writefs_mount *, const char *);
 };
 
 /* Resolve optional touch fields using the datetime module in the driver. */
@@ -76,6 +79,10 @@ void EXPORT_FUNC(grub_writefs_unregister) (struct grub_writefs_driver *);
 grub_err_t EXPORT_FUNC(grub_writefs_mount) (const char *, unsigned);
 grub_err_t EXPORT_FUNC(grub_writefs_umount) (unsigned);
 struct grub_writefs_mount *EXPORT_FUNC(grub_writefs_get) (unsigned);
+/* Mounted-volume metadata: caller frees the output strings. */
+grub_err_t EXPORT_FUNC(grub_writefs_get_device) (unsigned, char **);
+grub_err_t EXPORT_FUNC(grub_writefs_get_label) (unsigned, char **);
+grub_err_t EXPORT_FUNC(grub_writefs_set_label) (unsigned, const char *);
 
 /* Only paths on explicitly mounted WriteFS volumes (N:/path) are accepted.
    Callers own FILE storage; successful open must be followed by close. */
