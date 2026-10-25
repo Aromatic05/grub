@@ -15,10 +15,20 @@ done
 work=$(mktemp -d /tmp/grub-tls.XXXXXX)
 passed=0
 server_pid=
+http_plain_pid=
+http_tls_pid=
 bad_server_pid=
 rsa_server_pid=
 expired_server_pid=
 cleanup() {
+  if test -n "$http_plain_pid"; then
+    kill "$http_plain_pid" 2>/dev/null || true
+    wait "$http_plain_pid" 2>/dev/null || true
+  fi
+  if test -n "$http_tls_pid"; then
+    kill "$http_tls_pid" 2>/dev/null || true
+    wait "$http_tls_pid" 2>/dev/null || true
+  fi
   if test -n "$rsa_server_pid"; then
     kill "$rsa_server_pid" 2>/dev/null || true
     wait "$rsa_server_pid" 2>/dev/null || true
@@ -73,6 +83,8 @@ openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes   -keyo
 openssl x509 -req -in "$work/expired.csr" -CA "$work/ca.pem"   -CAkey "$work/ca.key" -CAcreateserial -out "$work/expired.pem"   -days 0 -sha384 -extfile "$work/extensions.cnf" >>"$work/openssl.log" 2>&1
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+http_plain_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+http_tls_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 rsa_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 expired_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 wrong_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
@@ -163,6 +175,81 @@ tls.close(c)
 LUA
   sed -i "s/MARK/$control/g" "$work/cancel-$control.lua"
 done
+cat >"$work/http-test.lua" <<'LUA'
+local http_port = grub.getenv("http_plain_port")
+local https_port = grub.getenv("http_tls_port")
+assert(type(http.request) == "function")
+assert(type(https.request) == "function")
+local r = http.request({url="http://10.0.2.2:"..http_port.."/file"})
+assert(r.status == 200 and r.body == "GRUB_HTTP_FILE_CONTENT")
+local r = https.request({
+  url="https://10.0.2.2:"..https_port.."/echo",
+  method="POST",
+  headers={["X-HTTP-Test"]="nested-header", ["Content-Type"]="application/json"},
+  body="hi-\0-binary"
+})
+assert(r.status == 200 and r.body == "hi-\0-binary")
+assert(r.headers:find("X-Echo-Header: nested-header",1,true))
+local h = https.request_stream({url="https://10.0.2.2:"..https_port.."/chunked"})
+assert(https.status(h).status == 200)
+local data = ""
+repeat
+  local part = https.read(h, 3)
+  data = data .. part
+  if #part == 0 then break end
+until #data > 100
+assert(data == "Wikipedia")
+https.close(h)
+assert(not pcall(https.read, h, 1))
+local large = http.request({url="http://10.0.2.2:"..http_port.."/large"})
+assert(large.status == 200 and #large.body == 131072)
+assert(large.body:sub(1,16) == "0123456789abcdef")
+local nf = https.request({url="https://10.0.2.2:"..https_port.."/missing"})
+assert(nf.status == 404)
+assert(not pcall(https.request, {url="http://10.0.2.2:"..http_port.."/file"}))
+assert(not pcall(http.request, {url="http://10.0.2.2:"..http_port..
+  "/file\r\nInjected: bad"}))
+assert(not pcall(https.request, {url="https://10.0.2.2:"..https_port..
+  "/echo", headers={["X-Evil"]="a\r\nHost: bad"}}))
+http_saved_request = http.request
+LUA
+cat >"$work/http-vfs.lua" <<'LUA'
+local plaintext = grub.getenv("http_plain_port")
+local tlsport = grub.getenv("http_tls_port")
+local function file_read(path, expected)
+  local f = grub.file_open(path)
+  assert(f, "VFS failed: "..path.." / "..tostring(grub_errmsg))
+  local result = grub.file_read(f, #expected + 16)
+  grub.file_close(f)
+  if result ~= expected then
+    print("HTTP_VFS_DEBUG", path, #result,
+          string.format("%q", result))
+  end
+  assert(result == expected, path .. " : " .. tostring(#result))
+end
+file_read("(https,10.0.2.2:"..tlsport..")/file", "GRUB_HTTP_FILE_CONTENT")
+file_read("(http,10.0.2.2:"..plaintext..")/file", "GRUB_HTTP_FILE_CONTENT")
+local old_default_server = grub.getenv("net_default_server")
+grub.setenv("net_default_server", "10.0.2.2:"..plaintext)
+file_read("(http,)/file", "GRUB_HTTP_FILE_CONTENT")
+grub.setenv("net_default_server", "10.0.2.2:"..tlsport)
+file_read("(https,)/file", "GRUB_HTTP_FILE_CONTENT")
+grub.setenv("net_default_server", old_default_server or "")
+file_read("(https,10.0.2.2:"..tlsport..")/chunked", "Wikipedia")
+local f = grub.file_open("(https,10.0.2.2:"..tlsport..")/large")
+assert(f, tostring(grub_errmsg))
+local start = grub.file_read(f, 32768)
+assert(#start == 32768 and start:sub(1,16) == "0123456789abcdef")
+grub.file_seek(f, 131056)
+assert(grub.file_read(f, 16) == "0123456789abcdef")
+grub.file_close(f)
+LUA
+cat >"$work/http-reload.lua" <<'LUA'
+assert(not pcall(http_saved_request, {url="http://example.invalid/"}))
+local port = grub.getenv("http_plain_port")
+local r = http.request({url="http://10.0.2.2:"..port.."/file"})
+assert(r.status == 200 and r.body == "GRUB_HTTP_FILE_CONTENT")
+LUA
 cat >"$work/cfg.in" <<'CFG'
 serial --speed=115200
 terminal_input serial
@@ -302,16 +389,45 @@ if lua ($tls_root)/cancel-D.lua; then
 else
   echo TLS_CANCEL_D_FAIL
 fi
+insmod http
+set http_plain_port=@HTTPPORT@
+set http_tls_port=@HTTPSPORT@
+if lua ($tls_root)/http-test.lua; then
+  echo HTTP_BINDING_OK
+else
+  echo HTTP_BINDING_FAIL
+fi
+if lua ($tls_root)/http-vfs.lua; then
+  echo HTTP_VFS_OK
+else
+  echo HTTP_VFS_FAIL
+fi
+insmod configfile
+source (https,10.0.2.2:@HTTPSPORT@)/boot.cfg
+if rmmod http; then
+  echo HTTP_UNLOAD_OK
+else
+  echo HTTP_UNLOAD_FAIL
+fi
+insmod http
+if lua ($tls_root)/http-reload.lua; then
+  echo HTTP_RELOAD_OK
+else
+  echo HTTP_RELOAD_FAIL
+fi
 echo TLS_DONE
 halt
 CFG
-sed -e "s/@PORT@/$port/g" -e "s/@WRONGPORT@/$wrong_port/g"   -e "s/@RSAPORT@/$rsa_port/g" -e "s/@EXPIREDPORT@/$expired_port/g"   "$work/cfg.in" >"$work/grub.cfg"
+sed -e "s/@PORT@/$port/g" -e "s/@WRONGPORT@/$wrong_port/g"   -e "s/@RSAPORT@/$rsa_port/g" -e "s/@EXPIREDPORT@/$expired_port/g"   -e "s/@HTTPPORT@/$http_plain_port/g" -e "s/@HTTPSPORT@/$http_tls_port/g" "$work/cfg.in" >"$work/grub.cfg"
 truncate -s 32M "$work/esp.img"
 mkfs.fat -F 16 -n TLSTEST "$work/esp.img" >"$work/fs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT
 mcopy -i "$work/esp.img" "$work/ca.pem" ::/ca.pem
 mcopy -i "$work/esp.img" "$work/other-ca.pem" ::/other-ca.pem
 mcopy -i "$work/esp.img" "$work/test.lua" ::/test.lua
+mcopy -i "$work/esp.img" "$work/http-test.lua" ::/http-test.lua
+mcopy -i "$work/esp.img" "$work/http-vfs.lua" ::/http-vfs.lua
+mcopy -i "$work/esp.img" "$work/http-reload.lua" ::/http-reload.lua
 for script in clean hold release reload cancel-C cancel-D; do
   mcopy -i "$work/esp.img" "$work/$script.lua" "::/$script.lua"
 done
@@ -324,7 +440,7 @@ case "$platform" in
     sed -e 's/^terminal_input serial$/terminal_input serial console/' \
         -e '/^insmod net$/a insmod efinet' "$work/grub.cfg" >"$work/efi.cfg"
     mv "$work/efi.cfg" "$work/grub.cfg"
-    mods='serial terminal normal echo test halt fat part_msdos part_gpt search search_fs_file net efinet random tls lua minicmd'
+    mods='serial terminal normal echo test halt fat part_msdos part_gpt search search_fs_file net efinet random tls http lua minicmd configfile'
     "$build/grub-mkstandalone" -O x86_64-efi -d "$build/grub-core" \
       -o "$work/BOOTX64.EFI" --fonts='' --locales='' --themes='' --compress=no \
       --install-modules="$mods" \
@@ -342,7 +458,8 @@ case "$platform" in
     mkdir -p "$work/iso/boot/grub"
     cp "$work/ca.pem" "$work/other-ca.pem" "$work/test.lua" \
        "$work/clean.lua" "$work/hold.lua" "$work/release.lua" \
-       "$work/reload.lua" "$work/cancel-C.lua" "$work/cancel-D.lua" "$work/iso/"
+       "$work/reload.lua" "$work/cancel-C.lua" "$work/cancel-D.lua" \
+      "$work/http-test.lua" "$work/http-vfs.lua" "$work/http-reload.lua" "$work/iso/"
     sed '/^insmod net$/a insmod virtionet' "$work/grub.cfg" \
       >"$work/iso/boot/grub/grub.cfg"
     "$build/grub-mkrescue" -d "$build/grub-core" \
@@ -383,6 +500,19 @@ done
 grep -q TLS_SERVER_READY "$work/rsa-server.log" || fail "RSA TLS peer did not start"
 grep -q TLS_SERVER_READY "$work/expired-server.log" || fail "expired TLS peer did not start"
 
+python3 "$repo/tests/http_test_server.py" "$http_plain_port" >"$work/http-plain.log" 2>&1 &
+http_plain_pid=$!
+python3 "$repo/tests/http_test_server.py" "$http_tls_port" \
+  --cert "$work/server.pem" --key "$work/server.key" >"$work/http-tls.log" 2>&1 &
+http_tls_pid=$!
+for n in 1 2 3 4 5 6 7 8 9 10; do
+  if grep -q HTTP_SERVER_READY "$work/http-plain.log" &&
+     grep -q HTTP_SERVER_READY "$work/http-tls.log"; then break; fi
+  sleep 0.1
+done
+grep -q HTTP_SERVER_READY "$work/http-plain.log" || fail "HTTP test server unavailable"
+grep -q HTTP_SERVER_READY "$work/http-tls.log" || fail "HTTPS test server unavailable"
+
 # Slirp guest 10.0.2.2 reaches host loopback without root or tap networking.
 if test "$platform" = i386-pc; then
   nic=virtio-net-pci
@@ -397,7 +527,7 @@ python3 "${TLS_SERIAL_RUNNER:-$repo/tests/tls_serial_runner.py}"   --serial-log 
   -drive "if=virtio,format=raw,file=$work/esp.img" \
   >"$work/qemu.log" 2>&1 || fail "QEMU failed"
 
-for marker in TLS_DHCP_OK TLS_UNTRUSTED_REJECTED TLS_HOSTNAME_REJECTED TLS_RSA_OK TLS_EXPIRED_REJECTED TLS_NATIVE_OK TLS_TIME_OFFSET_OK TLS_REPEAT_1_OK TLS_REPEAT_2_OK TLS_REPEAT_3_OK TLS_REPEAT_4_OK TLS_REPEAT_5_OK TLS_REPEAT_6_OK TLS_REPEAT_7_OK TLS_REPEAT_8_OK TLS_LUA_OK TLS_CLEAN_EOF_OK TLS_HOLD_OK TLS_HANDLE_PIN_OK TLS_RELEASE_OK TLS_UNLOAD_OK TLS_RELOAD_OK TLS_FRESH_OK TLS_CANCEL_C_OK TLS_CANCEL_D_OK TLS_DONE; do
+for marker in TLS_DHCP_OK TLS_UNTRUSTED_REJECTED TLS_HOSTNAME_REJECTED TLS_RSA_OK TLS_EXPIRED_REJECTED TLS_NATIVE_OK TLS_TIME_OFFSET_OK TLS_REPEAT_1_OK TLS_REPEAT_2_OK TLS_REPEAT_3_OK TLS_REPEAT_4_OK TLS_REPEAT_5_OK TLS_REPEAT_6_OK TLS_REPEAT_7_OK TLS_REPEAT_8_OK TLS_LUA_OK TLS_CLEAN_EOF_OK TLS_HOLD_OK TLS_HANDLE_PIN_OK TLS_RELEASE_OK TLS_UNLOAD_OK TLS_RELOAD_OK TLS_FRESH_OK TLS_CANCEL_C_OK TLS_CANCEL_D_OK HTTP_BINDING_OK HTTP_VFS_OK HTTPS_CONFIG_EXECUTED HTTP_UNLOAD_OK HTTP_RELOAD_OK TLS_DONE; do
   grep -aq "$marker" "$work/serial.log" || { tail -n 60 "$work/serial.log"; fail "missing $marker"; }
 done
 ! grep -aq TLS_UNTRUSTED_ACCEPTED "$work/serial.log" || fail "invalid CA accepted"
