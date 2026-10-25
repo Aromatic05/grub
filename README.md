@@ -47,6 +47,8 @@ WriteFS currently has FAT/exFAT and NTFS write backends.
 - **Lua:** An embedded scripting runtime with GRUB-specific APIs.
 - **Native binding ABI:** Language-neutral typed exports with lazy Lua
   adapters, revocable function references and managed resource handles.
+- **TLS transport:** Standalone verified TLS 1.2 over GRUB TCP, with native
+  commands and common script bindings; no TLS-specific Lua module.
 - **INI and command extensions:** Configuration parsing and additional
   commands for interactive use and boot automation.
 
@@ -118,6 +120,7 @@ noncritical media before relying on them for important systems.
 - [Ventoy quick start (Chinese)](docs/ventoy/quickstart_zh.md)
 - [a1ive GRUB reference documentation (Chinese)](docs/alive/README.md)
 - [GRUB native binding ABI](docs/bind.md)
+- [GRUB TLS client transport](docs/tls.md)
 - [WriteFS QEMU regression suite](tests/writefs_qemu.sh)
 - [ntfs-3g upstream findings](tests/ntfs3g/README.md)
 - [Migration history and compatibility notes](docs/porting/MIGRATION_PROGRESS.md)
