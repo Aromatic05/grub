@@ -31,7 +31,8 @@ typedef struct
   int present;
   char name[2];
   grub_disk_t disk;
-  grub_uint64_t total_sectors;
+  grub_uint64_t total_sectors;  /* GRUB 512-byte units, including partitions */
+  grub_uint16_t sector_size;   /* FatFs BPB logical bytes/sector, per mount */
 } STAT;
 
 extern STAT fat_stat[];

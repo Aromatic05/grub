@@ -58,6 +58,7 @@ static grub_err_t fat_backend_mount (struct grub_writefs_mount *mount)
   fat_stat[n].present = 1;
   fat_stat[n].disk = mount->disk;
   fat_stat[n].total_sectors = grub_disk_native_sectors (mount->disk);
+  fat_stat[n].sector_size = 0;
   grub_snprintf (fat_stat[n].name, sizeof (fat_stat[n].name), "%u", n);
   res = f_mount (&fatfs_list[n], dev, 1);
   if (res)
@@ -94,7 +95,8 @@ static grub_err_t fat_backend_open (struct grub_writefs_file *file, const char *
   if (fp->obj.fs->fs_type == FS_EXFAT)
     file->id = ((grub_uint64_t) fp->obj.c_scl << 32) | fp->obj.c_ofs;
   else
-    file->id = (fp->dir_sect << 9) + (fp->dir_ptr - fp->obj.fs->win);
+    file->id = (grub_uint64_t) fp->dir_sect * fp->obj.fs->ssize
+               + (fp->dir_ptr - fp->obj.fs->win);
   return GRUB_ERR_NONE;
 }
 static grub_ssize_t fat_backend_read (struct grub_writefs_file *file, void *buf, grub_size_t len)
