@@ -14,10 +14,13 @@ struct grub_writefs_file
   struct grub_writefs_mount *mount;
   void *data;
   grub_uint64_t offset, size, id;
+  unsigned flags;
 };
 struct grub_writefs_driver
 {
   const char *name;
+  /* Comma-separated filesystem names, independent of loaded mount instances. */
+  const char *types;
   grub_dl_t mod;
   struct grub_writefs_driver *next;
   /* Return nonzero when this driver handles DISK.  Probe must not write. */
@@ -64,12 +67,41 @@ struct grub_writefs_mount
   void *data;
   unsigned num, open_files;
 };
+/* Filesystems are registered by native backends; registration does not mount. */
 #ifndef GRUB_LST_GENERATOR
-void EXPORT_FUNC(grub_writefs_register) (struct grub_writefs_driver *);
+void EXPORT_FUNC(grub_writefs_register) (struct grub_writefs_driver *,
+                                         const char *types);
 #endif
 void EXPORT_FUNC(grub_writefs_unregister) (struct grub_writefs_driver *);
 grub_err_t EXPORT_FUNC(grub_writefs_mount) (const char *, unsigned);
 grub_err_t EXPORT_FUNC(grub_writefs_umount) (unsigned);
 struct grub_writefs_mount *EXPORT_FUNC(grub_writefs_get) (unsigned);
+
+/* Only paths on explicitly mounted WriteFS volumes (N:/path) are accepted.
+   Callers own FILE storage; successful open must be followed by close. */
+grub_err_t EXPORT_FUNC(grub_writefs_open) (struct grub_writefs_file *,
+                                           const char *, unsigned);
+grub_ssize_t EXPORT_FUNC(grub_writefs_read) (struct grub_writefs_file *,
+                                             void *, grub_size_t);
+grub_ssize_t EXPORT_FUNC(grub_writefs_write) (struct grub_writefs_file *,
+                                              const void *, grub_size_t);
+grub_err_t EXPORT_FUNC(grub_writefs_seek) (struct grub_writefs_file *,
+                                           grub_uint64_t);
+grub_err_t EXPORT_FUNC(grub_writefs_truncate) (struct grub_writefs_file *);
+grub_err_t EXPORT_FUNC(grub_writefs_close) (struct grub_writefs_file *);
+grub_err_t EXPORT_FUNC(grub_writefs_mkdir) (const char *);
+grub_err_t EXPORT_FUNC(grub_writefs_unlink) (const char *);
+grub_err_t EXPORT_FUNC(grub_writefs_rename) (const char *, const char *);
+grub_err_t EXPORT_FUNC(grub_writefs_touch) (const char *,
+                                             const struct grub_datetime *, unsigned);
+
+/* Enumerate installed writable filesystem types without mounting/loading.
+   If the generated manifest is unavailable, report only loaded drivers.
+   A nonzero callback result stops enumeration. */
+typedef int (*grub_writefs_fs_hook_t) (const char *type, const char *driver,
+                                      int loaded, void *data);
+grub_err_t EXPORT_FUNC(grub_writefs_iterate_filesystems)
+  (grub_writefs_fs_hook_t hook, void *data);
+
 void grub_writefs_init (void);
 #endif

@@ -311,7 +311,7 @@ static struct grub_writefs_driver driver = {
 GRUB_MOD_INIT(ntfs3g)
 {
   driver.mod = mod;
-  grub_writefs_register (&driver);
+  grub_writefs_register (&driver, "ntfs");
 }
 GRUB_MOD_FINI(ntfs3g)
 {

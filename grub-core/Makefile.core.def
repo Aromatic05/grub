@@ -1254,6 +1254,7 @@ module = {
 
   common = script/lua/grub_main.c;
   common = script/lua/grub_lib.c;
+  common = script/lua/grub_writefs.c;
 
   cflags = '$(CFLAGS_POSIX)';
   cppflags = '$(CPPFLAGS_POSIX) -DGRUB_LUA';

@@ -407,6 +407,17 @@ writefs.lst: $(MARKER_FILES)
 platform_DATA += writefs.lst
 CLEANFILES += writefs.lst
 
+# Filesystem names are available before writable drivers have been loaded.
+# Keep these records in sync with each module's grub_writefs_register call.
+writefs-types.lst: $(MARKER_FILES)
+	(for pp in $^; do \
+	  b=`basename $$pp .marker`; \
+	  sed -n 's/.*WRITEFS_DRIVER_LIST_MARKER *(.*"\([^"]*\)".*/\1/p' $$pp \
+	    | tr ',' '\n' | sed "/^$$/d;s/$$/ $$b/"; \
+	done) | sort -u > $@
+platform_DATA += writefs-types.lst
+CLEANFILES += writefs-types.lst
+
 command.lst: $(MARKER_FILES)
 	(for pp in $^; do \
 	  b=`basename $$pp .marker`; \

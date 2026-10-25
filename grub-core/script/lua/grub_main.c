@@ -32,6 +32,7 @@
 GRUB_MOD_LICENSE("GPLv3+");
 
 lua_State *grub_lua_global_state = NULL;
+extern void grub_lua_register_writefs (lua_State *state);
 
 /* Call `grub_error' to report a Lua error.  The error message string must be
    on the top of the Lua stack (at index -1).  The error message is popped off
@@ -214,6 +215,7 @@ GRUB_MOD_INIT (lua)
     lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
     luaL_openlibs (grub_lua_global_state);
     luaL_register (grub_lua_global_state, "grub", grub_lua_lib);
+    grub_lua_register_writefs (grub_lua_global_state);
     lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
     cmd = grub_register_extcmd ("lua", grub_cmd_lua, 0, N_("[OPTIONS] [FILE]"),
               N_ ("Run lua script FILE or start interactive lua shell"), options);

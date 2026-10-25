@@ -1073,7 +1073,8 @@ grub_install_copy_files (const char *src,
 
   const char *pkglib_DATA[] = {"efiemu32.o", "efiemu64.o",
 			       "moddep.lst", "command.lst",
-			       "fs.lst", "writefs.lst", "partmap.lst",
+			       "fs.lst", "writefs.lst", "writefs-types.lst",
+			       "partmap.lst",
 			       "parttool.lst",
 			       "video.lst", "crypto.lst",
 			       "terminal.lst", "modinfo.sh" };

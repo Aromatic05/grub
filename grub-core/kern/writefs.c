@@ -9,8 +9,10 @@
 static struct grub_writefs_driver *drivers;
 static struct grub_writefs_mount mounts[GRUB_WRITEFS_DRIVES];
 
-void grub_writefs_register (struct grub_writefs_driver *driver)
+void grub_writefs_register (struct grub_writefs_driver *driver,
+                            const char *types)
 {
+  driver->types = types;
   driver->next = drivers;
   drivers = driver;
 }
@@ -165,26 +167,184 @@ grub_err_t grub_writefs_umount (unsigned num)
 }
 static struct grub_writefs_mount *path_mount (const char *path)
 {
-  if (path[0] < '1' || path[0] > '9' || path[1] != ':' || path[2] != '/')
+  if (!path || path[0] < '1' || path[0] > '9' ||
+      path[1] != ':' || path[2] != '/')
     { grub_error (GRUB_ERR_BAD_FILENAME, "expected N:/path"); return NULL; }
   return grub_writefs_get (path[0] - '0');
 }
-static grub_err_t open_file (struct grub_writefs_file *file, const char *path, unsigned flags)
+grub_err_t grub_writefs_open (struct grub_writefs_file *file, const char *path, unsigned flags)
 {
   grub_err_t err;
+  if (!file)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "null WriteFS file");
   grub_memset (file, 0, sizeof (*file));
+  if (!(flags & (GRUB_WRITEFS_READ | GRUB_WRITEFS_WRITE)) ||
+      (flags & ~(GRUB_WRITEFS_READ | GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE)) ||
+      ((flags & GRUB_WRITEFS_CREATE) && !(flags & GRUB_WRITEFS_WRITE)))
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid WriteFS open flags");
   file->mount = path_mount (path);
+  file->flags = flags;
   if (!file->mount) return grub_errno;
   err = file->mount->driver->open (file, path, flags);
   if (!err) file->mount->open_files++;
+  else grub_memset (file, 0, sizeof (*file));
   return err;
 }
-static grub_err_t close_file (struct grub_writefs_file *file)
+grub_err_t grub_writefs_close (struct grub_writefs_file *file)
 {
-  grub_err_t err = file->mount->driver->close (file);
+  grub_err_t err;
+  if (!file || !file->mount)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file is closed");
+  err = file->mount->driver->close (file);
   file->mount->open_files--;
+  grub_memset (file, 0, sizeof (*file));
   return err;
 }
+grub_ssize_t
+grub_writefs_read (struct grub_writefs_file *file, void *buf, grub_size_t len)
+{
+  if (!file || !file->mount || !(file->flags & GRUB_WRITEFS_READ) || (!buf && len))
+    { grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file not open for reading"); return -1; }
+  return len ? file->mount->driver->read (file, buf, len) : 0;
+}
+
+grub_ssize_t
+grub_writefs_write (struct grub_writefs_file *file, const void *buf, grub_size_t len)
+{
+  if (!file || !file->mount || !(file->flags & GRUB_WRITEFS_WRITE) || (!buf && len))
+    { grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file not open for writing"); return -1; }
+  return len ? file->mount->driver->write (file, buf, len) : 0;
+}
+
+grub_err_t
+grub_writefs_seek (struct grub_writefs_file *file, grub_uint64_t offset)
+{
+  if (!file || !file->mount)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file is closed");
+  if (offset > 0x7fffffffffffffffULL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "WriteFS offset too large");
+  file->offset = offset;
+  return GRUB_ERR_NONE;
+}
+
+grub_err_t
+grub_writefs_truncate (struct grub_writefs_file *file)
+{
+  if (!file || !file->mount || !(file->flags & GRUB_WRITEFS_WRITE))
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "WriteFS file not open for writing");
+  return file->mount->driver->truncate (file);
+}
+
+grub_err_t
+grub_writefs_mkdir (const char *path)
+{
+  struct grub_writefs_mount *mount = path_mount (path);
+  return mount ? mount->driver->mkdir (mount, path) : grub_errno;
+}
+
+grub_err_t
+grub_writefs_unlink (const char *path)
+{
+  struct grub_writefs_mount *mount = path_mount (path);
+  return mount ? mount->driver->unlink (mount, path) : grub_errno;
+}
+
+grub_err_t
+grub_writefs_touch (const char *path, const struct grub_datetime *dt,
+                    unsigned count)
+{
+  struct grub_writefs_mount *mount = path_mount (path);
+  return mount ? mount->driver->touch (mount, path, dt, count) : grub_errno;
+}
+
+/* Enumerate filesystem types from the installed platform manifest.
+   No writable backend is loaded and no volume is mounted by this query. */
+static int
+report_types (const char *types, const char *driver, int loaded,
+              grub_writefs_fs_hook_t hook, void *data)
+{
+  const char *p = types;
+  while (p && *p)
+    {
+      char type[64];
+      grub_size_t size = 0;
+      int overflow = 0;
+      while (*p && *p != ',')
+        {
+          if (size + 1 < sizeof (type)) type[size++] = *p;
+          else overflow = 1;
+          p++;
+        }
+      type[size] = 0;
+      if (size && !overflow && hook (type, driver, loaded, data)) return 1;
+      if (*p == ',') p++;
+    }
+  return 0;
+}
+
+grub_err_t
+grub_writefs_iterate_filesystems (grub_writefs_fs_hook_t hook, void *data)
+{
+  const char *prefix = grub_env_get ("prefix");
+  struct grub_writefs_driver *driver;
+  grub_file_t file = NULL;
+  char *filename;
+  char line[160], c;
+  grub_size_t len = 0;
+  grub_ssize_t n;
+  int overflow = 0;
+
+  if (!hook)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "null WriteFS iterator");
+  if (prefix)
+    {
+      filename = grub_xasprintf ("%s/" GRUB_TARGET_CPU "-" GRUB_PLATFORM
+                                  "/writefs-types.lst", prefix);
+      if (!filename) return grub_errno;
+      file = grub_file_open (filename, GRUB_FILE_TYPE_GRUB_MODULE_LIST);
+      grub_free (filename);
+      if (!file) grub_errno = GRUB_ERR_NONE;
+    }
+  if (file)
+    {
+      do
+        {
+          n = grub_file_read (file, &c, 1);
+          if (n != 1 || c == '\n')
+            {
+              if (len && !overflow)
+                {
+                  char *sep;
+                  line[len] = 0;
+                  sep = grub_strchr (line, ' ');
+                  if (sep && sep[1])
+                    {
+                      *sep++ = 0;
+                      if (hook (line, sep, grub_dl_get (sep) != NULL, data))
+                        break;
+                    }
+                }
+              len = 0;
+              overflow = 0;
+            }
+          else if (c != '\r')
+            {
+              if (len + 1 < sizeof (line)) line[len++] = c;
+              else overflow = 1;
+            }
+        }
+      while (n == 1);
+      grub_file_close (file);
+      grub_errno = GRUB_ERR_NONE;
+      return GRUB_ERR_NONE;
+    }
+  /* Built-in drivers work even when there is no installed module directory. */
+  for (driver = drivers; driver; driver = driver->next)
+    if (report_types (driver->types, driver->name, 1, hook, data))
+      break;
+  return GRUB_ERR_NONE;
+}
+
 static grub_err_t parse_num (const char *s, unsigned *num)
 {
   if (s[0] < '1' || s[0] > '9' || s[1])
@@ -192,9 +352,20 @@ static grub_err_t parse_num (const char *s, unsigned *num)
   *num = s[0] - '0';
   return GRUB_ERR_NONE;
 }
+static int
+print_fs_type (const char *type, const char *driver, int loaded,
+               void *data __attribute__ ((unused)))
+{
+  grub_printf ("%s: %s%s\n", type, driver, loaded ? " (loaded)" : "");
+  return 0;
+}
+
 static grub_err_t cmd_mount (grub_command_t cmd __attribute__((unused)), int argc, char **args)
 {
   unsigned num = 0;
+  if (argc == 1 && (!grub_strcmp (args[0], "filesystems") ||
+                    !grub_strcmp (args[0], "--list-filesystems")))
+    return grub_writefs_iterate_filesystems (print_fs_type, NULL);
   if (argc == 1 && !grub_strcmp (args[0], "status"))
     {
       for (num = 1; num < GRUB_WRITEFS_DRIVES; num++)
@@ -220,14 +391,11 @@ static grub_err_t cmd_umount (grub_command_t cmd __attribute__((unused)), int ar
 }
 static grub_err_t cmd_path (grub_command_t cmd, int argc, char **args)
 {
-  struct grub_writefs_mount *mount;
   if (argc != 1) return grub_error (GRUB_ERR_BAD_ARGUMENT, "expected PATH");
-  mount = path_mount (args[0]);
-  if (!mount) return grub_errno;
-  if (!grub_strcmp (cmd->name, "mkdir")) return mount->driver->mkdir (mount, args[0]);
-  return mount->driver->unlink (mount, args[0]);
+  return !grub_strcmp (cmd->name, "mkdir") ?
+    grub_writefs_mkdir (args[0]) : grub_writefs_unlink (args[0]);
 }
-static grub_err_t rename_file (const char *src, const char *dst)
+grub_err_t grub_writefs_rename (const char *src, const char *dst)
 {
   struct grub_writefs_mount *a = path_mount (src), *b;
   if (!a) return grub_errno;
@@ -245,7 +413,7 @@ static grub_err_t copy_file (const char *src, const char *dst)
   int mounted_src = src[0] >= '0' && src[0] <= '9' && src[1] == ':';
   grub_ssize_t nr, nw;
   if (mounted_src)
-    { if (open_file (&in, src, GRUB_WRITEFS_READ)) return grub_errno; }
+    { if (grub_writefs_open (&in, src, GRUB_WRITEFS_READ)) return grub_errno; }
   else
     {
       native = grub_file_open (src, GRUB_FILE_TYPE_HEXCAT | GRUB_FILE_TYPE_NO_DECOMPRESS);
@@ -262,7 +430,7 @@ static grub_err_t copy_file (const char *src, const char *dst)
                 if (!mounted_path) { grub_file_close (native); return grub_errno; }
                 err = grub_file_close (native);
                 native = NULL;
-                if (!err) err = open_file (&in, mounted_path, GRUB_WRITEFS_READ);
+                if (!err) err = grub_writefs_open (&in, mounted_path, GRUB_WRITEFS_READ);
                 grub_free (mounted_path);
                 if (err) return err;
                 mounted_src = 1;
@@ -272,27 +440,27 @@ static grub_err_t copy_file (const char *src, const char *dst)
     }
   buf = grub_malloc (65536);
   if (!buf) { err = grub_errno; goto close_in; }
-  if (open_file (&out, dst, GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE))
+  if (grub_writefs_open (&out, dst, GRUB_WRITEFS_WRITE | GRUB_WRITEFS_CREATE))
     { err = grub_errno; goto free_buf; }
   if (mounted_src && in.mount == out.mount && in.id == out.id)
     { err = grub_error (GRUB_ERR_BAD_ARGUMENT, "source and destination are the same file"); goto close_out; }
-  if (out.mount->driver->truncate (&out)) { err = grub_errno; goto close_out; }
+  if (grub_writefs_truncate (&out)) { err = grub_errno; goto close_out; }
   for (;;)
     {
-      nr = mounted_src ? in.mount->driver->read (&in, buf, 65536) : grub_file_read (native, buf, 65536);
+      nr = mounted_src ? grub_writefs_read (&in, buf, 65536) : grub_file_read (native, buf, 65536);
       if (nr < 0) { err = grub_errno; break; }
       if (!nr) break;
-      nw = out.mount->driver->write (&out, buf, nr);
+      nw = grub_writefs_write (&out, buf, nr);
       if (nw != nr)
         { err = grub_errno ? grub_errno : grub_error (GRUB_ERR_WRITE_ERROR, "short write"); break; }
     }
 close_out:
-  enderr = close_file (&out);
+  enderr = grub_writefs_close (&out);
   if (!err) err = enderr;
 free_buf:
   grub_free (buf);
 close_in:
-  enderr = mounted_src ? close_file (&in) : grub_file_close (native);
+  enderr = mounted_src ? grub_writefs_close (&in) : grub_file_close (native);
   return err ? err : enderr;
 }
 static grub_err_t cmd_pair (grub_command_t cmd, int argc, char **args)
@@ -300,15 +468,15 @@ static grub_err_t cmd_pair (grub_command_t cmd, int argc, char **args)
   struct grub_writefs_mount *a, *b;
   grub_err_t err;
   if (argc != 2) return grub_error (GRUB_ERR_BAD_ARGUMENT, "expected SOURCE DESTINATION");
-  if (!grub_strcmp (cmd->name, "rename")) return rename_file (args[0], args[1]);
+  if (!grub_strcmp (cmd->name, "rename")) return grub_writefs_rename (args[0], args[1]);
   if (!grub_strcmp (cmd->name, "cp")) return copy_file (args[0], args[1]);
   a = path_mount (args[0]);
   if (!a) return grub_errno;
   b = path_mount (args[1]);
   if (!b) return grub_errno;
-  if (a == b) return rename_file (args[0], args[1]);
+  if (a == b) return grub_writefs_rename (args[0], args[1]);
   err = copy_file (args[0], args[1]);
-  return err ? err : a->driver->unlink (a, args[0]);
+  return err ? err : grub_writefs_unlink (args[0]);
 }
 static grub_err_t cmd_touch (grub_command_t cmd __attribute__((unused)), int argc, char **args)
 {
@@ -328,7 +496,7 @@ static grub_err_t cmd_touch (grub_command_t cmd __attribute__((unused)), int arg
     }
   dt.year = values[0]; dt.month = values[1]; dt.day = values[2];
   dt.hour = values[3]; dt.minute = values[4]; dt.second = values[5];
-  return mount->driver->touch (mount, args[0], &dt, argc - 1);
+  return grub_writefs_touch (args[0], &dt, argc - 1);
 }
 static grub_err_t cmd_write (grub_command_t cmd __attribute__((unused)), int argc, char **args)
 {
@@ -347,18 +515,19 @@ static grub_err_t cmd_write (grub_command_t cmd __attribute__((unused)), int arg
     }
   len = grub_strlen (args[1]);
   if (offset > 0x7fffffffffffffffULL - len) return grub_error (GRUB_ERR_OUT_OF_RANGE, "file offset overflow");
-  if (open_file (&file, args[0], GRUB_WRITEFS_WRITE)) return grub_errno;
-  file.offset = offset;
-  written = file.mount->driver->write (&file, args[1], len);
+  if (grub_writefs_open (&file, args[0], GRUB_WRITEFS_WRITE)) return grub_errno;
+  err = grub_writefs_seek (&file, offset);
+  if (err) { grub_writefs_close (&file); return err; }
+  written = grub_writefs_write (&file, args[1], len);
   err = written == (grub_ssize_t) len ? GRUB_ERR_NONE :
     (grub_errno ? grub_errno : grub_error (GRUB_ERR_WRITE_ERROR, "short write"));
-  enderr = close_file (&file);
+  enderr = grub_writefs_close (&file);
   return err ? err : enderr;
 }
 void
 grub_writefs_init (void)
 {
-  grub_register_command ("mount", cmd_mount, "DISK NUM | status", "Mount a writable volume.");
+  grub_register_command ("mount", cmd_mount, "DISK NUM | status | filesystems", "Mount a writable volume.");
   grub_register_command ("umount", cmd_umount, "NUM", "Unmount a writable volume.");
   grub_register_command ("mkdir", cmd_path, "PATH", "Create a directory.");
   grub_register_command ("rm", cmd_path, "PATH", "Remove a file or empty directory.");
