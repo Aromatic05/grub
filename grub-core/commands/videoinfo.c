@@ -423,6 +423,25 @@ bind_video_swap_buffers (grub_size_t argc __attribute__ ((unused)),
   return grub_video_swap_buffers ();
 }
 
+/* Native video calls narrow coordinates to int and extents to unsigned.
+   Reject values not representable in those target types. */
+static grub_err_t
+video_bind_position (const struct grub_bind_value *value)
+{
+  if (value->value.i64 < -2147483648LL ||
+      value->value.i64 > 2147483647LL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "video coordinate out of range");
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+video_bind_extent (const struct grub_bind_value *value)
+{
+  if (value->value.u64 > 0xffffffffULL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE, "video extent out of range");
+  return GRUB_ERR_NONE;
+}
+
 static grub_err_t
 bind_video_fill_rect (grub_size_t argc __attribute__ ((unused)),
                       const struct grub_bind_value *args,
@@ -430,8 +449,13 @@ bind_video_fill_rect (grub_size_t argc __attribute__ ((unused)),
                       grub_size_t *nresults)
 {
   grub_video_color_t color;
-  grub_err_t err = video_bind_color (&args[0], &color);
-  if (err) return err;
+  grub_err_t err;
+  if ((err = video_bind_position (&args[1])) ||
+      (err = video_bind_position (&args[2])) ||
+      (err = video_bind_extent (&args[3])) ||
+      (err = video_bind_extent (&args[4])) ||
+      (err = video_bind_color (&args[0], &color)))
+    return err;
   *nresults = 0;
   return grub_video_fill_rect (color, args[1].value.i64,
                               args[2].value.i64, args[3].value.u64,
@@ -445,8 +469,11 @@ bind_video_draw_pixel (grub_size_t argc __attribute__ ((unused)),
                        grub_size_t *nresults)
 {
   grub_video_color_t color;
-  grub_err_t err = video_bind_color (&args[0], &color);
-  if (err) return err;
+  grub_err_t err;
+  if ((err = video_bind_position (&args[1])) ||
+      (err = video_bind_position (&args[2])) ||
+      (err = video_bind_color (&args[0], &color)))
+    return err;
   *nresults = 0;
   return grub_video_fill_rect (color, args[1].value.i64,
                               args[2].value.i64, 1, 1);
@@ -481,8 +508,11 @@ bind_video_draw_string (grub_size_t argc __attribute__ ((unused)),
 {
   grub_video_color_t color;
   grub_font_t font;
-  grub_err_t err = video_bind_color (&args[2], &color);
-  if (err) return err;
+  grub_err_t err;
+  if ((err = video_bind_position (&args[3])) ||
+      (err = video_bind_position (&args[4])) ||
+      (err = video_bind_color (&args[2], &color)))
+    return err;
   font = grub_font_get (args[1].value.bytes.data);
   if (!font)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "video font unavailable");
@@ -572,7 +602,15 @@ bind_video_bitmap_blit (grub_size_t argc __attribute__ ((unused)),
                         grub_size_t *nresults)
 {
   struct grub_video_bitmap *bitmap = video_bitmap_from_value (&args[0]);
+  grub_err_t err;
   if (!bitmap) return grub_errno;
+  if ((err = video_bind_position (&args[1])) ||
+      (err = video_bind_position (&args[2])) ||
+      (err = video_bind_position (&args[3])) ||
+      (err = video_bind_position (&args[4])) ||
+      (err = video_bind_extent (&args[5])) ||
+      (err = video_bind_extent (&args[6])))
+    return err;
   *nresults = 0;
   return grub_video_blit_bitmap (bitmap, GRUB_VIDEO_BLIT_BLEND,
                                  args[1].value.i64, args[2].value.i64,
