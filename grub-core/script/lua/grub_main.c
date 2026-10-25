@@ -33,6 +33,9 @@ GRUB_MOD_LICENSE("GPLv3+");
 
 lua_State *grub_lua_global_state = NULL;
 extern void grub_lua_register_writefs (lua_State *state);
+extern void grub_lua_bind_attach (lua_State *state);
+extern void grub_lua_bind_detach (void);
+extern void grub_lua_bind_refresh (lua_State *state);
 
 /* Call `grub_error' to report a Lua error.  The error message string must be
    on the top of the Lua stack (at index -1).  The error message is popped off
@@ -166,6 +169,7 @@ static grub_err_t
 grub_cmd_lua (grub_extcmd_context_t ctxt, int argc, char **args)
 {
   struct grub_arg_list *opt = ctxt->state;
+  grub_lua_bind_refresh (grub_lua_global_state);
   if (opt[GRUB_LUA_LOA].set)
   {
     lua_getglobal(grub_lua_global_state, "require");
@@ -216,6 +220,7 @@ GRUB_MOD_INIT (lua)
     luaL_openlibs (grub_lua_global_state);
     luaL_register (grub_lua_global_state, "grub", grub_lua_lib);
     grub_lua_register_writefs (grub_lua_global_state);
+    grub_lua_bind_attach (grub_lua_global_state);
     lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
     cmd = grub_register_extcmd ("lua", grub_cmd_lua, 0, N_("[OPTIONS] [FILE]"),
               N_ ("Run lua script FILE or start interactive lua shell"), options);
@@ -226,7 +231,9 @@ GRUB_MOD_FINI (lua)
 {
   if (grub_lua_global_state)
   {
+    grub_lua_bind_detach ();
     lua_close (grub_lua_global_state);
+    grub_lua_global_state = NULL;
     grub_unregister_extcmd (cmd);
   }
 }

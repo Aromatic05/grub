@@ -165,6 +165,7 @@ kernel = {
   common = kern/memfile.c;
   common = kern/fs.c;
   common = kern/writefs.c;
+  common = kern/bind.c;
   common = kern/list.c;
   common = kern/main.c;
   common = kern/misc.c;
@@ -1255,6 +1256,7 @@ module = {
   common = script/lua/grub_main.c;
   common = script/lua/grub_lib.c;
   common = script/lua/grub_writefs.c;
+  common = script/lua/grub_bind.c;
 
   cflags = '$(CFLAGS_POSIX)';
   cppflags = '$(CPPFLAGS_POSIX) -DGRUB_LUA';
