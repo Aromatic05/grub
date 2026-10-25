@@ -27,6 +27,21 @@ typedef struct grub_net_tcp_socket *grub_net_tcp_socket_t;
 struct grub_net_tcp_listen;
 typedef struct grub_net_tcp_listen *grub_net_tcp_listen_t;
 
+/* Optional connect-phase cancellation.  The callback should return true
+   after setting grub_errno.  The ordinary open() retains legacy behavior. */
+grub_net_tcp_socket_t
+grub_net_tcp_open_cancelable (char *server,
+                           grub_uint16_t out_port,
+                           grub_err_t (*recv_hook) (grub_net_tcp_socket_t sock,
+                                                   struct grub_net_buff *nb,
+                                                   void *data),
+                           void (*error_hook) (grub_net_tcp_socket_t sock,
+                                               void *data),
+                           void (*fin_hook) (grub_net_tcp_socket_t sock,
+                                             void *data),
+                           void *hook_data,
+                           int (*cancel) (void *), void *cancel_data);
+
 grub_net_tcp_socket_t
 grub_net_tcp_open (char *server,
 		   grub_uint16_t out_port,
@@ -64,6 +79,12 @@ enum
 
 void
 grub_net_tcp_close (grub_net_tcp_socket_t sock, int discard_received);
+
+/* Reclaim a socket and all its TCP-owned queues immediately.  The caller must
+   stop using it and must not invoke this inside one of its TCP callbacks.
+   Unlike close(), disposal does not wait for retransmissions/FIN ACKs. */
+void
+grub_net_tcp_dispose (grub_net_tcp_socket_t sock);
 
 grub_err_t
 grub_net_tcp_accept (grub_net_tcp_socket_t sock,

@@ -490,6 +490,38 @@ destroy_pq (grub_net_tcp_socket_t sock)
   grub_priority_queue_destroy (sock->pq);
 }
 
+/* close() begins TCP shutdown, but the owner must release sockets after
+   the last callback.  Otherwise the retransmit and reorder queues persist
+   indefinitely.  Do not call dispose from a TCP callback. */
+void
+grub_net_tcp_dispose (grub_net_tcp_socket_t sock)
+{
+  struct unacked *unack, *next;
+
+  if (!sock)
+    return;
+  grub_list_remove (GRUB_AS_LIST (sock));
+  sock->recv_hook = NULL;
+  sock->error_hook = NULL;
+  sock->fin_hook = NULL;
+  sock->hook_data = NULL;
+
+  for (unack = sock->unack_first; unack; unack = next)
+    {
+      next = unack->next;
+      grub_netbuff_free (unack->nb);
+      grub_free (unack);
+    }
+  while (sock->packs.first)
+    {
+      grub_netbuff_free (sock->packs.first->nb);
+      grub_net_remove_packet (sock->packs.first);
+    }
+  if (sock->pq)
+    destroy_pq (sock);
+  grub_free (sock);
+}
+
 grub_err_t
 grub_net_tcp_accept (grub_net_tcp_socket_t sock,
 		     grub_err_t (*recv_hook) (grub_net_tcp_socket_t sock,
@@ -584,7 +616,7 @@ get_initial_base_port (void)
 }
 
 grub_net_tcp_socket_t
-grub_net_tcp_open (char *server,
+grub_net_tcp_open_cancelable (char *server,
 		   grub_uint16_t out_port,
 		   grub_err_t (*recv_hook) (grub_net_tcp_socket_t sock,
 					    struct grub_net_buff *nb,
@@ -593,7 +625,8 @@ grub_net_tcp_open (char *server,
 				       void *data),
 		   void (*fin_hook) (grub_net_tcp_socket_t sock,
 				     void *data),
-		   void *hook_data)
+		   void *hook_data,
+		   int (*cancel) (void *), void *cancel_data)
 {
   grub_err_t err;
   grub_net_network_level_address_t addr;
@@ -704,20 +737,28 @@ grub_net_tcp_open (char *server,
 				     GRUB_NET_IP_TCP);
       if (err)
 	{
-	  grub_list_remove (GRUB_AS_LIST (socket));
-	  grub_free (socket);
+	  grub_net_tcp_dispose (socket);
 	  grub_netbuff_free (nb);
 	  return NULL;
 	}
       for (j = 0; (j < TCP_SYN_RETRANSMISSION_TIMEOUT / 50
 		   && !socket->established); j++)
-	grub_net_poll_cards (50, &socket->established);
+	{
+	  grub_net_poll_cards (50, &socket->established);
+	  if (cancel && cancel (cancel_data))
+	    {
+	      grub_err_t cancelled = grub_errno;
+	      grub_netbuff_free (nb);
+	      grub_net_tcp_dispose (socket);
+	      grub_errno = cancelled;
+	      return NULL;
+	    }
+	}
       if (socket->established)
 	break;
     }
   if (!socket->established)
     {
-      grub_list_remove (GRUB_AS_LIST (socket));
       if (socket->they_reseted)
 	grub_error (GRUB_ERR_NET_PORT_CLOSED,
 		    N_("connection refused"));
@@ -726,13 +767,27 @@ grub_net_tcp_open (char *server,
 		    N_("connection timeout"));
 
       grub_netbuff_free (nb);
-      destroy_pq (socket);
-      grub_free (socket);
+      grub_net_tcp_dispose (socket);
       return NULL;
     }
 
   grub_netbuff_free (nb);
   return socket;
+}
+
+/* Existing users of the TCP API continue to use a non-interruptible
+   connection; TLS opts into cancellation without changing HTTP behavior. */
+grub_net_tcp_socket_t
+grub_net_tcp_open (char *server, grub_uint16_t out_port,
+                   grub_err_t (*recv_hook) (grub_net_tcp_socket_t,
+                                            struct grub_net_buff *, void *),
+                   void (*error_hook) (grub_net_tcp_socket_t, void *),
+                   void (*fin_hook) (grub_net_tcp_socket_t, void *),
+                   void *hook_data)
+{
+  return grub_net_tcp_open_cancelable (server, out_port, recv_hook,
+                                       error_hook, fin_hook, hook_data,
+                                       NULL, NULL);
 }
 
 grub_err_t
