@@ -145,6 +145,8 @@ grub_disk_write (grub_disk_t disk, grub_disk_addr_t sector,
 		 << (GRUB_DISK_CACHE_BITS + GRUB_DISK_SECTOR_BITS
 		     - disk->log_sector_size));
 
+	  len = n << disk->log_sector_size;
+
 	  if ((disk->dev->disk_write) (disk, grub_disk_to_native_sector (disk, sector),
 				       n, buf) != GRUB_ERR_NONE)
 	    goto finish;
