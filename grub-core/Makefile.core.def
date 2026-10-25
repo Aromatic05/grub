@@ -2964,6 +2964,51 @@ module = {
 };
 
 module = {
+  name = tls;
+  common = net/tls.c;
+  common = lib/mbedtls/library/aes.c;
+  common = lib/mbedtls/library/asn1parse.c;
+  common = lib/mbedtls/library/asn1write.c;
+  common = lib/mbedtls/library/base64.c;
+  common = lib/mbedtls/library/bignum.c;
+  common = lib/mbedtls/library/bignum_core.c;
+  common = lib/mbedtls/library/bignum_mod.c;
+  common = lib/mbedtls/library/bignum_mod_raw.c;
+  common = lib/mbedtls/library/cipher.c;
+  common = lib/mbedtls/library/cipher_wrap.c;
+  common = lib/mbedtls/library/constant_time.c;
+  common = lib/mbedtls/library/ctr_drbg.c;
+  common = lib/mbedtls/library/ecdh.c;
+  common = lib/mbedtls/library/ecdsa.c;
+  common = lib/mbedtls/library/ecp.c;
+  common = lib/mbedtls/library/ecp_curves.c;
+  common = lib/mbedtls/library/entropy.c;
+  common = lib/mbedtls/library/gcm.c;
+  common = lib/mbedtls/library/md.c;
+  common = lib/mbedtls/library/oid.c;
+  common = lib/mbedtls/library/pem.c;
+  common = lib/mbedtls/library/pk.c;
+  common = lib/mbedtls/library/pk_ecc.c;
+  common = lib/mbedtls/library/pk_wrap.c;
+  common = lib/mbedtls/library/pkparse.c;
+  common = lib/mbedtls/library/platform.c;
+  common = lib/mbedtls/library/platform_util.c;
+  common = lib/mbedtls/library/rsa.c;
+  common = lib/mbedtls/library/rsa_alt_helpers.c;
+  common = lib/mbedtls/library/sha256.c;
+  common = lib/mbedtls/library/sha512.c;
+  common = lib/mbedtls/library/ssl_ciphersuites.c;
+  common = lib/mbedtls/library/ssl_client.c;
+  common = lib/mbedtls/library/ssl_msg.c;
+  common = lib/mbedtls/library/ssl_tls.c;
+  common = lib/mbedtls/library/ssl_tls12_client.c;
+  common = lib/mbedtls/library/x509.c;
+  common = lib/mbedtls/library/x509_crt.c;
+  cppflags = '-ffreestanding -DMBEDTLS_SSL_DTLS_CONNECTION_ID_COMPAT=0 -I$(srcdir)/lib/mbedtls/compat -I$(srcdir)/lib/mbedtls/include -include $(srcdir)/lib/mbedtls/grub_compat.h';
+  cflags = '-Wno-redundant-decls';
+};
+
+module = {
   name = http;
   common = net/http.c;
 };
