@@ -533,7 +533,8 @@ GRUB_MOD_INIT(conv)
                               N_("convert string between GBK and UTF-8."),
                               options_conv);
   conv_module = mod;
-  grub_bind_register (mod, gbk_exports, 3);
+  if (grub_bind_register (mod, gbk_exports, 3))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(conv)

@@ -341,7 +341,8 @@ GRUB_MOD_INIT(wimboot)
                     N_("[--index=n] [OPTIONS] FILE [PATH]"),
                     N_("WIM Tools"), options_wimtools);
   wim_module = mod;
-  grub_bind_register (mod, wim_exports, 4);
+  if (grub_bind_register (mod, wim_exports, 4))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(wimboot)

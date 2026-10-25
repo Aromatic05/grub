@@ -180,7 +180,8 @@ GRUB_MOD_INIT(ini)
                   N_("[--set=VARNAME] FILE [SECTION:]KEY"),
                   N_("Get value from ini files."), options_get);
   ini_module = mod;
-  grub_bind_register (mod, ini_exports, 3);
+  if (grub_bind_register (mod, ini_exports, 3))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(ini)

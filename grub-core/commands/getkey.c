@@ -127,7 +127,8 @@ GRUB_MOD_INIT(getkey)
                               N_("Return the value of the pressed key. "),
                               options);
   input_module = mod;
-  grub_bind_register (mod, input_exports, 3);
+  if (grub_bind_register (mod, input_exports, 3))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(getkey)

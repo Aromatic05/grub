@@ -706,7 +706,8 @@ GRUB_MOD_INIT(videoinfo)
 					N_("Store video mode information in variable VAR."),
 					videomode_options);
   video_module = mod;
-  grub_bind_register (mod, video_exports, 11);
+  if (grub_bind_register (mod, video_exports, 11))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(videoinfo)

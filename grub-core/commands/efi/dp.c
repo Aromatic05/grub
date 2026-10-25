@@ -598,7 +598,8 @@ GRUB_MOD_INIT (dp)
 				  N_("Print USB information."), 0);
 
   dp_module = mod;
-  grub_bind_register (mod, efi_exports, 4);
+  if (grub_bind_register (mod, efi_exports, 4))
+    grub_print_error ();
 
   grub_procfs_register ("systab", &proc_systab);
 }
