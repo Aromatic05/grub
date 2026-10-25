@@ -3,6 +3,7 @@
 #include "lauxlib.h"
 #include <grub/bind.h>
 #include <grub/misc.h>
+#include <grub/lua.h>
 
 #define LUA_BIND_HANDLE "grub.bind.handle"
 
@@ -21,7 +22,9 @@ bind_error (lua_State *state)
   char message[GRUB_MAX_ERRMSG];
   grub_strncpy (message, grub_errmsg, sizeof (message) - 1);
   message[sizeof (message) - 1] = 0;
-  grub_errno = GRUB_ERR_NONE;
+  /* Keep the legacy Lua grub_errno/grub_errmsg globals in sync, even
+     when the caller catches the exception with pcall(). */
+  save_errno (state);
   return luaL_error (state, "%s", message);
 }
 
@@ -153,7 +156,7 @@ bind_argument (lua_State *state, int index, enum grub_bind_type type,
 }
 
 static void
-push_result (lua_State *state, struct grub_bind_value *value)
+push_binding_result (lua_State *state, struct grub_bind_value *value)
 {
   char buffer[40];
   grub_uint64_t u;
@@ -201,7 +204,7 @@ push_result (lua_State *state, struct grub_bind_value *value)
           {
             const struct grub_bind_field *field = &value->value.record.fields[i];
             lua_pushstring (state, field->name);
-            push_result (state, (struct grub_bind_value *) &field->value);
+            push_binding_result (state, (struct grub_bind_value *) &field->value);
             lua_rawset (state, -3);
           }
       }
@@ -253,12 +256,16 @@ lua_bind_call (lua_State *state)
     {
       for (i = 0; i < nresults; i++)
         grub_bind_value_dispose (&results[i]);
+      if (!grub_errno)
+        grub_error (err, "native binding invocation failed");
       return bind_error (state);
     }
   for (i = 0; i < nresults; i++)
-    push_result (state, &results[i]);
+    push_binding_result (state, &results[i]);
   for (i = 0; i < nresults; i++)
     grub_bind_value_dispose (&results[i]);
+  grub_errno = GRUB_ERR_NONE;
+  save_errno (state);
   return nresults;
 }
 
