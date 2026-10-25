@@ -97,9 +97,9 @@ Use disposable test volumes when trying write operations.
 
 ## Testing and compatibility
 
-- **x86_64 UEFI and BIOS:** The WriteFS QEMU suite passes 131 assertions on
-  each platform, including FAT/exFAT/NTFS persistence and independent
-  host-side checks. See [tests/writefs_qemu.sh](tests/writefs_qemu.sh).
+- **x86_64 UEFI and BIOS:** The WriteFS and native binding QEMU suite passes
+  177 EFI and 172 BIOS assertions, including FAT/exFAT/NTFS persistence,
+  native module unloading/reloading and independent host-side checks. See [tests/writefs_qemu.sh](tests/writefs_qemu.sh).
 - **ISO boot:** Arch Linux and Windows/WinPE direct-boot paths have been
   exercised on x86_64 UEFI. Other operating systems, firmware modes, and
   combinations have not all been validated.

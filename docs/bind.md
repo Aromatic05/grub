@@ -22,7 +22,8 @@ ID. Each function publishes its exact required and optional parameter types.
 during the call, and releases it before returning.
 
 The public value types are nil, boolean, signed/unsigned 64-bit integer,
-string, bytes (both with explicit lengths) and managed resource handles.
+string, bytes (both with explicit lengths), small named typed records and
+managed resource handles.
 Results use an array with at most `GRUB_BIND_MAX_RESULTS` elements, so
 functions can return multiple values without a Lua-specific calling
 convention.
@@ -105,6 +106,17 @@ may also be borrowed or may transfer a heap allocation using `owned = 1`.
 Consumers call `grub_bind_value_dispose` after converting each result. Native
 handle results transfer ownership to the runtime.
 
+### Named records
+
+`GRUB_BIND_RECORD` describes a small, language-neutral collection of typed
+named fields. The Lua adapter maps an ordinary table with scalar fields to a
+borrowed record during invocation. For example, the existing video color
+`{r=255, g=128, b=0, a=255}` remains a Lua table; the video module receives
+typed values, never a `lua_State`. Omitted alpha defaults to 255. The
+adapter limits this small record to eight fields, with no nested structures.
+Returned record fields may be owned by the exporting module, in which case
+the result disposer releases the fields and their values.
+
 ## Lua numeric conversion
 
 This fork currently uses an integer-based Lua 5.1 numeric representation
@@ -121,15 +133,44 @@ This is deliberate: large disk offsets must never be silently truncated.
 | `ini` | `ini.*` | managed INI handles |
 | `getkey` | `input.*` | optional arguments, two-value key results |
 | `wimboot` | `wim.*` | WIM queries using the read-only GRUB VFS |
+| `dd` | `disk.*` | owned disk handles, binary-safe reads and explicit raw writes |
+| `memrw` | `memrw.*` | original raw memory read/write functions, U64 addresses |
+| `videoinfo` | `video.*` | typed color records, managed bitmap handles |
+| EFI `dp` | `efi.*` | copied EFI Device Paths, managed `efi.dp` handles |
 
-`writefs.*` remains in the Lua module and keeps its explicit writable mount
-and independent path namespace. The original GRUB read-only VFS does not gain
-write access through the native binding registry.
+Each module registers only its existing native operations and no longer
+references `lua.mod`. The original GRUB commands keep their existing names.
 
-The `dd`, `memrw`, `videoinfo` and EFI `dp` modules still have legacy Lua
-bindings. Their raw disk, memory, bitmap and firmware object semantics need
-separate ownership and capability analysis before migration. Their functions
-are not automatically exported by the registry.
+### Compatibility and capability boundaries
+
+- `disk.open()` returns managed Lua userdata instead of `lightuserdata`.
+  `disk.close()` explicitly invalidates it. Likewise, bitmap loading and
+  scaling return managed `video.bitmap` handles and `efi.getdp()` returns a
+  copied `efi.dp` handle. Old raw pointer values cannot be passed into the
+  new API. These intentional changes prevent use-after-free.
+- `efi.getdp()` accepts the managed handle from `disk.open()`, and
+  `efi.dptostr()` accepts only its copied device-path handle. EFI paths are
+  independent of the disk handle's lifetime.
+- `disk.read(handle, sector, offset, length)` returns exactly `length`
+  bytes, including embedded NUL bytes. The previous Lua implementation
+  used a NUL-terminated string operation that could truncate binary data.
+  `disk.write(handle, sector, offset, size, bytes)` rejects data shorter
+  than the requested size.
+- `video.fill_rect`, `video.draw_pixel` and `video.draw_string` accept
+  the original table-based color argument through `GRUB_BIND_RECORD`.
+  `video.bitmap_close` invalidates a bitmap handle and prevents double
+  destruction; GC closes handles left open.
+- The existing `disk.write` and `memrw.write_*` interfaces are **direct
+  low-level block/memory operations**, not filesystem writes. They remain
+  available only when their dedicated native modules are loaded. These
+  operations are *not* subject to WriteFS mount gating, exactly as before.
+  This is a distinct unsafe subsystem; do not conflate it with WriteFS.
+- No general-purpose C symbol loader, arbitrary memory mapping interface,
+  or implicit filesystem write access is introduced.
+
+`writefs.*` remains in the Lua module and keeps its separate, explicitly
+mounted writable filesystem namespace. The original GRUB read-only VFS does
+not gain write access through the native binding registry.
 
 ## Verification
 
@@ -137,4 +178,8 @@ Run `tests/writefs_qemu.sh` on both configured build targets, with
 `GRUB_PLATFORM=x86_64-efi` or `GRUB_PLATFORM=i386-pc`. Besides existing
 WriteFS persistence tests it exercises native-first/Lua-first loading,
 function invocation, missing argument rejection, multiple returns, handle
-pinning, stale closures, module unloading and reloading.
+pinning, stale closures, module unloading and reloading. The EFI suite
+additionally tests independent EFI Device Path lifetime. Raw disk write
+regression runs only against disposable disk images, rewriting identical
+bytes; raw physical memory is tested for interface and input validation,
+not by writing unknown firmware memory.
