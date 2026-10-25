@@ -9,7 +9,13 @@ separate tls_lua or netlua module.
 ## Trust and security
 
 - Certificate-chain and hostname validation are mandatory. The client
-  sends SNI and checks certificate validity against the firmware clock.
+  sends SNI and checks validity using UTC. EFI's known TimeZone is
+  converted with the UEFI rule UTC = local clock + TimeZone minutes;
+  daylight adjustments are already reflected in that offset. On BIOS
+  and firmware reporting an unspecified TimeZone, the RTC is assumed UTC.
+  If the RTC is local, set grub_tls_utc_offset to the UTC-minus-RTC
+  offset in minutes (-1440..1440) before connecting. An explicit value
+  also overrides firmware TimeZone when it is incorrect.
 - An explicit PEM trust bundle must be supplied via the grub_tls_ca
   environment variable or the connection's CA argument. The bundle is
   opened using the original read-only GRUB VFS. A missing, unreadable or
@@ -20,6 +26,14 @@ separate tls_lua or netlua module.
   reseed policy. Only initial entropy failures are retried, never failed
   certificate checks or application requests.
 - Receive buffering is bounded and the handshake/idle deadline is 30s.
+  Ctrl-C, Ctrl-D, ESC and F4 interrupt TCP SYN waits and
+  TLS handshake/read/write waits. Other GRUB TCP clients retain their
+  existing connection behavior.
+- TCP FIN/RST is never a successful TLS EOF: a zero-length TLS read
+  requires an authenticated close_notify alert. The local close API
+  sends close_notify on established connections, then closes and disposes
+  the TCP socket and its queued retransmits/packets. This is a bounded
+  best-effort shutdown, not a blocking wait for a peer's acknowledgement.
   Open connections pin tls.mod against module unloading.
 - The implementation uses freestanding Mbed TLS 3.6.7, vendored from the
   upstream GPL-compatible source distribution. See
@@ -55,7 +69,13 @@ connection. It does not require Lua.
 
 The connect/read/write/close functions belong to tls.mod, not the Core.
 Write completes the requested buffer or returns -1. A successful read
-returns a length, zero indicates TLS EOF, and -1 signals a GRUB error.
+returns a length, zero indicates authenticated TLS close_notify (or a
+zero-length read request), and -1 signals an error (including truncated
+streams and interrupted waits). Fatal I/O errors invalidate the connection
+for further transfers, even if the caller catches the error in Lua.
+A caller that uses a known application-level length can close the TLS
+connection after reading exactly that length without waiting for the peer
+to signal TLS EOF.
 
 ## Script API via the common Binding Registry
 
@@ -81,7 +101,9 @@ outside the transport module.
     GRUB_PLATFORM=i386-pc ./tests/tls_qemu.sh
 
 The disposable tests run a local TLS 1.2 server and create short-lived
-ECDSA certificates with a private CA. They verify a valid CA, reject
-an untrusted CA and a trusted CA with a wrong hostname, exercise
-encrypted data transfer and check native module reference/unload behavior.
+ECDSA and RSA certificates with a private CA. They check trusted,
+untrusted, expired and wrong-hostname certificates, UTC offset handling,
+exact 64-bit Lua read lengths, authenticated close_notify versus raw
+TCP truncation, repeated native connections, encrypted data transfer,
+interactive cancellation and module reference/unload behavior.
 No tap network or external service is required.
