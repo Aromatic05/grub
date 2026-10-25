@@ -14,7 +14,7 @@
 #include <grub/file.h>
 #include <grub/i18n.h>
 #include <grub/charset.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 #include <grub/misc.h>
 #include <grub/mm.h>
 #include <grub/procfs.h>
@@ -437,93 +437,126 @@ grub_cmd_usb (grub_extcmd_context_t ctxt __attribute__ ((unused)),
 
 static grub_extcmd_t cmd_dp, cmd_usb;
 
-static int
-lua_efi_vendor (lua_State *state)
-{
-  char *vendor;
-  grub_uint16_t *vendor16;
-  grub_uint16_t *fv = grub_efi_system_table->firmware_vendor;
+/* EFI device paths are duplicated before exposing them through the
+   script ABI.  The firmware-owned pointer must never escape to scripts. */
+static grub_dl_t dp_module;
 
-  for (vendor16 = fv; *vendor16; vendor16++)
+static void
+dp_handle_destroy (void *data)
+{
+  grub_free (data);
+}
+
+static grub_err_t
+bind_efi_vendor (grub_size_t argc __attribute__ ((unused)),
+                 const struct grub_bind_value *args __attribute__ ((unused)),
+                 struct grub_bind_value *results, grub_size_t *nresults)
+{
+  const grub_uint16_t *vendor16;
+  const grub_uint16_t *vendor = grub_efi_system_table->firmware_vendor;
+  char *text;
+
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  if (!vendor) return GRUB_ERR_NONE;
+  for (vendor16 = vendor; *vendor16; vendor16++)
     ;
-
-  vendor = grub_malloc (4 * (vendor16 - fv + 1));
-  if (!vendor)
-    return 0;
-
-  *grub_utf16_to_utf8 ((grub_uint8_t *) vendor, fv, vendor16 - fv) = 0;
-  lua_pushstring (state, vendor);
-  grub_free (vendor);
-  return 1;
+  text = grub_malloc (4 * (vendor16 - vendor + 1));
+  if (!text) return grub_errno;
+  *grub_utf16_to_utf8 ((grub_uint8_t *) text, vendor,
+                       vendor16 - vendor) = 0;
+  results[0].type = GRUB_BIND_STRING;
+  results[0].owned = 1;
+  results[0].value.bytes.data = text;
+  results[0].value.bytes.size = grub_strlen (text);
+  return GRUB_ERR_NONE;
 }
 
-static int
-lua_efi_version (lua_State *state)
+static grub_err_t
+bind_efi_version (grub_size_t argc __attribute__ ((unused)),
+                  const struct grub_bind_value *args __attribute__ ((unused)),
+                  struct grub_bind_value *results, grub_size_t *nresults)
 {
-  char uefi_ver[11];
-  grub_efi_uint16_t uefi_major_rev = grub_efi_system_table->hdr.revision >> 16;
-  grub_efi_uint16_t uefi_minor_rev = grub_efi_system_table->hdr.revision & 0xffff;
-  grub_efi_uint8_t uefi_minor_1 = uefi_minor_rev / 10;
-  grub_efi_uint8_t uefi_minor_2 = uefi_minor_rev % 10;
+  grub_efi_uint16_t major = grub_efi_system_table->hdr.revision >> 16;
+  grub_efi_uint16_t minor = grub_efi_system_table->hdr.revision & 0xffff;
+  char version[32];
+  char *text;
 
-  grub_snprintf (uefi_ver, sizeof (uefi_ver), "%d.%d",
-                 uefi_major_rev, uefi_minor_1);
-  if (uefi_minor_2)
-    grub_snprintf (uefi_ver, sizeof (uefi_ver), "%s.%d",
-                   uefi_ver, uefi_minor_2);
-
-  lua_pushstring (state, uefi_ver);
-  return 1;
+  if (minor % 10)
+    grub_snprintf (version, sizeof (version), "%u.%u.%u",
+                   major, minor / 10, minor % 10);
+  else
+    grub_snprintf (version, sizeof (version), "%u.%u",
+                   major, minor / 10);
+  text = grub_strdup (version);
+  if (!text) return grub_errno;
+  results[0].type = GRUB_BIND_STRING;
+  results[0].owned = 1;
+  results[0].value.bytes.data = text;
+  results[0].value.bytes.size = grub_strlen (text);
+  *nresults = 1;
+  return GRUB_ERR_NONE;
 }
 
-static int
-lua_efi_getdp (lua_State *state)
+static grub_err_t
+bind_efi_getdp (grub_size_t argc __attribute__ ((unused)),
+                const struct grub_bind_value *args,
+                struct grub_bind_value *results, grub_size_t *nresults)
 {
-  grub_disk_t disk;
-  grub_efi_handle_t handle = 0;
-  grub_efi_device_path_t *dp = NULL;
+  grub_disk_t disk = grub_bind_handle_data (args[0].value.handle, "disk");
+  grub_efi_handle_t device;
+  grub_efi_device_path_t *path, *copy;
+  struct grub_bind_handle *handle;
 
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  disk = lua_touserdata (state, 1);
-  handle = grub_efidisk_get_device_handle (disk);
+  if (!disk) return grub_errno;
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  device = grub_efidisk_get_device_handle (disk);
+  if (!device) return GRUB_ERR_NONE;
+  path = grub_efi_get_device_path (device);
+  if (!path) return GRUB_ERR_NONE;
+  copy = grub_efi_duplicate_device_path (path);
+  if (!copy) return grub_errno;
+  handle = grub_bind_handle_create (dp_module, "efi.dp", copy,
+                                   dp_handle_destroy);
   if (!handle)
-    return 0;
-
-  dp = grub_efi_get_device_path (handle);
-  if (!dp)
-    return 0;
-
-  lua_pushlightuserdata (state, dp);
-  return 1;
+    {
+      grub_free (copy);
+      return grub_errno;
+    }
+  results[0].type = GRUB_BIND_HANDLE;
+  results[0].value.handle = handle;
+  return GRUB_ERR_NONE;
 }
 
-static int
-lua_efi_dptostr (lua_State *state)
+static grub_err_t
+bind_efi_dptostr (grub_size_t argc __attribute__ ((unused)),
+                  const struct grub_bind_value *args,
+                  struct grub_bind_value *results, grub_size_t *nresults)
 {
-  grub_efi_device_path_t *dp;
-  char *str = NULL;
-
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  dp = lua_touserdata (state, 1);
-  if (!dp)
-    return 0;
-
-  str = grub_efi_device_path_to_str (dp);
-  if (!str)
-    return 0;
-
-  lua_pushstring (state, str);
-  grub_free (str);
-  return 1;
+  grub_efi_device_path_t *path =
+    grub_bind_handle_data (args[0].value.handle, "efi.dp");
+  char *text;
+  if (!path) return grub_errno;
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  text = grub_efi_device_path_to_str (path);
+  if (!text) return grub_errno ? grub_errno : GRUB_ERR_NONE;
+  results[0].type = GRUB_BIND_STRING;
+  results[0].owned = 1;
+  results[0].value.bytes.data = text;
+  results[0].value.bytes.size = grub_strlen (text);
+  return GRUB_ERR_NONE;
 }
 
-static luaL_Reg efilib[] =
+static const enum grub_bind_type efi_disk_args[] = { GRUB_BIND_HANDLE };
+static const enum grub_bind_type efi_path_args[] = { GRUB_BIND_HANDLE };
+static const struct grub_bind_export efi_exports[] =
 {
-  {"vendor", lua_efi_vendor},
-  {"version", lua_efi_version},
-  {"getdp", lua_efi_getdp},
-  {"dptostr", lua_efi_dptostr},
-  {0, 0}
+  { "efi", "vendor",  NULL,          0, 0, bind_efi_vendor },
+  { "efi", "version", NULL,          0, 0, bind_efi_version },
+  { "efi", "getdp",   efi_disk_args, 1, 1, bind_efi_getdp },
+  { "efi", "dptostr", efi_path_args, 1, 1, bind_efi_dptostr }
 };
 
 struct systab_info
@@ -564,18 +597,16 @@ GRUB_MOD_INIT (dp)
   cmd_usb = grub_register_extcmd ("efiusb", grub_cmd_usb, 0, N_("DEVICE"),
 				  N_("Print USB information."), 0);
 
-  if (grub_lua_global_state)
-    {
-      lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-      luaL_register (grub_lua_global_state, "efi", efilib);
-      lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-    }
+  dp_module = mod;
+  grub_bind_register (mod, efi_exports, 4);
 
   grub_procfs_register ("systab", &proc_systab);
 }
 
 GRUB_MOD_FINI (dp)
 {
+  grub_bind_unregister (dp_module);
+  dp_module = NULL;
   grub_unregister_extcmd (cmd_dp);
   grub_unregister_extcmd (cmd_usb);
   grub_procfs_unregister (&proc_systab);
