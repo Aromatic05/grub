@@ -37,6 +37,7 @@
 #include <grub/normal.h>
 #include <grub/i18n.h>
 #include <grub/bind.h>
+#include <grub/lockdown.h>
 #include <grub/port_write.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
@@ -71,6 +72,9 @@ grub_cmd_dd (grub_extcmd_context_t ctxt, int argc __attribute__ ((unused)),
              char **args __attribute__ ((unused)))
 {
   struct grub_arg_list *state = ctxt->state;
+  if (state[DD_OF].set && grub_is_lockdown () == GRUB_LOCKDOWN_ENABLED)
+    return grub_error (GRUB_ERR_ACCESS_DENIED,
+                       "raw disk output is disabled during lockdown");
   grub_uint8_t data[4096];
   /* input */
   char *str = NULL;
@@ -356,6 +360,9 @@ bind_disk_write (grub_size_t argc __attribute__ ((unused)),
   grub_uint64_t length = args[3].value.u64;
   grub_uint64_t offset = args[2].value.u64;
   if (!disk) return grub_errno;
+  if (grub_is_lockdown () == GRUB_LOCKDOWN_ENABLED)
+    return grub_error (GRUB_ERR_ACCESS_DENIED,
+                       "raw disk writes are disabled during lockdown");
   if (length > args[4].value.bytes.size ||
       (grub_size_t) length != length || offset > 0x7fffffffffffffffULL)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid raw disk write size");
@@ -514,7 +521,8 @@ GRUB_MOD_INIT(dd)
   cmd = grub_register_extcmd ("dd", grub_cmd_dd, 0,
                               N_("[OPTIONS]"), N_("Copy data."), options);
   disk_module = mod;
-  grub_bind_register (mod, disk_exports, 11);
+  if (grub_bind_register (mod, disk_exports, 11))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI(dd)
