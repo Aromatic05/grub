@@ -3011,6 +3011,7 @@ module = {
 module = {
   name = http;
   common = net/http.c;
+  common = net/http_client.c;
 };
 
 module = {

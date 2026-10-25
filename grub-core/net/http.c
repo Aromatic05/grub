@@ -1,621 +1,461 @@
 /*
- *  GRUB  --  GRand Unified Bootloader
- *  Copyright (C) 2010,2011  Free Software Foundation, Inc.
+ * GRUB HTTP(S) network filesystem and language-neutral native exports.
  *
- *  GRUB is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
+ * Both (http,host)/path and (https,host)/path use the same streaming
+ * HTTP/1.1 client as native and Lua requests. The on-demand VFS adapter
+ * never loads the entire remote file into memory.
  *
- *  GRUB is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
-
-#include <grub/misc.h>
-#include <grub/net/tcp.h>
-#include <grub/net/ip.h>
-#include <grub/net/ethernet.h>
-#include <grub/net/netbuff.h>
+#include <grub/http.h>
 #include <grub/net.h>
-#include <grub/mm.h>
+#include <grub/net/netbuff.h>
+#include <grub/bind.h>
 #include <grub/dl.h>
 #include <grub/file.h>
-#include <grub/i18n.h>
+#include <grub/misc.h>
+#include <grub/mm.h>
 
 GRUB_MOD_LICENSE ("GPLv3+");
 
-#define HTTP_PORT	((grub_uint16_t) 80)
+#define HTTP_VFS_BLOCK 4096
+#define HTTP_BIND_READ_MAX 65536
 
-typedef struct http_data
+struct http_file_state
 {
-  char *current_line;
-  grub_size_t current_line_len;
-  int headers_recv;
-  int first_line_recv;
-  int size_recv;
-  grub_net_tcp_socket_t sock;
-  char *filename;
-  grub_err_t err;
-  char *errmsg;
-  int chunked;
-  grub_size_t chunk_rem;
-  int in_chunk_len;
-} *http_data_t;
+  grub_http_stream_t stream;
+  char *url;
+  grub_dl_t owner;
+};
 
-static grub_off_t
-have_ahead (struct grub_file *file)
+/* Shared native HTTP streams also pin the module, including C callers
+   which do not use a VFS file or Binding-managed handle. */
+grub_dl_t grub_http_module_owner;
+
+static int
+is_https_file (grub_file_t file)
+{
+  return !grub_strcmp (file->device->net->protocol->name, "https");
+}
+
+static char *
+file_url (grub_file_t file, const char *name)
 {
   grub_net_t net = file->device->net;
-  grub_off_t ret = net->offset;
-  struct grub_net_packet *pack;
-  for (pack = net->packs.first; pack; pack = pack->next)
-    ret += pack->nb->tail - pack->nb->data;
-  return ret;
+  char *path;
+  char *url;
+  const char *scheme = is_https_file (file) ? "https" : "http";
+  grub_uint16_t port = net->port ? net->port :
+    (is_https_file (file) ? 443 : 80);
+  path = *name == '/' ? grub_strdup (name) : grub_xasprintf ("/%s", name);
+  if (!path) return NULL;
+  url = grub_xasprintf ("%s://%s:%u%s", scheme, net->server, port, path);
+  grub_free (path);
+  return url;
 }
 
 static grub_err_t
-parse_line (grub_file_t file, http_data_t data, char *ptr, grub_size_t len)
+open_stream_at (grub_file_t file, grub_uint64_t at)
 {
-  char *end = ptr + len;
-  while (end > ptr && *(end - 1) == '\r')
-    end--;
-
-  /* LF without CR. */
-  if (end == ptr + len)
+  struct http_file_state *state = file->data;
+  struct grub_http_request request = { 0 };
+  grub_uint64_t length;
+  request.url = state->url;
+  request.method = "GET";
+  state->stream = grub_http_stream_open (&request, at);
+  if (!state->stream) return grub_errno;
+  if (grub_http_stream_status (state->stream) == 404)
+    return grub_error (GRUB_ERR_FILE_NOT_FOUND, "HTTP file does not exist");
+  if (grub_http_stream_status (state->stream) != (at ? 206 : 200))
+    return grub_error (GRUB_ERR_BAD_FILE_TYPE,
+                       "HTTP file request failed, status %u",
+                       grub_http_stream_status (state->stream));
+  if (grub_http_stream_length (state->stream, &length))
     {
-      data->errmsg = grub_strdup (_("invalid HTTP header - LF without CR"));
-      return GRUB_ERR_NONE;
+      if (at > ~(grub_uint64_t) 0 - length)
+        return grub_error (GRUB_ERR_OUT_OF_RANGE, "HTTP file length overflow");
+      file->size = at + length;
     }
-  *end = 0;
-
-  /* Trailing CRLF.  */
-  if (data->in_chunk_len == 1)
-    {
-      data->in_chunk_len = 2;
-      return GRUB_ERR_NONE;
-    }
-  if (data->in_chunk_len == 2)
-    {
-      data->chunk_rem = grub_strtoul (ptr, 0, 16);
-      grub_errno = GRUB_ERR_NONE;
-      if (data->chunk_rem == 0)
-	{
-	  file->device->net->eof = 1;
-	  file->device->net->stall = 1;
-	  if (file->size == GRUB_FILE_SIZE_UNKNOWN)
-	    file->size = have_ahead (file);
-	}
-      data->in_chunk_len = 0;
-      return GRUB_ERR_NONE;
-    }
-  if (ptr == end)
-    {
-      data->headers_recv = 1;
-      if (data->chunked)
-	data->in_chunk_len = 2;
-      return GRUB_ERR_NONE;
-    }
-
-  if (!data->first_line_recv)
-    {
-      int code;
-      if (grub_memcmp (ptr, "HTTP/1.1 ", sizeof ("HTTP/1.1 ") - 1) != 0)
-	{
-	  data->errmsg = grub_strdup (_("unsupported HTTP response"));
-	  data->first_line_recv = 1;
-	  return GRUB_ERR_NONE;
-	}
-      ptr += sizeof ("HTTP/1.1 ") - 1;
-      code = grub_strtoul (ptr, (const char **)&ptr, 10);
-      if (grub_errno)
-	return grub_errno;
-      switch (code)
-	{
-	case 200:
-	case 206:
-	  break;
-	case 404:
-	  data->err = GRUB_ERR_FILE_NOT_FOUND;
-	  data->errmsg = grub_xasprintf (_("file `%s' not found"), data->filename);
-	  data->first_line_recv = 1;
-	  return GRUB_ERR_NONE;
-	default:
-	  data->err = GRUB_ERR_NET_UNKNOWN_ERROR;
-	  /* TRANSLATORS: GRUB HTTP code is pretty young. So even perfectly
-	     valid answers like 403 will trigger this very generic message.  */
-	  data->errmsg = grub_xasprintf (_("unsupported HTTP error %d: %s"),
-					 code, ptr);
-	  data->first_line_recv = 1;
-	  return GRUB_ERR_NONE;
-	}
-      data->first_line_recv = 1;
-      return GRUB_ERR_NONE;
-    }
-  if (grub_memcmp (ptr, "Content-Length: ", sizeof ("Content-Length: ") - 1)
-      == 0 && !data->size_recv)
-    {
-      ptr += sizeof ("Content-Length: ") - 1;
-      file->size = grub_strtoull (ptr, (const char **)&ptr, 10);
-      data->size_recv = 1;
-      return GRUB_ERR_NONE;
-    }
-  if (grub_memcmp (ptr, "Transfer-Encoding: chunked",
-		   sizeof ("Transfer-Encoding: chunked") - 1) == 0)
-    {
-      data->chunked = 1;
-      return GRUB_ERR_NONE;
-    }
-
+  else if (!at)
+    file->size = GRUB_FILE_SIZE_UNKNOWN;
   return GRUB_ERR_NONE;
 }
 
-static void
-http_err (grub_net_tcp_socket_t sock __attribute__ ((unused)),
-	  void *f)
-{
-  grub_file_t file = f;
-  http_data_t data = file->data;
-
-  if (data->sock)
-    grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-  data->sock = 0;
-  if (data->current_line)
-    grub_free (data->current_line);
-  data->current_line = 0;
-  file->device->net->eof = 1;
-  file->device->net->stall = 1;
-  if (file->size == GRUB_FILE_SIZE_UNKNOWN)
-    file->size = have_ahead (file);
-}
-
-/* Called when the server closes its send-side (FIN received).  Unlike
-   http_err we do not abort (no RST): the server half-closed cleanly, so
-   we send our own FIN via GRUB_NET_TCP_DISCARD for an orderly four-way
-   close.  That also detaches the socket's hooks, so no callback can fire
-   into the file once it is freed.  We then signal EOF, which lets
-   http_establish's poll loop exit immediately on a non-200 response
-   followed by an immediate close (e.g. 404, 500) instead of spinning for
-   the full 100 × 300 ms timeout.  */
-static void
-http_fin (grub_net_tcp_socket_t sock __attribute__ ((unused)),
-	  void *f)
-{
-  grub_file_t file = f;
-  http_data_t data = file->data;
-
-  if (data->sock)
-    grub_net_tcp_close (data->sock, GRUB_NET_TCP_DISCARD);
-  data->sock = 0;
-  if (data->current_line)
-    grub_free (data->current_line);
-  data->current_line = 0;
-  file->device->net->eof = 1;
-  file->device->net->stall = 1;
-  if (file->size == GRUB_FILE_SIZE_UNKNOWN)
-    file->size = have_ahead (file);
-}
-
 static grub_err_t
-http_receive (grub_net_tcp_socket_t sock __attribute__ ((unused)),
-	      struct grub_net_buff *nb,
-	      void *f)
+http_vfs_open (grub_file_t file, const char *name)
 {
-  grub_file_t file = f;
-  http_data_t data = file->data;
+  struct http_file_state *state = grub_zalloc (sizeof (*state));
   grub_err_t err;
-
-  if (!data->sock)
-    {
-      grub_netbuff_free (nb);
-      return GRUB_ERR_NONE;
-    }
-
-  while (1)
-    {
-      char *ptr = (char *) nb->data;
-      if ((!data->headers_recv || data->in_chunk_len) && data->current_line)
-	{
-	  int have_line = 1;
-	  char *t;
-	  ptr = grub_memchr (nb->data, '\n', nb->tail - nb->data);
-	  if (ptr == NULL)
-	    {
-	      have_line = 0;
-	      ptr = (char *) nb->tail;
-	    }
-	  t = grub_realloc (data->current_line,
-			    data->current_line_len + (ptr - (char *) nb->data));
-	  if (!t)
-	    {
-	      grub_netbuff_free (nb);
-	      grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-	      return grub_errno;
-	    }
-
-	  data->current_line = t;
-	  grub_memcpy (data->current_line + data->current_line_len,
-		       nb->data, ptr - (char *) nb->data);
-	  data->current_line_len += ptr - (char *) nb->data;
-	  if (!have_line)
-	    {
-	      grub_netbuff_free (nb);
-	      return GRUB_ERR_NONE;
-	    }
-	  err = parse_line (file, data, data->current_line,
-			    data->current_line_len);
-	  grub_free (data->current_line);
-	  data->current_line = 0;
-	  data->current_line_len = 0;
-	  if (err)
-	    {
-	      grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-	      grub_netbuff_free (nb);
-	      return err;
-	    }
-	}
-
-      while (ptr < (char *) nb->tail && (!data->headers_recv
-					 || data->in_chunk_len))
-	{
-	  char *ptr2;
-	  ptr2 = grub_memchr (ptr, '\n', (char *) nb->tail - ptr);
-	  if (!ptr2)
-	    {
-	      data->current_line = grub_malloc ((char *) nb->tail - ptr);
-	      if (!data->current_line)
-		{
-		  grub_netbuff_free (nb);
-		  grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-		  return grub_errno;
-		}
-	      data->current_line_len = (char *) nb->tail - ptr;
-	      grub_memcpy (data->current_line, ptr, data->current_line_len);
-	      grub_netbuff_free (nb);
-	      return GRUB_ERR_NONE;
-	    }
-	  err = parse_line (file, data, ptr, ptr2 - ptr);
-	  if (err)
-	    {
-	      grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-	      grub_netbuff_free (nb);
-	      return err;
-	    }
-	  ptr = ptr2 + 1;
-	}
-
-      if (((char *) nb->tail - ptr) <= 0)
-	{
-	  grub_netbuff_free (nb);
-	  return GRUB_ERR_NONE;
-	}
-      err = grub_netbuff_pull (nb, ptr - (char *) nb->data);
-      if (err)
-	{
-	  grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-	  grub_netbuff_free (nb);
-	  return err;
-	}
-      if (!(data->chunked && (grub_ssize_t) data->chunk_rem
-	    < nb->tail - nb->data))
-	{
-	  grub_net_put_packet (&file->device->net->packs, nb);
-	  if (file->device->net->packs.count >= 20)
-	    file->device->net->stall = 1;
-
-	  if (file->device->net->packs.count >= 100)
-	    grub_net_tcp_stall (data->sock);
-
-	  if (data->chunked)
-	    data->chunk_rem -= nb->tail - nb->data;
-	  return GRUB_ERR_NONE;
-	}
-      if (data->chunk_rem)
-	{
-	  struct grub_net_buff *nb2;
-	  nb2 = grub_netbuff_alloc (data->chunk_rem);
-	  if (!nb2)
-	    return grub_errno;
-	  err = grub_netbuff_put (nb2, data->chunk_rem);
-	  if (err)
-	    {
-	      grub_netbuff_free (nb2);
-	      return grub_errno;
-	    }
-	  grub_memcpy (nb2->data, nb->data, data->chunk_rem);
-	  if (file->device->net->packs.count >= 20)
-	    {
-	      file->device->net->stall = 1;
-	      grub_net_tcp_stall (data->sock);
-	    }
-
-	  grub_net_put_packet (&file->device->net->packs, nb2);
-	  grub_netbuff_pull (nb, data->chunk_rem);
-	}
-      data->in_chunk_len = 1;
-    }
+  if (!state) return grub_errno;
+  file->data = state;
+  state->owner = grub_http_module_owner;
+  state->url = file_url (file, name);
+  if (!state->url) goto fail;
+  err = open_stream_at (file, 0);
+  if (err) goto fail;
+  grub_dl_ref (grub_http_module_owner);
+  file->not_easily_seekable = 1;
+  return GRUB_ERR_NONE;
+fail:
+  err = grub_errno;
+  grub_http_stream_close (state->stream);
+  grub_free (state->url);
+  grub_free (state);
+  file->data = NULL;
+  return err;
 }
 
 static grub_err_t
-http_establish (struct grub_file *file, grub_off_t offset, int initial)
+http_vfs_close (grub_file_t file)
 {
-  http_data_t data = file->data;
-  grub_uint8_t *ptr;
-  int i;
+  struct http_file_state *state = file->data;
+  if (!state) return GRUB_ERR_NONE;
+  grub_http_stream_close (state->stream);
+  grub_free (state->url);
+  grub_dl_unref (state->owner);
+  grub_free (state);
+  file->data = NULL;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+http_vfs_seek (grub_file_t file, grub_off_t offset)
+{
+  struct http_file_state *state = file->data;
+  grub_net_t net = file->device->net;
+  grub_err_t err;
+  if (!state || (grub_int64_t) offset < 0)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid HTTP seek");
+  grub_http_stream_close (state->stream);
+  state->stream = NULL;
+  while (net->packs.first)
+    {
+      grub_netbuff_free (net->packs.first->nb);
+      grub_net_remove_packet (net->packs.first);
+    }
+  net->eof = net->broken = net->stall = 0;
+  net->offset = offset;
+  err = open_stream_at (file, offset);
+  if (err) net->broken = 1;
+  return err;
+}
+
+/* GRUB's network filesystem is packet-oriented.  Feed it one decoded
+   HTTP body block only when the caller needs more data: no whole-file
+   buffering, and valid TCP/TLS reads cannot be mistaken for HTTP framing. */
+static grub_err_t
+http_vfs_refill (grub_file_t file)
+{
+  grub_net_t net = file->device->net;
+  struct http_file_state *state = file->data;
   struct grub_net_buff *nb;
-  grub_err_t err;
-  char *server = file->device->net->server;
-  grub_uint16_t port = file->device->net->port;
-
-  nb = grub_netbuff_alloc (GRUB_NET_TCP_RESERVE_SIZE
-			   + sizeof ("GET ") - 1
-			   + grub_strlen (data->filename)
-			   + sizeof (" HTTP/1.1\r\nHost: ") - 1
-			   + grub_strlen (server) + sizeof (":XXXXXXXXXX")
-			   + sizeof ("\r\nUser-Agent: " PACKAGE_STRING
-				     "\r\n") - 1
-			   + sizeof ("Range: bytes=XXXXXXXXXXXXXXXXXXXX"
-				     "-\r\n\r\n"));
-  if (!nb)
-    return grub_errno;
-
-  grub_netbuff_reserve (nb, GRUB_NET_TCP_RESERVE_SIZE);
-  ptr = nb->tail;
-  err = grub_netbuff_put (nb, sizeof ("GET ") - 1);
-  if (err)
-    {
-      grub_netbuff_free (nb);
-      return err;
-    }
-  grub_memcpy (ptr, "GET ", sizeof ("GET ") - 1);
-
-  ptr = nb->tail;
-
-  err = grub_netbuff_put (nb, grub_strlen (data->filename));
-  if (err)
-    {
-      grub_netbuff_free (nb);
-      return err;
-    }
-  grub_memcpy (ptr, data->filename, grub_strlen (data->filename));
-
-  ptr = nb->tail;
-  err = grub_netbuff_put (nb, sizeof (" HTTP/1.1\r\nHost: ") - 1);
-  if (err)
-    {
-      grub_netbuff_free (nb);
-      return err;
-    }
-  grub_memcpy (ptr, " HTTP/1.1\r\nHost: ",
-	       sizeof (" HTTP/1.1\r\nHost: ") - 1);
-
-  ptr = nb->tail;
-  err = grub_netbuff_put (nb, grub_strlen (server));
-  if (err)
-    {
-      grub_netbuff_free (nb);
-      return err;
-    }
-  grub_memcpy (ptr, file->device->net->server,
-	       grub_strlen (file->device->net->server));
-
-  if (port)
-    {
-      ptr = nb->tail;
-      grub_snprintf ((char *) ptr, sizeof (":XXXXXXXXXX"), ":%d", port);
-    }
-
-  ptr = nb->tail;
-  err = grub_netbuff_put (nb,
-			  sizeof ("\r\nUser-Agent: " PACKAGE_STRING "\r\n")
-			  - 1);
-  if (err)
-    {
-      grub_netbuff_free (nb);
-      return err;
-    }
-  grub_memcpy (ptr, "\r\nUser-Agent: " PACKAGE_STRING "\r\n",
-	       sizeof ("\r\nUser-Agent: " PACKAGE_STRING "\r\n") - 1);
-  if (!initial)
-    {
-      ptr = nb->tail;
-      grub_snprintf ((char *) ptr,
-		     sizeof ("Range: bytes=XXXXXXXXXXXXXXXXXXXX-"
-			     "\r\n"),
-		     "Range: bytes=%" PRIuGRUB_UINT64_T "-\r\n",
-		     offset);
-      grub_netbuff_put (nb, grub_strlen ((char *) ptr));
-    }
-  ptr = nb->tail;
-  grub_netbuff_put (nb, 2);
-  grub_memcpy (ptr, "\r\n", 2);
-
-  grub_dprintf ("http", "opening path %s on host %s TCP port %d\n",
-		data->filename, server, port ? port : HTTP_PORT);
-  data->sock = grub_net_tcp_open (server,
-				  port ? port : HTTP_PORT, http_receive,
-				  http_err, http_fin,
-				  file);
-  if (!data->sock)
-    {
-      grub_netbuff_free (nb);
-      return grub_errno;
-    }
-
-  //  grub_net_poll_cards (5000);
-
-  err = grub_net_send_tcp_packet (data->sock, nb, 1);
-  if (err)
-    {
-      grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-      return err;
-    }
-
-  for (i = 0; data->sock && !data->headers_recv && i < 100; i++)
-    {
-      grub_net_tcp_retransmit ();
-      grub_net_poll_cards (300, &data->headers_recv);
-    }
-
-  if (!data->headers_recv)
-    {
-      if (data->sock)
-        grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-      if (data->err)
-	{
-	  char *str = data->errmsg;
-	  err = grub_error (data->err, "%s", str);
-	  grub_free (str);
-	  data->errmsg = 0;
-	  return data->err;
-	}
-      return grub_error (GRUB_ERR_TIMEOUT, N_("time out opening `%s'"), data->filename);
-    }
-
-  if (data->err)
-    {
-      char *str = data->errmsg;
-      if (data->sock)
-	grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-      err = grub_error (data->err, "%s", str);
-      grub_free (str);
-      data->errmsg = 0;
-      return err;
-    }
-
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-http_seek (struct grub_file *file, grub_off_t off)
-{
-  struct http_data *old_data, *data;
-  grub_err_t err;
-  old_data = file->data;
-  /* FIXME: Reuse socket?  */
-  if (old_data->sock)
-    grub_net_tcp_close (old_data->sock, GRUB_NET_TCP_ABORT);
-  old_data->sock = 0;
-
-  while (file->device->net->packs.first)
-    {
-      grub_netbuff_free (file->device->net->packs.first->nb);
-      grub_net_remove_packet (file->device->net->packs.first);
-    }
-
-  file->device->net->stall = 0;
-  file->device->net->eof = 0;
-  file->device->net->offset = off;
-
-  data = grub_zalloc (sizeof (*data));
-  if (!data)
-    return grub_errno;
-
-  data->size_recv = 1;
-  data->filename = old_data->filename;
-  if (!data->filename)
-    {
-      grub_free (data);
-      file->data = 0;
-      return grub_errno;
-    }
-  grub_free (old_data);
-
-  file->data = data;
-  err = http_establish (file, off, 0);
-  if (err)
-    {
-      grub_free (data->filename);
-      grub_free (data);
-      file->data = 0;
-      return err;
-    }
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-http_open (struct grub_file *file, const char *filename)
-{
-  grub_err_t err;
-  struct http_data *data;
-
-  data = grub_zalloc (sizeof (*data));
-  if (!data)
-    return grub_errno;
-  file->size = GRUB_FILE_SIZE_UNKNOWN;
-
-  data->filename = grub_strdup (filename);
-  if (!data->filename)
-    {
-      grub_free (data);
-      return grub_errno;
-    }
-
-  file->not_easily_seekable = 0;
-  file->data = data;
-
-  err = http_establish (file, 0, 1);
-  if (err)
-    {
-      grub_free (data->filename);
-      grub_free (data);
-      return err;
-    }
-
-  return GRUB_ERR_NONE;
-}
-
-static grub_err_t
-http_close (struct grub_file *file)
-{
-  http_data_t data = file->data;
-
-  if (!data)
+  grub_ssize_t read;
+  if (!state || !state->stream || net->eof || net->broken ||
+      net->packs.count >= 2)
     return GRUB_ERR_NONE;
+  nb = grub_netbuff_alloc (HTTP_VFS_BLOCK);
+  if (!nb) return grub_errno;
+  read = grub_http_stream_read (state->stream, nb->tail, HTTP_VFS_BLOCK);
+  if (read < 0)
+    {
+      net->broken = 1;
+      grub_netbuff_free (nb);
+      return grub_errno;
+    }
+  if (!read)
+    {
+      struct grub_net_packet *pending;
+      grub_uint64_t end = net->offset;
+      /* Network bufio must learn the exact size at EOF. Otherwise its
+         partial-block readahead can seek to zero and append uninitialized
+         bytes to a chunked/close-delimited response. */
+      for (pending = net->packs.first; pending; pending = pending->next)
+        end += pending->nb->tail - pending->nb->data;
+      file->size = end;
+      net->eof = 1;
+      grub_netbuff_free (nb);
+      return GRUB_ERR_NONE;
+    }
+  if (grub_netbuff_put (nb, read))
+    { grub_netbuff_free (nb); return grub_errno; }
+  if (grub_net_put_packet (&net->packs, nb))
+    { grub_netbuff_free (nb); return grub_errno; }
+  return GRUB_ERR_NONE;
+}
 
-  if (data->sock)
-    grub_net_tcp_close (data->sock, GRUB_NET_TCP_ABORT);
-  if (data->current_line)
-    grub_free (data->current_line);
-  grub_free (data->filename);
-  grub_free (data);
+static struct grub_net_app_protocol http_proto =
+  { .name = "http", .open = http_vfs_open, .close = http_vfs_close,
+    .seek = http_vfs_seek, .packets_pulled = http_vfs_refill };
+static struct grub_net_app_protocol https_proto =
+  { .name = "https", .open = http_vfs_open, .close = http_vfs_close,
+    .seek = http_vfs_seek, .packets_pulled = http_vfs_refill };
+
+static const struct grub_bind_value *
+option (const struct grub_bind_value *record, const char *name)
+{
+  grub_size_t i;
+  for (i = 0; i < record->value.record.count; i++)
+    {
+      const struct grub_bind_field *field = &record->value.record.fields[i];
+      if (!grub_strcmp (field->name, name)) return &field->value;
+    }
+  return NULL;
+}
+
+static grub_err_t
+get_string_option (const struct grub_bind_value *record, const char *name,
+                   const char **out, grub_size_t *size)
+{
+  const struct grub_bind_value *value = option (record, name);
+  if (!value)
+    { *out = NULL; if (size) *size = 0; return GRUB_ERR_NONE; }
+  if (value->type != GRUB_BIND_STRING &&
+      value->type != GRUB_BIND_BYTES)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "HTTP %s must be a string", name);
+  if (size) *size = value->value.bytes.size;
+  *out = value->value.bytes.data;
+  if (grub_strlen (*out) != value->value.bytes.size &&
+      grub_strcmp (name, "body"))
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "embedded NUL in HTTP %s", name);
   return GRUB_ERR_NONE;
 }
 
 static grub_err_t
-http_packets_pulled (struct grub_file *file)
+parse_options (const struct grub_bind_value *record, int secure,
+               struct grub_http_request *req,
+               struct grub_http_header *headers, grub_size_t capacity)
 {
-  http_data_t data = file->data;
-
-  if (file->device->net->packs.count >= 20)
-    return 0;
-
-  if (!file->device->net->eof)
-    file->device->net->stall = 0;
-  if (data && data->sock)
-    grub_net_tcp_unstall (data->sock);
-  return 0;
+  const struct grub_bind_value *header_record;
+  grub_size_t i;
+  grub_size_t len;
+  const char *body;
+  grub_memset (req, 0, sizeof (*req));
+  if (get_string_option (record, "url", &req->url, NULL) || !req->url)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "HTTP URL is required");
+  if (grub_strncmp (req->url, secure ? "https://" : "http://",
+                    secure ? 8 : 7))
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "HTTP URL scheme mismatch");
+  if (get_string_option (record, "method", &req->method, NULL) ||
+      get_string_option (record, "body", &body, &len))
+    return grub_errno;
+  req->body = body;
+  req->body_length = len;
+  header_record = option (record, "headers");
+  if (!header_record)
+    return GRUB_ERR_NONE;
+  if (header_record->type != GRUB_BIND_RECORD ||
+      header_record->value.record.count > capacity)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid HTTP header record");
+  for (i = 0; i < header_record->value.record.count; ++i)
+    {
+      const struct grub_bind_field *field = &header_record->value.record.fields[i];
+      if (field->value.type != GRUB_BIND_STRING ||
+          grub_strlen (field->value.value.bytes.data) !=
+              field->value.value.bytes.size)
+        return grub_error (GRUB_ERR_BAD_ARGUMENT, "HTTP header values must be text");
+      headers[i].name = field->name;
+      headers[i].value = field->value.value.bytes.data;
+    }
+  req->headers = headers;
+  req->header_count = header_record->value.record.count;
+  return GRUB_ERR_NONE;
 }
 
-static struct grub_net_app_protocol grub_http_protocol =
-  {
-    .name = "http",
-    .open = http_open,
-    .close = http_close,
-    .seek = http_seek,
-    .packets_pulled = http_packets_pulled
-  };
+static grub_err_t
+response_result (const struct grub_http_response *response,
+                 struct grub_bind_value *result)
+{
+  struct grub_bind_field *fields = grub_zalloc (3 * sizeof (*fields));
+  if (!fields) return grub_errno;
+  fields[0].name = "status";
+  fields[0].value.type = GRUB_BIND_U64;
+  fields[0].value.value.u64 = response->status;
+  fields[1].name = "headers";
+  fields[1].value.type = GRUB_BIND_STRING;
+  fields[1].value.value.bytes.data = response->headers;
+  fields[1].value.value.bytes.size = grub_strlen (response->headers);
+  fields[2].name = "body";
+  fields[2].value.type = GRUB_BIND_BYTES;
+  fields[2].value.value.bytes.data = response->body;
+  fields[2].value.value.bytes.size = response->body_length;
+  result->type = GRUB_BIND_RECORD;
+  result->owned = 1;
+  result->value.record.fields = fields;
+  result->value.record.count = 3;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+request_impl (int secure, const struct grub_bind_value *args,
+              struct grub_bind_value *results, grub_size_t *count)
+{
+  struct grub_http_request request;
+  struct grub_http_header headers[GRUB_BIND_MAX_RECORD_FIELDS];
+  struct grub_http_response response = {0};
+  grub_err_t err;
+  if (parse_options (&args[0], secure, &request, headers,
+                     GRUB_BIND_MAX_RECORD_FIELDS))
+    return grub_errno;
+  err = grub_http_request (&request, &response);
+  if (err) return err;
+  err = response_result (&response, &results[0]);
+  if (err) { grub_http_response_free (&response); return err; }
+  /* Response's strings now belong to the Bind record and Lua adapter. */
+  ((struct grub_bind_field *) results[0].value.record.fields)[1].value.owned = 1;
+  ((struct grub_bind_field *) results[0].value.record.fields)[2].value.owned = 1;
+  *count = 1;
+  return GRUB_ERR_NONE;
+}
+
+static void
+destroy_stream (void *value)
+{
+  grub_http_stream_close (value);
+}
+
+static grub_err_t
+open_impl (int secure, const struct grub_bind_value *args,
+           struct grub_bind_value *results, grub_size_t *count)
+{
+  struct grub_http_request request;
+  struct grub_http_header headers[GRUB_BIND_MAX_RECORD_FIELDS];
+  struct grub_bind_handle *handle;
+  grub_http_stream_t stream;
+  if (parse_options (&args[0], secure, &request, headers,
+                     GRUB_BIND_MAX_RECORD_FIELDS))
+    return grub_errno;
+  stream = grub_http_stream_open (&request, 0);
+  if (!stream) return grub_errno;
+  handle = grub_bind_handle_create (grub_http_module_owner, "http.stream",
+                                    stream, destroy_stream);
+  if (!handle)
+    { grub_http_stream_close (stream); return grub_errno; }
+  results[0].type = GRUB_BIND_HANDLE;
+  results[0].value.handle = handle;
+  *count = 1;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+bind_request_http (grub_size_t argc __attribute__ ((unused)),
+                   const struct grub_bind_value *args,
+                   struct grub_bind_value *out, grub_size_t *count)
+{ return request_impl (0, args, out, count); }
+
+static grub_err_t
+bind_request_https (grub_size_t argc __attribute__ ((unused)),
+                    const struct grub_bind_value *args,
+                    struct grub_bind_value *out, grub_size_t *count)
+{ return request_impl (1, args, out, count); }
+
+static grub_err_t
+bind_open_http (grub_size_t argc __attribute__ ((unused)),
+                const struct grub_bind_value *args,
+                struct grub_bind_value *out, grub_size_t *count)
+{ return open_impl (0, args, out, count); }
+
+static grub_err_t
+bind_open_https (grub_size_t argc __attribute__ ((unused)),
+                 const struct grub_bind_value *args,
+                 struct grub_bind_value *out, grub_size_t *count)
+{ return open_impl (1, args, out, count); }
+
+static grub_err_t
+bind_read (grub_size_t argc __attribute__ ((unused)),
+           const struct grub_bind_value *args,
+           struct grub_bind_value *out, grub_size_t *count)
+{
+  grub_http_stream_t stream = grub_bind_handle_data (args[0].value.handle,
+                                                     "http.stream");
+  grub_uint64_t length = args[1].value.u64;
+  grub_ssize_t read;
+  char *buffer;
+  if (!stream) return grub_errno;
+  if (!length || length > HTTP_BIND_READ_MAX)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "HTTP read size must be 1..65536");
+  buffer = grub_malloc (length);
+  if (!buffer) return grub_errno;
+  read = grub_http_stream_read (stream, buffer, (grub_size_t) length);
+  if (read < 0)
+    { grub_free (buffer); return grub_errno; }
+  out[0].type = GRUB_BIND_BYTES;
+  out[0].owned = 1;
+  out[0].value.bytes.data = buffer;
+  out[0].value.bytes.size = read;
+  *count = 1;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+bind_status (grub_size_t argc __attribute__ ((unused)),
+             const struct grub_bind_value *args,
+             struct grub_bind_value *out, grub_size_t *count)
+{
+  grub_http_stream_t stream = grub_bind_handle_data (args[0].value.handle,
+                                                     "http.stream");
+  struct grub_bind_field *fields;
+  if (!stream) return grub_errno;
+  fields = grub_zalloc (2 * sizeof (*fields));
+  if (!fields) return grub_errno;
+  fields[0].name = "status";
+  fields[0].value.type = GRUB_BIND_U64;
+  fields[0].value.value.u64 = grub_http_stream_status (stream);
+  fields[1].name = "headers";
+  fields[1].value.type = GRUB_BIND_STRING;
+  fields[1].value.value.bytes.data = grub_http_stream_headers (stream);
+  fields[1].value.value.bytes.size =
+    grub_strlen (fields[1].value.value.bytes.data);
+  out[0].type = GRUB_BIND_RECORD;
+  out[0].owned = 1;
+  out[0].value.record.fields = fields;
+  out[0].value.record.count = 2;
+  *count = 1;
+  return GRUB_ERR_NONE;
+}
+
+static grub_err_t
+bind_close (grub_size_t argc __attribute__ ((unused)),
+            const struct grub_bind_value *args,
+            struct grub_bind_value *out __attribute__ ((unused)),
+            grub_size_t *count)
+{
+  if (!grub_bind_handle_data (args[0].value.handle, "http.stream"))
+    return grub_errno;
+  *count = 0;
+  return grub_bind_handle_close (args[0].value.handle);
+}
+
+static const enum grub_bind_type options_type[] = { GRUB_BIND_RECORD };
+static const enum grub_bind_type read_types[] =
+  { GRUB_BIND_HANDLE, GRUB_BIND_U64 };
+static const enum grub_bind_type handle_type[] = { GRUB_BIND_HANDLE };
+static const struct grub_bind_export exports[] =
+{
+  { "http", "request", options_type, 1, 1, bind_request_http },
+  { "https", "request", options_type, 1, 1, bind_request_https },
+  { "http", "request_stream", options_type, 1, 1, bind_open_http },
+  { "https", "request_stream", options_type, 1, 1, bind_open_https },
+  { "http", "read", read_types, 2, 2, bind_read },
+  { "https", "read", read_types, 2, 2, bind_read },
+  { "http", "status", handle_type, 1, 1, bind_status },
+  { "https", "status", handle_type, 1, 1, bind_status },
+  { "http", "close", handle_type, 1, 1, bind_close },
+  { "https", "close", handle_type, 1, 1, bind_close }
+};
 
 GRUB_MOD_INIT (http)
 {
-  grub_net_app_level_register (&grub_http_protocol);
+  grub_http_module_owner = mod;
+  grub_net_app_level_register (&http_proto);
+  grub_net_app_level_register (&https_proto);
+  if (grub_bind_register (mod, exports, sizeof (exports) / sizeof (exports[0])))
+    grub_print_error ();
 }
 
 GRUB_MOD_FINI (http)
 {
-  grub_net_app_level_unregister (&grub_http_protocol);
+  grub_bind_unregister (grub_http_module_owner);
+  grub_net_app_level_unregister (&https_proto);
+  grub_net_app_level_unregister (&http_proto);
+  grub_http_module_owner = NULL;
 }

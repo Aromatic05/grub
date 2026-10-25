@@ -84,6 +84,7 @@ KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/fileview.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/fs.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/writefs.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/tls.h
+KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/http.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/bind.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/i18n.h
 KERNEL_HEADER_FILES += $(top_srcdir)/include/grub/kernel.h
