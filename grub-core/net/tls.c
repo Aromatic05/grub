@@ -20,6 +20,7 @@
 #include <grub/mm.h>
 #include <grub/random.h>
 #include <grub/time.h>
+#include <grub/term.h>
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/efi.h>
 #include <grub/efi/api.h>
@@ -38,6 +39,7 @@ GRUB_MOD_LICENSE ("GPLv3+");
 #define TLS_CA_MAX (512 * 1024)
 #define TLS_RECORD_MAX 16384
 #define TLS_SEED_ATTEMPTS 3
+#define TLS_CLOSE_DEADLINE_MS 500
 
 struct grub_tls_connection
 {
@@ -48,6 +50,9 @@ struct grub_tls_connection
   int remote_eof;
   int failed;
   int owns_module_ref;
+  int handshake_complete;
+  int tls_eof;
+  struct grub_datetime clock_utc;
   mbedtls_ssl_context ssl;
   mbedtls_ssl_config conf;
   mbedtls_x509_crt roots;
@@ -205,8 +210,10 @@ receive_record (void *userdata, unsigned char *dst, size_t capacity)
     }
   if (conn->failed)
     return MBEDTLS_ERR_NET_RECV_FAILED;
+  /* TCP FIN without an authenticated TLS close_notify is truncation,
+     not a clean EOF.  Returning zero would make Mbed TLS report success. */
   if (conn->remote_eof)
-    return 0;
+    return MBEDTLS_ERR_NET_RECV_FAILED;
   return MBEDTLS_ERR_SSL_WANT_READ;
 }
 
@@ -242,6 +249,80 @@ send_record (void *userdata, const unsigned char *src, size_t length)
   return err ? MBEDTLS_ERR_NET_SEND_FAILED : (int) length;
 }
 
+/* Request cancellation is distinct from a TLS alert or TCP shutdown.
+   GRUB consoles expose Ctrl-C/D as either ASCII controls or modified keys.
+   ESC/F4 also use GRUB's existing interrupt convention. */
+static int
+tls_cancel_requested (void)
+{
+  int key = grub_getkey_noblock ();
+  if (key == 3 || key == 4 ||
+      key == (GRUB_TERM_CTRL | 'c') ||
+      key == (GRUB_TERM_CTRL | 'C') ||
+      key == (GRUB_TERM_CTRL | 'd') ||
+      key == (GRUB_TERM_CTRL | 'D') ||
+      grub_key_is_interrupt (key))
+    {
+      grub_error (GRUB_ERR_WAIT, "TLS operation interrupted");
+      return 1;
+    }
+  return 0;
+}
+
+static int
+tls_cancel_tcp_open (void *unused __attribute__ ((unused)))
+{
+  return tls_cancel_requested ();
+}
+
+/* UEFI TimeZone is UTC minus local time (minutes); daylight adjustments
+   are already reflected in the firmware's reported TimeZone.  On systems
+   without timezone metadata, an explicit grub_tls_utc_offset can supply
+   the same UTC-minus-RTC offset.  Otherwise the RTC is assumed UTC,
+   as was previously the case on BIOS and timezone-unspecified firmware. */
+static grub_err_t
+tls_get_utc_time (struct grub_datetime *utc)
+{
+  const char *override = grub_env_get ("grub_tls_utc_offset");
+  grub_int64_t seconds;
+  long offset = 0;
+#ifdef GRUB_MACHINE_EFI
+  grub_efi_time_t firmware;
+  if (grub_efi_system_table->runtime_services->get_time (&firmware, NULL)
+      != GRUB_EFI_SUCCESS)
+    return grub_error (GRUB_ERR_BAD_FIRMWARE, "cannot read TLS certificate clock");
+  utc->year = firmware.year;
+  utc->month = firmware.month;
+  utc->day = firmware.day;
+  utc->hour = firmware.hour;
+  utc->minute = firmware.minute;
+  utc->second = firmware.second;
+  if (firmware.time_zone != 0x07ff)
+    {
+      if (firmware.time_zone < -1440 || firmware.time_zone > 1440)
+        return grub_error (GRUB_ERR_BAD_FIRMWARE, "invalid EFI timezone");
+      offset = firmware.time_zone;
+    }
+#else
+  if (grub_get_datetime (utc))
+    return grub_errno;
+#endif
+  if (override && *override)
+    {
+      const char *end;
+      grub_errno = GRUB_ERR_NONE;
+      offset = grub_strtol (override, &end, 10);
+      if (grub_errno || *end || offset < -1440 || offset > 1440)
+        return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                           "invalid grub_tls_utc_offset minutes");
+    }
+  if (!grub_datetime2unixtime (utc, &seconds))
+    return grub_error (GRUB_ERR_BAD_FIRMWARE, "invalid TLS certificate clock");
+  seconds += (grub_int64_t) offset * 60;
+  grub_unixtime2datetime (seconds, utc);
+  return GRUB_ERR_NONE;
+}
+
 /* Verify validity dates against GRUB's firmware clock, since this freestanding
    Mbed TLS build does not have libc time()/gmtime(). Clock failure is fatal. */
 static int
@@ -264,16 +345,10 @@ verify_certificate_clock (void *ctx __attribute__ ((unused)),
                           mbedtls_x509_crt *cert,
                           int depth __attribute__ ((unused)), uint32_t *flags)
 {
-  struct grub_datetime now;
-  if (grub_get_datetime (&now))
-    {
-      grub_errno = GRUB_ERR_NONE;
-      *flags |= MBEDTLS_X509_BADCERT_EXPIRED;
-      return 0;
-    }
-  if (compare_certificate_date (&cert->valid_from, &now) > 0)
+  const grub_tls_connection_t conn = ctx;
+  if (compare_certificate_date (&cert->valid_from, &conn->clock_utc) > 0)
     *flags |= MBEDTLS_X509_BADCERT_FUTURE;
-  if (compare_certificate_date (&cert->valid_to, &now) < 0)
+  if (compare_certificate_date (&cert->valid_to, &conn->clock_utc) < 0)
     *flags |= MBEDTLS_X509_BADCERT_EXPIRED;
   return 0;
 }
@@ -333,7 +408,26 @@ grub_tls_close (grub_tls_connection_t conn)
     return;
   if (conn->sock)
     {
-      grub_net_tcp_close (conn->sock, GRUB_NET_TCP_ABORT);
+      /* Best-effort authenticated shutdown before TCP FIN.  Do not wait
+         indefinitely for peer progress or an unavailable network card. */
+      if (conn->handshake_complete && !conn->failed)
+        {
+          int status;
+          grub_uint64_t started = grub_get_time_ms ();
+          do
+            {
+              status = mbedtls_ssl_close_notify (&conn->ssl);
+              if (status != MBEDTLS_ERR_SSL_WANT_READ &&
+                  status != MBEDTLS_ERR_SSL_WANT_WRITE)
+                break;
+              grub_net_poll_cards (50, NULL);
+            }
+          while (grub_get_time_ms () - started < TLS_CLOSE_DEADLINE_MS);
+        }
+      grub_net_tcp_close (conn->sock, conn->handshake_complete ?
+                          GRUB_NET_TCP_DISCARD : GRUB_NET_TCP_ABORT);
+      /* close() alone leaves the socket registered and retains buffers. */
+      grub_net_tcp_dispose (conn->sock);
       conn->sock = NULL;
     }
   mbedtls_ssl_free (&conn->ssl);
@@ -367,6 +461,8 @@ connect_once (const char *host, grub_uint16_t port, const char *ca,
 
   if (read_trust_anchors (conn, ca))
     goto failed;
+  if (tls_get_utc_time (&conn->clock_utc))
+    goto failed;
   ret = ensure_random_state ();
   if (ret)
     goto crypto_error;
@@ -378,7 +474,7 @@ connect_once (const char *host, grub_uint16_t port, const char *ca,
   mbedtls_ssl_conf_rng (&conn->conf, mbedtls_ctr_drbg_random, &shared_drbg);
   mbedtls_ssl_conf_ca_chain (&conn->conf, &conn->roots, NULL);
   mbedtls_ssl_conf_authmode (&conn->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-  mbedtls_ssl_conf_verify (&conn->conf, verify_certificate_clock, NULL);
+  mbedtls_ssl_conf_verify (&conn->conf, verify_certificate_clock, conn);
   ret = mbedtls_ssl_setup (&conn->ssl, &conn->conf);
   if (ret)
     goto crypto_error;
@@ -386,9 +482,12 @@ connect_once (const char *host, grub_uint16_t port, const char *ca,
   if (ret)
     goto crypto_error;
 
-  conn->sock = grub_net_tcp_open ((char *) host, port ? port : 443,
-                                  receive_ciphertext, transport_failed,
-                                  transport_eof, conn);
+  conn->sock = grub_net_tcp_open_cancelable ((char *) host,
+                                             port ? port : 443,
+                                             receive_ciphertext,
+                                             transport_failed,
+                                             transport_eof, conn,
+                                             tls_cancel_tcp_open, NULL);
   if (!conn->sock)
     goto failed;
   mbedtls_ssl_set_bio (&conn->ssl, conn, send_record, receive_record, NULL);
@@ -400,6 +499,7 @@ connect_once (const char *host, grub_uint16_t port, const char *ca,
       if (!ret)
         {
           grub_dl_ref (tls_module);
+          conn->handshake_complete = 1;
           conn->owns_module_ref = 1;
           connected_count++;
           return conn;
@@ -413,6 +513,8 @@ connect_once (const char *host, grub_uint16_t port, const char *ca,
           goto failed;
         }
       grub_net_poll_cards (50, NULL);
+      if (tls_cancel_requested ())
+        goto failed;
     }
   while (grub_get_time_ms () - started < TLS_DEADLINE_MS);
 
@@ -480,6 +582,11 @@ grub_tls_write (grub_tls_connection_t conn, const void *buffer,
       grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid TLS write buffer");
       return -1;
     }
+  if (conn->failed || conn->tls_eof)
+    {
+      grub_error (GRUB_ERR_WRITE_ERROR, "TLS connection is no longer writable");
+      return -1;
+    }
   while (sent < length)
     {
       grub_size_t size = length - sent;
@@ -498,9 +605,17 @@ grub_tls_write (grub_tls_connection_t conn, const void *buffer,
           grub_get_time_ms () - progress >= TLS_DEADLINE_MS)
         break;
       grub_net_poll_cards (50, NULL);
+      if (tls_cancel_requested ())
+        {
+          conn->failed = 1;
+          return -1;
+        }
     }
   if (sent == length)
     return sent;
+  /* Bytes may already have been transmitted.  Never permit a retry on
+     this session to accidentally duplicate a partially delivered record. */
+  conn->failed = 1;
   grub_error (GRUB_ERR_WRITE_ERROR, "TLS write error (%d)", ret);
   return -1;
 }
@@ -516,13 +631,24 @@ grub_tls_read (grub_tls_connection_t conn, void *buffer, grub_size_t length)
       return -1;
     }
   if (!length) return 0;
+  if (conn->tls_eof) return 0;
+  if (conn->failed)
+    {
+      grub_error (GRUB_ERR_READ_ERROR, "TLS connection has failed");
+      return -1;
+    }
   for (;;)
     {
       ret = mbedtls_ssl_read (&conn->ssl, buffer, length);
       if (ret > 0)
         return ret;
-      if (ret == 0 || ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
-        return 0;
+      if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
+        {
+          conn->tls_eof = 1;
+          return 0;
+        }
+      if (ret == 0)
+        break; /* No authenticated close_notify was observed. */
       if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
           ret != MBEDTLS_ERR_SSL_WANT_WRITE)
         break;
@@ -530,8 +656,18 @@ grub_tls_read (grub_tls_connection_t conn, void *buffer, grub_size_t length)
           grub_get_time_ms () - start >= TLS_DEADLINE_MS)
         break;
       grub_net_poll_cards (50, NULL);
+      if (tls_cancel_requested ())
+        {
+          conn->failed = 1;
+          return -1;
+        }
     }
-  grub_error (GRUB_ERR_READ_ERROR, "TLS read error (%d)", ret);
+  conn->failed = 1;
+  if (conn->remote_eof || ret == 0)
+    grub_error (GRUB_ERR_READ_ERROR,
+                "TLS stream truncated without close_notify");
+  else
+    grub_error (GRUB_ERR_READ_ERROR, "TLS read error (%d)", ret);
   return -1;
 }
 
@@ -611,12 +747,14 @@ bind_read (grub_size_t argc __attribute__ ((unused)),
 {
   grub_tls_connection_t conn = grub_bind_handle_data (argv[0].value.handle,
                                                       "tls.connection");
-  grub_size_t length = argv[1].value.u64;
+  grub_uint64_t requested = argv[1].value.u64;
+  grub_size_t length;
   unsigned char *buffer;
   grub_ssize_t n;
   if (!conn) return grub_errno;
-  if (!length || length > 65536)
+  if (!requested || requested > 65536)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "TLS read size must be 1..65536");
+  length = (grub_size_t) requested;
   buffer = grub_malloc (length);
   if (!buffer) return grub_errno;
   n = grub_tls_read (conn, buffer, length);

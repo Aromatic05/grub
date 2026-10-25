@@ -9,7 +9,10 @@ struct grub_tls_connection;
 typedef struct grub_tls_connection *grub_tls_connection_t;
 
 /* ca_path is a GRUB read-only file path to a PEM CA bundle. If NULL,
-   the grub_tls_ca environment variable is used. Verification is mandatory:
+   the grub_tls_ca environment variable is used. On firmware without
+   timezone metadata, the RTC is assumed UTC unless grub_tls_utc_offset
+   supplies the UTC-minus-local offset (minutes).
+   Verification is mandatory:
    absent or invalid trust material always fails closed. Host is used both
    for DNS resolution and for TLS SNI/X.509 hostname verification.
 
@@ -19,7 +22,10 @@ grub_tls_connection_t grub_tls_connect
 
 /* The native transport does not depend on HTTP or any script runtime.
    Positive result: bytes transferred; 0: authenticated EOF (read only);
-   -1: error in grub_errno. Writes complete the entire supplied buffer
+   -1: error in grub_errno, including TCP truncation and cancellation.
+   Zero is returned for a zero-length read or after an authenticated
+   TLS close_notify (never for an unexpected TCP FIN).
+   Writes complete the entire supplied buffer
    or return -1; they never report a successful partial write. */
 grub_ssize_t grub_tls_read
   (grub_tls_connection_t connection, void *buf, grub_size_t length);
