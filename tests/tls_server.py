@@ -21,7 +21,7 @@ with socket.socket() as listener:
     listener.listen(8)
     listener.settimeout(150)
     print("TLS_SERVER_READY", args.port, flush=True)
-    for _ in range(12):
+    for _ in range(48):
         try:
             raw, addr = listener.accept()
         except socket.timeout:
@@ -34,14 +34,26 @@ with socket.socket() as listener:
                     request = client.recv(4096)
                 except (TimeoutError, ssl.SSLError):
                     request = b""
-                if request.startswith(b"GET /tls-test HTTP/1.1\r\n"):
+                if request.startswith(b"GET /tls-stall HTTP/1.1\r\n"):
+                    # Allow the guest's serial Ctrl-C/D to interrupt TLS read.
+                    import time
+                    print("TLS_SERVER_STALLING", flush=True)
+                    time.sleep(4)
+                elif request.startswith((b"GET /tls-test HTTP/1.1\r\n",
+                                       b"GET /tls-clean HTTP/1.1\r\n")):
                     payload = b"verified GRUB TLS transport\n"
                     response = (b"HTTP/1.1 200 OK\r\nConnection: close\r\n"
                                 + b"Content-Length: " + str(len(payload)).encode()
                                 + b"\r\n\r\n" + payload)
                     client.sendall(response)
                     print("TLS_SERVER_HTTP_OK", flush=True)
+                    if request.startswith(b"GET /tls-clean HTTP/1.1\r\n"):
+                        # unwrap sends authenticated TLS close_notify, and
+                        # waits for the client's close_notify response.
+                        client.unwrap()
+                        print("TLS_SERVER_CLEAN_CLOSE_OK", flush=True)
                 else:
+                    # No TLS close_notify: intentional truncation probe.
                     print("TLS_SERVER_PROBE", flush=True)
         except (OSError, ssl.SSLError) as exc:
             print("TLS_SERVER_PEER_REJECTED", type(exc).__name__, flush=True)
