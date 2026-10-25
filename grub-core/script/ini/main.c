@@ -24,7 +24,7 @@
 #include <grub/dl.h>
 #include <grub/extcmd.h>
 #include <grub/i18n.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 
 #include "ini.h"
 
@@ -89,55 +89,89 @@ grub_cmd_ini_get (grub_extcmd_context_t ctxt, int argc, char **args)
 
 static grub_extcmd_t cmd_get;
 
-static int
-lua_ini_load (lua_State *state)
+/* Native handle ownership is shared by all future script adapters. */
+static grub_dl_t ini_module;
+
+static void
+destroy_ini (void *data)
 {
-  ini_t *config = NULL;
-  const char *name;
-  name = luaL_checkstring (state, 1);
-  config = ini_load (name);
-  if (! config)
-    return 0;
-  lua_pushlightuserdata (state, config);
-  return 1;
+  ini_free (data);
 }
 
-static int
-lua_ini_free (lua_State *state)
+static grub_err_t
+bind_ini_load (grub_size_t argc __attribute__ ((unused)),
+               const struct grub_bind_value *args,
+               struct grub_bind_value *results, grub_size_t *nresults)
 {
-  ini_t *config = NULL;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  config = lua_touserdata (state, 1);
-  ini_free (config);
-  return push_result (state);
+  ini_t *config = ini_load (args[0].value.bytes.data);
+  struct grub_bind_handle *handle;
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  if (!config)
+    {
+      /* Missing or invalid configuration has historically returned nil. */
+      grub_errno = GRUB_ERR_NONE;
+      return GRUB_ERR_NONE;
+    }
+  handle = grub_bind_handle_create (ini_module, "ini", config, destroy_ini);
+  if (!handle)
+    {
+      ini_free (config);
+      return grub_errno;
+    }
+  results[0].type = GRUB_BIND_HANDLE;
+  results[0].value.handle = handle;
+  return GRUB_ERR_NONE;
 }
 
-static int
-lua_ini_get (lua_State *state)
+static grub_err_t
+bind_ini_free (grub_size_t argc __attribute__ ((unused)),
+               const struct grub_bind_value *args,
+               struct grub_bind_value *results __attribute__ ((unused)),
+               grub_size_t *nresults)
 {
-  ini_t *config = NULL;
+  *nresults = 0;
+  if (!grub_bind_handle_data (args[0].value.handle, "ini"))
+    return grub_errno;
+  return grub_bind_handle_close (args[0].value.handle);
+}
+
+static grub_err_t
+bind_ini_get (grub_size_t argc, const struct grub_bind_value *args,
+              struct grub_bind_value *results, grub_size_t *nresults)
+{
+  ini_t *config = grub_bind_handle_data (args[0].value.handle, "ini");
   const char *section = NULL;
-  const char *key = NULL;
-  const char *val = NULL;
-  luaL_checktype (state, 1, LUA_TLIGHTUSERDATA);
-  config = lua_touserdata (state, 1);
-  section = (lua_gettop (state) > 2) ?
-             luaL_checkstring (state, 2) : NULL;
-  key = (lua_gettop (state) > 2) ?
-         luaL_checkstring (state, 3) : luaL_checkstring (state, 2);
-  val = ini_get (config, section, key);
-  if (!val)
-    return 0;
-  lua_pushstring (state, val);
-  return 1;
+  const char *key, *value;
+  if (!config) return grub_errno;
+  if (argc == 2)
+    key = args[1].value.bytes.data;
+  else
+    {
+      section = args[1].value.bytes.data;
+      key = args[2].value.bytes.data;
+    }
+  value = ini_get (config, section, key);
+  results[0].type = GRUB_BIND_NIL;
+  *nresults = 1;
+  if (value)
+    {
+      results[0].type = GRUB_BIND_STRING;
+      results[0].value.bytes.data = value;
+      results[0].value.bytes.size = grub_strlen (value);
+    }
+  return GRUB_ERR_NONE;
 }
 
-static luaL_Reg inilib[] =
+static const enum grub_bind_type ini_load_args[] = { GRUB_BIND_STRING };
+static const enum grub_bind_type ini_handle_args[] = { GRUB_BIND_HANDLE };
+static const enum grub_bind_type ini_get_args[] =
+  { GRUB_BIND_HANDLE, GRUB_BIND_STRING, GRUB_BIND_STRING };
+static const struct grub_bind_export ini_exports[] =
 {
-  {"load", lua_ini_load},
-  {"free", lua_ini_free},
-  {"get", lua_ini_get},
-  {0, 0}
+  { "ini", "load", ini_load_args,   1, 1, bind_ini_load },
+  { "ini", "free", ini_handle_args, 1, 1, bind_ini_free },
+  { "ini", "get",  ini_get_args,    2, 3, bind_ini_get }
 };
 
 GRUB_MOD_INIT(ini)
@@ -145,15 +179,13 @@ GRUB_MOD_INIT(ini)
   cmd_get = grub_register_extcmd ("ini_get", grub_cmd_ini_get, 0,
                   N_("[--set=VARNAME] FILE [SECTION:]KEY"),
                   N_("Get value from ini files."), options_get);
-  if (grub_lua_global_state)
-  {
-    lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-    luaL_register (grub_lua_global_state, "ini", inilib);
-    lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-  }
+  ini_module = mod;
+  grub_bind_register (mod, ini_exports, 3);
 }
 
 GRUB_MOD_FINI(ini)
 {
+  grub_bind_unregister (ini_module);
+  ini_module = NULL;
   grub_unregister_extcmd (cmd_get);
 }
