@@ -24,6 +24,14 @@ Writable backends currently support FAT12, FAT16, FAT32 and exFAT through
 `fatfs.mod`, and NTFS through `ntfs3g.mod`. Listing support does not mean
 a particular volume is safe to mount: mount-time disk checks remain enforced.
 
+FatFs handles FAT12/16/32 and exFAT volumes with 512, 1024, 2048 or
+4096 bytes per logical filesystem sector (as recorded in the FAT BPB).
+Disk I/O converts the filesystem's sector indices to GRUB's 512-byte
+address units; it does not assume the filesystem and physical disk have
+the same logical sector size. The 4 KiB case is covered by read/write,
+copy, append, rename, unmount, independent filesystem checks and
+round-trip content tests on EFI 4Kn and BIOS 512-byte virtual devices.
+
 A volume must be explicitly mounted into slots 1 to 9. During GRUB
 Secure Boot Lockdown, new writable mounts and all mutating WriteFS
 operations (including Lua calls) are denied by Core; ordinary read-only VFS
