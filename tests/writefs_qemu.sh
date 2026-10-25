@@ -26,13 +26,53 @@ p.joinpath('huge.bin').write_bytes(bytes(range(256)) * 32768)
 p.joinpath('gap.bin').write_bytes(b'hello' + bytes(4091) + b'END')
 p.joinpath('hiberfil.sys').write_bytes(b'hibr' + bytes(4092))
 p.joinpath('invalid-upcase').write_bytes(b'X')
-p.joinpath('read.lua').write_text('wf_handle = fat.open("1:/test/big.bin", 1)\nassert(fat.read(wf_handle, 4) == string.char(0, 1, 2, 3))\n')
-p.joinpath('close.lua').write_text('fat.close(wf_handle)\nwf_handle = nil\n')
+p.joinpath('supported.lua').write_text(
+    'assert(fat == nil)\n'
+    'local expected = {fat12=true, fat16=true, fat32=true, exfat=true, ntfs=true}\n'
+    'local supported = writefs.supported()\n'
+    'local count = 0\n'
+    'for _, fs in ipairs(supported) do\n'
+    '  assert(expected[fs.name], fs.name)\n'
+    '  assert(fs.driver == (fs.name == "ntfs" and "ntfs3g" or "fatfs"))\n'
+    '  assert(type(fs.loaded) == "boolean")\n'
+    '  count = count + 1\n'
+    'end\n'
+    'assert(count == 5)\n')
+p.joinpath('read.lua').write_text(
+    'wf_handle = writefs.open("1:/test/big.bin", 1)\n'
+    'assert(writefs.read(wf_handle, 4) == string.char(0, 1, 2, 3))\n'
+    'local n = writefs.open("2:/test/big.bin", 1)\n'
+    'assert(writefs.read(n, 4) == string.char(0, 1, 2, 3))\n'
+    'writefs.close(n)\n'
+    'assert(not pcall(function() writefs.read(n, 1) end))\n')
+p.joinpath('close.lua').write_text(
+    'writefs.close(wf_handle)\n'
+    'assert(not pcall(function() writefs.read(wf_handle, 1) end))\n'
+    'assert(not pcall(function() writefs.close(wf_handle) end))\n'
+    'wf_handle = nil\n')
+p.joinpath('write.lua').write_text(
+    'for _, num in ipairs({1, 2, 3}) do\n'
+    '  local path = num .. ":/test/fromlua"\n'
+    '  local h = writefs.open(path, 6)\n'
+    '  assert(not pcall(function() writefs.read(h, 1) end))\n'
+    '  assert(writefs.write(h, "abc") == 3)\n'
+    '  writefs.seek(h, 1)\n'
+    '  assert(writefs.write(h, "Z") == 1)\n'
+    '  assert(writefs.size(h) == 3)\n'
+    '  writefs.close(h)\n'
+    '  local r = writefs.open(path, 1)\n'
+    '  assert(writefs.read(r, 3) == "aZc")\n'
+    '  assert(writefs.eof(r))\n'
+    '  writefs.close(r)\n'
+    '  local rw = writefs.open(path, 3)\n'
+    '  assert(writefs.read(rw, 3) == "aZc")\n'
+    '  writefs.close(rw)\n'
+    'end\n')
 PY
 truncate -s 64M "$work/esp.img"
 mkfs.fat -F 16 -n WFESP "$work/esp.img" > "$work/mkfs.log" 2>&1
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT
-for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
+for file in payload.bin short.txt gap.bin huge.bin read.lua close.lua write.lua supported.lua; do mcopy -i "$work/esp.img" "$work/$file" "::/$file"; done
 truncate -s 32M "$work/fat.img"
 mkfs.fat -F 16 -n WFFAT "$work/fat.img" >> "$work/mkfs.log" 2>&1
 truncate -s 64M "$work/exfat.img"
@@ -101,11 +141,13 @@ def ok(command, name):
 def bad(command, name):
     lines.append(f'if {command}; then echo WF_FAIL_{name}; else echo WF_OK_{name}; fi')
 ok('mount status', 'CORE_AVAILABLE')
+ok('mount filesystems', 'FILESYSTEMS_CLI')
 ok('insmod fat', 'FAT_READER')
 ok('insmod ntfs', 'NTFS_READER')
 ok('insmod exfat', 'EXFAT_READER')
 for label, var in [('WFESP','esp'),('WFFAT','fat'),('WFEXFAT','exfat'),('WFNTFS','ntfs'),('WFFULL','full'),('WFNTFS4K','ntfs4k'),('WFHIBER','hiber'),('WFDIRTY','dirty'),('WFREADONLY','readonly'),('WFNTFSFULL','ntfsfull'),('WFBADUPCASE','badupcase')]:
     ok(f'search --no-floppy --label --set={var} {label}', f'FIND_{var}')
+ok('lua ($esp)/supported.lua', 'FILESYSTEMS_LUA')
 ok('mount ($fat) 1', 'MOUNT_FAT')
 ok('mount ($ntfs) 2', 'MOUNT_NTFS')
 ok('mount ($exfat) 3', 'MOUNT_EXFAT')
@@ -137,9 +179,10 @@ for num, kind in [(1,'FAT'),(2,'NTFS'),(3,'EXFAT')]:
     ok(f'mv {num}:/test/renamed {num}:/other/moved', f'{kind}_SAME_MOVE')
     ok(f'rm {num}:/other/moved', f'{kind}_REMOVE_FILE')
     ok(f'rm {num}:/other', f'{kind}_REMOVE_DIR')
-ok('lua ($esp)/read.lua', 'LUA_FAT_READ')
+ok('lua ($esp)/read.lua', 'LUA_WRITEFS_READ')
 bad('umount 1', 'LUA_OPEN_PREVENTS_UNMOUNT')
-ok('lua ($esp)/close.lua', 'LUA_FAT_CLOSE')
+ok('lua ($esp)/close.lua', 'LUA_WRITEFS_CLOSE')
+ok('lua ($esp)/write.lua', 'LUA_WRITEFS_MULTIFS')
 ok('cp 1:/test/big.bin 2:/from-fat.bin', 'FAT_TO_NTFS')
 ok('mkdir 2:/中文目录', 'UNICODE_DIR')
 ok('cp ($esp)/payload.bin 2:/中文目录/文件.bin', 'UNICODE_COPY')
