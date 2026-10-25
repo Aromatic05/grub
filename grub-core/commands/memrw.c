@@ -23,7 +23,7 @@
 #include <grub/env.h>
 #include <grub/i18n.h>
 #include <grub/file.h>
-#include <grub/lua.h>
+#include <grub/bind.h>
 #ifdef GRUB_MACHINE_EFI
 #include <grub/efi/api.h>
 #include <grub/efi/efi.h>
@@ -263,39 +263,57 @@ fail:
   return grub_errno;
 }
 
-/* Lua "memrw" library: raw physical memory access.  */
+/* Raw physical memory operations remain explicit to this module.
+   The generic ABI only describes these existing operations; it cannot
+   expose arbitrary C functions, symbols, or create memory mappings. */
+static grub_dl_t memrw_module;
 
-#define LUA_MEMRW(type, name)						\
-  static int								\
-  lua_read_##name (lua_State *state)					\
-  {									\
-    grub_addr_t addr = luaL_checkinteger (state, 1);			\
-    lua_pushinteger (state, *(volatile type *) addr);			\
-    return 1;								\
-  }									\
-									\
-  static int								\
-  lua_write_##name (lua_State *state)					\
-  {									\
-    grub_addr_t addr = luaL_checkinteger (state, 1);			\
-    *(volatile type *) addr = luaL_checkinteger (state, 2);		\
-    return 0;								\
+#define NATIVE_MEMRW(ctype, name)                                        \
+  static grub_err_t                                                    \
+  bind_read_##name (grub_size_t argc __attribute__ ((unused)),          \
+                    const struct grub_bind_value *args,                \
+                    struct grub_bind_value *results, grub_size_t *nout) \
+  {                                                                    \
+    grub_uint64_t addr = args[0].value.u64;                             \
+    if ((grub_uint64_t) (grub_addr_t) addr != addr ||                    \
+        (addr & (sizeof (ctype) - 1)))                                    \
+      return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid memory address"); \
+    results[0].type = GRUB_BIND_U64;                                    \
+    results[0].value.u64 = *(volatile ctype *) (grub_addr_t) addr;       \
+    *nout = 1;                                                         \
+    return GRUB_ERR_NONE;                                              \
+  }                                                                    \
+  static grub_err_t                                                    \
+  bind_write_##name (grub_size_t argc __attribute__ ((unused)),         \
+                     const struct grub_bind_value *args,               \
+                     struct grub_bind_value *results __attribute__ ((unused)), \
+                     grub_size_t *nout)                                 \
+  {                                                                    \
+    grub_uint64_t addr = args[0].value.u64;                             \
+    if ((grub_uint64_t) (grub_addr_t) addr != addr ||                    \
+        (addr & (sizeof (ctype) - 1)))                                    \
+      return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid memory address"); \
+    *(volatile ctype *) (grub_addr_t) addr = (ctype) args[1].value.u64;  \
+    *nout = 0;                                                         \
+    return GRUB_ERR_NONE;                                              \
   }
 
-LUA_MEMRW (grub_uint8_t, byte)
-LUA_MEMRW (grub_uint16_t, word)
-LUA_MEMRW (grub_uint32_t, dword)
+NATIVE_MEMRW (grub_uint8_t, byte)
+NATIVE_MEMRW (grub_uint16_t, word)
+NATIVE_MEMRW (grub_uint32_t, dword)
 
-static luaL_Reg memlib[] =
-  {
-    {"read_byte", lua_read_byte},
-    {"read_word", lua_read_word},
-    {"read_dword", lua_read_dword},
-    {"write_byte", lua_write_byte},
-    {"write_word", lua_write_word},
-    {"write_dword", lua_write_dword},
-    {0, 0}
-  };
+static const enum grub_bind_type mem_address_args[] = { GRUB_BIND_U64 };
+static const enum grub_bind_type mem_write_args[] =
+  { GRUB_BIND_U64, GRUB_BIND_U64 };
+static const struct grub_bind_export mem_exports[] =
+{
+  { "memrw", "read_byte",   mem_address_args, 1, 1, bind_read_byte },
+  { "memrw", "read_word",   mem_address_args, 1, 1, bind_read_word },
+  { "memrw", "read_dword",  mem_address_args, 1, 1, bind_read_dword },
+  { "memrw", "write_byte",  mem_write_args, 2, 2, bind_write_byte },
+  { "memrw", "write_word",  mem_write_args, 2, 2, bind_write_word },
+  { "memrw", "write_dword", mem_write_args, 2, 2, bind_write_dword }
+};
 
 GRUB_MOD_INIT(memrw)
 {
@@ -335,16 +353,14 @@ GRUB_MOD_INIT(memrw)
 			  N_("[OPTIONS] FILE"),
 			  N_("Load file content into memory."),
 			  options_loadfile);
-  if (grub_lua_global_state)
-    {
-      lua_gc (grub_lua_global_state, LUA_GCSTOP, 0);
-      luaL_register (grub_lua_global_state, "memrw", memlib);
-      lua_gc (grub_lua_global_state, LUA_GCRESTART, 0);
-    }
+  memrw_module = mod;
+  grub_bind_register (mod, mem_exports, 6);
 }
 
 GRUB_MOD_FINI(memrw)
 {
+  grub_bind_unregister (memrw_module);
+  memrw_module = NULL;
   grub_unregister_extcmd (cmd_read_byte);
   grub_unregister_extcmd (cmd_read_word);
   grub_unregister_extcmd (cmd_read_dword);
