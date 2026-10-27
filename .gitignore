@@ -306,5 +306,6 @@ widthspec.bin
 /.cache
 /build
 /build-*
+/PKG/
 /dist
 compile_commands.json
