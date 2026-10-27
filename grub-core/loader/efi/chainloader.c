@@ -414,7 +414,7 @@ chainloader_read_header (void *data, grub_efi_uint32_t size,
   context->pe_hdr = pe_hdr;
   return 1;
 #else
-  grub_efi_guid_t guid = GRUB_EFI_SHIM_LOCK_GUID;
+  grub_guid_t guid = GRUB_EFI_SHIM_LOCK_GUID;
   grub_efi_shim_lock_t *shim_lock;
   grub_efi_status_t status;
 
