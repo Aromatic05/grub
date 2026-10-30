@@ -38,6 +38,17 @@ require_cmd() {
   fi
 }
 
+find_font_source() {
+  local candidate
+  for candidate in "$@"; do
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 prepare_build_dir() {
   local build_dir="$1"
   mkdir -p "$build_dir"
@@ -113,85 +124,72 @@ build_target_platform_only() {
 makepkg_layout() {
   local grub_lib="$PKG_DIR/lib/grub"
   local font_dir="$grub_lib/fonts"
-  local build_x86_64_efi="$ROOT_DIR/build-x86_64-efi"
-  local mkfont_bin="$grub_lib/grub-mkfont"
+  local f mo lang dir font program
 
   log "prepare makepkg layout"
-  mkdir -p "$font_dir"
-
-  if [ -d "$ROOT_DIR/makepkg" ]; then
-    shopt -s nullglob
-    local makepkg_files=( "$ROOT_DIR/makepkg/"* )
-    shopt -u nullglob
-    if [ "${#makepkg_files[@]}" -gt 0 ]; then
-      cp -r "${makepkg_files[@]}" "$grub_lib/"
-    fi
-  else
-    log "warning: $ROOT_DIR/makepkg not found, skip copying makepkg assets"
+  mkdir -p "$font_dir" "$grub_lib/locale"
+  if [ ! -d "$ROOT_DIR/makepkg" ]; then
+    printf 'Missing release resources: %s\n' "$ROOT_DIR/makepkg" >&2
+    return 1
   fi
+  cp -r "$ROOT_DIR/makepkg/." "$grub_lib/"
 
-  shopt -s nullglob
-  local pf2_files=( "$PKG_DIR/share/grub/"*.pf2 )
-  shopt -u nullglob
-  if [ "${#pf2_files[@]}" -gt 0 ]; then
-    cp -f "${pf2_files[@]}" "$font_dir/"
-  fi
+  # Include both GRUB menu fonts and the starfield theme fonts.
+  for f in "$PKG_DIR/share/grub/"*.pf2 \
+           "$PKG_DIR/share/grub/themes/starfield/"*.pf2; do
+    [ -f "$f" ] || continue
+    cp -f "$f" "$font_dir/"
+  done
 
-  # Only copy Linux binaries from build-x86_64-efi.
-  if [ -d "$build_x86_64_efi" ]; then
-    local f
-    shopt -s nullglob
-    for f in "$build_x86_64_efi"/grub-*; do
-      [ -f "$f" ] || continue
-      [ -x "$f" ] || continue
-      if file -b "$f" | grep -q 'ELF'; then
-        cp -f "$f" "$grub_lib/"
-      fi
+  # make clean ran after installation; binaries are in DESTDIR, not build/.
+  for dir in "$PKG_DIR/bin" "$PKG_DIR/sbin"; do
+    for f in "$dir/"grub-*; do
+      [ -f "$f" ] && [ -x "$f" ] || continue
+      cp -p "$f" "$grub_lib/"
     done
-    shopt -u nullglob
-  else
-    log "warning: $build_x86_64_efi not found, skip binary copy"
-  fi
+  done
 
-  # If no .pf2 fonts were installed, try generating one with grub-mkfont.
-  shopt -s nullglob
-  local existing_pf2=( "$font_dir/"*.pf2 )
-  shopt -u nullglob
-  if [ "${#existing_pf2[@]}" -eq 0 ] && [ -x "$mkfont_bin" ]; then
-    local src_font=""
-    local cand
-    for cand in \
-      /usr/share/fonts/truetype/unifont/unifont.ttf \
-      /usr/share/fonts/opentype/unifont/unifont.otf \
-      /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
-    do
-      if [ -f "$cand" ]; then
-        src_font="$cand"
-        break
-      fi
-    done
-    if [ -n "$src_font" ]; then
-      log "generate fallback font unicode.pf2 from $src_font"
-      "$mkfont_bin" -s 16 -o "$font_dir/unicode.pf2" "$src_font"
-    else
-      log "warning: no source TTF/OTF found; font generation skipped"
-    fi
-  fi
+  # Installed gettext catalogs have layout share/locale/<lang>/LC_MESSAGES/grub.mo.
+  for mo in "$PKG_DIR/share/locale/"*/LC_MESSAGES/grub.mo; do
+    [ -f "$mo" ] || continue
+    lang="${mo%/LC_MESSAGES/grub.mo}"
+    cp -f "$mo" "$grub_lib/locale/${lang##*/}.mo"
+  done
 
   log "compile locale .po -> .mo"
-  shopt -s nullglob
   local po
   for po in "$grub_lib/locale/"*.po; do
+    [ -f "$po" ] || continue
     msgfmt "$po" -o "${po%.po}.mo"
   done
-  shopt -u nullglob
 
   rm -rf "$grub_lib/i386-none"
-  rm -f "$grub_lib/locale/"'*.po'
+  rm -f "$grub_lib/locale/"*.po
   rm -f "$grub_lib/"*/*.module
   rm -f "$grub_lib/"*/*.image
   rm -f "$grub_lib/"*/*.exec
   rm -f "$grub_lib/"*/config.h
+
+  for font in unicode.pf2 ascii.pf2 euro.pf2 \
+              dejavu_10.pf2 dejavu_12.pf2 dejavu_14.pf2 \
+              dejavu_bold_14.pf2 dejavu_16.pf2; do
+    if [ ! -s "$font_dir/$font" ]; then
+      printf 'Missing release font: %s\n' "$font" >&2
+      return 1
+    fi
+  done
+  for program in grub-mkimage grub-mkfont grub-install grub-probe; do
+    if [ ! -x "$grub_lib/$program" ]; then
+      printf 'Missing release command: %s\n' "$program" >&2
+      return 1
+    fi
+  done
+  for lang in ast ja zh_CN; do
+    if [ ! -s "$grub_lib/locale/$lang.mo" ]; then
+      printf 'Missing release locale: %s\n' "$lang" >&2
+      return 1
+    fi
+  done
 }
 
 while [ "$#" -gt 0 ]; do
@@ -229,6 +227,22 @@ if [ ! -x "$ROOT_DIR/configure" ]; then
   exit 1
 fi
 
+UNIFONT_SOURCE="${UNIFONT_SOURCE:-$(find_font_source \
+  /usr/share/fonts/Unifont/Unifont.otf \
+  /usr/share/fonts/unifont/unifont.ttf \
+  /usr/share/fonts/truetype/unifont/unifont.ttf \
+  /usr/share/fonts/opentype/unifont/unifont.otf || true)}"
+DEJAVU_SOURCE="${DEJAVU_SOURCE:-$(find_font_source \
+  /usr/share/fonts/TTF/DejaVuSans.ttf \
+  /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+  /usr/share/fonts/dejavu/DejaVuSans.ttf || true)}"
+for font in "$UNIFONT_SOURCE" "$DEJAVU_SOURCE"; do
+  if [ ! -f "$font" ]; then
+    printf 'Missing required release font source: %s\n' "$font" >&2
+    exit 1
+  fi
+done
+
 log "prepare package directory"
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"
@@ -245,7 +259,8 @@ build_target_platform_only "arm-efi" "$ROOT_DIR/build-arm-efi" \
 
 # x86_64-efi: full build/install (includes user-space tools).
 build_target "x86_64-efi" "$ROOT_DIR/build-x86_64-efi" \
-  --prefix=/ --target=x86_64 --with-platform=efi --disable-werror
+  --prefix=/ --target=x86_64 --with-platform=efi --disable-werror \
+  "--with-unifont=$UNIFONT_SOURCE" "--with-dejavufont=$DEJAVU_SOURCE"
 
 build_target_platform_only "i386-efi" "$ROOT_DIR/build-i386-efi" \
   "i386-efi" \
