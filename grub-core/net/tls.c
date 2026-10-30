@@ -85,12 +85,15 @@ secure_entropy (void *context __attribute__ ((unused)), unsigned char *out,
       return 0;
     }
 #endif
+#if defined (__i386__) || defined (__x86_64__)
+  /* The random module is only built for x86 targets. */
   if (grub_crypto_get_random (out, size) == GRUB_ERR_NONE)
     {
       *produced = size;
       grub_errno = saved;
       return 0;
     }
+#endif
   /* Never replace missing entropy with clock, addresses or an insecure PRNG. */
   *produced = 0;
   grub_errno = saved;
