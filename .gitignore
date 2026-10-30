@@ -307,5 +307,6 @@ widthspec.bin
 /build
 /build-*
 /PKG/
+/grub2-latest.tar.gz
 /dist
 compile_commands.json
