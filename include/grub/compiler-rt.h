@@ -79,6 +79,8 @@ EXPORT_FUNC (__aeabi_uidivmod) (grub_uint32_t a, grub_uint32_t b);
 
 grub_uint64_t
 EXPORT_FUNC (__aeabi_uldivmod) (grub_uint64_t a, grub_uint64_t b);
+grub_int64_t
+EXPORT_FUNC (__aeabi_ldivmod) (grub_int64_t a, grub_int64_t b);
 
 grub_int32_t
 EXPORT_FUNC (__aeabi_idiv) (grub_int32_t a, grub_int32_t b);

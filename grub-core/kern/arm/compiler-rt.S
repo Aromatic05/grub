@@ -86,6 +86,17 @@ FUNCTION(__aeabi_uldivmod)
         ldr	r3, [sp, #12]
         add	sp, sp, #16
         pop	{r11, pc}
+
+FUNCTION(__aeabi_ldivmod)
+        push	{r11, lr}
+        sub	sp, sp, #16
+        add	r12, sp, #8
+        str	r12, [sp]
+        bl	grub_divmod64s
+        ldr	r2, [sp, #8]
+        ldr	r3, [sp, #12]
+        add	sp, sp, #16
+        pop	{r11, pc}
 /*
  * Null divide-by-zero handler
  */
