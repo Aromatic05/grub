@@ -156,11 +156,11 @@ makepkg_layout() {
     cp -f "$mo" "$grub_lib/locale/${lang##*/}.mo"
   done
 
-  log "compile locale .po -> .mo"
+  log "compile fallback locale .po -> .mo"
   local po
   for po in "$grub_lib/locale/"*.po; do
     [ -f "$po" ] || continue
-    msgfmt "$po" -o "${po%.po}.mo"
+    [ -f "${po%.po}.mo" ] || msgfmt "$po" -o "${po%.po}.mo"
   done
 
   rm -rf "$grub_lib/i386-none"
